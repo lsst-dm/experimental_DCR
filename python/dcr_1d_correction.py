@@ -27,6 +27,7 @@ from __future__ import print_function, division, absolute_import
 import imp
 import numpy as np
 from scipy import constants
+from scipy.linalg import toeplitz
 
 import lsst.daf.persistence as daf_persistence
 from lsst.sims.photUtils import Bandpass, PhotometricParameters
@@ -45,25 +46,23 @@ class DcrCorrection:
         @param repository: path to repository with the data. String, defaults to working directory
         @param obsid_range: obsid or range of obsids to process.
         """
-        butler = daf_persistence.Butler(repository)
+        self.butler = daf_persistence.Butler(repository)
         dataId_gen = _build_dataId(obsid_range, band_name)
         elevation_arr = []
         azimuth_arr = []
         airmass_arr = []
         image_arr = []
-        mask_arr = []
-        variance_arr = []
+        # mask_arr = []
+        # variance_arr = []
 
         for _id in dataId_gen:
-            calexp = butler.get("calexp", dataId=_id)
-            metadata = calexp.getMetadata()
-            elevation_arr.append(90 - metadata.get("ZENITH"))
-            azimuth_arr.append(metadata.get("AZIMUTH"))
-            airmass_arr.append(metadata.get("AIRMASS"))
-            img = calexp.getMaskedImage().getImage().getArray()
-            image_arr.append(img[487: 487+128, 128: 256])
-            # mask_arr.append(calexp.getMaskedImage().getMask().getArray())
-            # variance_arr.append(calexp.getMaskedImage().getVariance().getArray())
+            exposure = self._load_exposures(_id)
+            elevation_arr.append(exposure["elevation"])
+            azimuth_arr.append(exposure["azimuth"])
+            airmass_arr.append(exposure["airmass"])
+            image_arr.append(exposure["image"])
+            # mask_arr.append(exposure["mask"])
+            # variance_arr.append(exposure["variance"])
 
         # if np.max(azimuth_arr) != np.min(azimuth_arr):
         #     print("Multiple azimuth angles detected! Only one angle is supported for now. Returning")
@@ -74,8 +73,8 @@ class DcrCorrection:
         self.x_size = (image_arr[0].shape)[1]
         azimuth = np.min(azimuth_arr)
         elevation_min = np.min(elevation_arr)
-        pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
-        exposure_time = calexp.getInfo().getCalib().getExptime()
+        pixel_scale = exposure["scale"]
+        exposure_time = exposure["exptime"]
 
         bandpass = _load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
         if n_step is not None:
@@ -111,179 +110,151 @@ class DcrCorrection:
             refract_max = 1
         self.refract_min = refract_min
         self.refract_max = refract_max
+        self.refract_matrix = []
+
+        # Regularization adapted from Nate Lust's DCR Demo iPython notebook
+        # Calculate a difference matrix for regularization as if each wavelength were a pixel, then scale
+        # The difference matrix to the size of the number of pixels times number of wavelengths
+        baseReg = _difference(self.y_size)
+        Regular = np.zeros((n_step*self.y_size, n_step*self.y_size))
+
+        for i in range(n_step):
+            Regular[i::n_step, i::n_step] = baseReg
+
+        # Do the same thing as above but with the second derivative
+        baseReg2 = _difference2(self.y_size)
+        Regular2 = np.zeros((n_step*self.y_size, n_step*self.y_size))
+
+        for i in range(n_step):
+            Regular2[i::n_step, i::n_step] = baseReg2
+
+        # Extra regularization that we force the SED to be smooth
+        baseLam = _difference(n_step)
+        smthLam = np.zeros(Regular.shape)
+
+        for i in range(self.y_size):
+            smthLam[i*n_step:i*n_step + n_step, i*n_step:i*n_step + n_step] = baseLam
+        self.regular = Regular
+        self.regular2 = Regular2
+        self.smthLam = smthLam
 
     def build_matrix(self):
-        # kernel_radius = 5
-        if self.use_bandpass:
-            bandpass_normalized = self.bandpass.sb / self.bandpass.sb.sum()
-        else:
-            bandpass_normalized = np.ones(self.n_step, dtype=np.float64)
-
-        refract_matrix = np.zeros((self.n_images * self.y_size, self.n_step * self.y_size), dtype=np.float64)
         for img_i, elevation in enumerate(self.elevation_arr):
             azimuth = self.azimuth_arr[img_i]
-            pixel_scale = self.photoParams.platescale
-            dcr_gen = _dcr_generator(self.bandpass, pixel_scale=pixel_scale,
-                                     elevation=elevation, azimuth=azimuth)
-            # NOTE: This is purely 1D for now! Offset from _dcr_generator is a tuple of the y and x offsets.
-            for f_i, offset in enumerate(dcr_gen):
-                offset_use = -offset[1]
-                refract_kernel = kernel_1d(np.arange(self.y_size) + offset_use, self.y_size)  # kernel is 2D
-                refract_kernel *= bandpass_normalized[f_i]
-                # for _j in range(kernel_radius):
-                #     refract_kernel[_j, _j + kernel_radius:] = 0.
-                # for _j in range(kernel_radius, self.y_size - kernel_radius):
-                #     refract_kernel[_j, _j + kernel_radius:] = 0.
-                #     refract_kernel[_j, :_j - kernel_radius] = 0.
-                # for _j in range(self.y_size - kernel_radius, self.y_size):
-                #     refract_kernel[_j, :_j - kernel_radius] = 0.
-                refract_matrix[img_i * self.y_size: (img_i + 1) * self.y_size,
-                               f_i * self.y_size: (f_i + 1) * self.y_size] = refract_kernel
-                # print(offset_use)
-                # _i_low = np.floor(offset_use).astype(int)
-                # _i_high = np.ceil(offset_use).astype(int)
-                # if _i_low == _i_high:
-                #     frac_low = 0.0
-                #     frac_high = 1.0
-                # else:
-                #     frac_high = offset_use - _i_low
-                #     frac_low = _i_high - offset_use
-                # for _j in range(-self.refract_min + 1):
-                #     ind_0 = _j + f_i * self.y_size
-                #     ind_1 = _j + img_i * self.y_size
-                #     refract_matrix[ind_0, ind_1] = bandpass_normalized[f_i]
-                # for _j in range(self.y_size - self.refract_max - 1, self.y_size):
-                #     ind_0 = _j + f_i * self.y_size
-                #     ind_1 = _j + img_i * self.y_size
-                #     refract_matrix[ind_0, ind_1] = bandpass_normalized[f_i]
-                # for _j in range(-self.refract_min, self.y_size - self.refract_max):
-                #     ind_0 = _j + f_i * self.y_size
-                #     ind_1 = _j + img_i * self.y_size
-                #     if (_j + _i_low >= 0) & (_j + _i_low < self.y_size):
-                #         refract_matrix[ind_0, ind_1 + _i_low] = bandpass_normalized[f_i] * frac_low
-                #     if (_j + _i_high >= 0) & (_j + _i_high < self.y_size):
-                #         refract_matrix[ind_0, ind_1 + _i_high] = bandpass_normalized[f_i] * frac_high
-        self.refract_matrix = refract_matrix
+            self.refract_matrix.append(self._calc_refract_matrix(elevation, azimuth))
+
+    def _calc_refract_matrix(self, elevation, azimuth):
+        refract_matrix = np.zeros((self.y_size, self.n_step * self.y_size))
+        pixel_scale = self.photoParams.platescale
+        dcr_gen = _dcr_generator(self.bandpass, pixel_scale=pixel_scale,
+                                 elevation=elevation, azimuth=azimuth)
+        # NOTE: This is purely 1D for now! Offset from _dcr_generator is a tuple of the y and x offsets.
+        for f_i, offset in enumerate(dcr_gen):
+            offset_use = offset[1]
+            i_high = np.ceil(offset_use)
+            i_low = np.floor(offset_use)
+            frac_high = offset_use - np.floor(offset_use)
+            frac_low = np.ceil(offset_use) - offset_use
+            for _i in range(self.y_size):
+                if _i + i_low < 0:
+                    refract_matrix[0, f_i + _i * self.n_step] = 1.
+                elif _i + i_high >= self.y_size:
+                    refract_matrix[-1, f_i + _i * self.n_step] = 1.
+                else:
+                    refract_matrix[_i + i_low, f_i + _i * self.n_step] = frac_low
+                    refract_matrix[_i + i_high, f_i + _i * self.n_step] = frac_high
+        return(refract_matrix)
 
     def build_inverse_squared_matrix(self):
         """Break out the computationally expensive step of computing the matrix inverse."""
-        matrix_squared = np.einsum('ij,ik->jk', self.refract_matrix, self.refract_matrix)
-        coefficient_matrix = np.zeros((self.n_step, self.n_step), dtype=np.float64)
-        for _j in range(self.n_step):
-            j0 = _j * self.y_size
-            j1 = (_j + 1) * self.y_size
-            for _i in range(self.n_step):
-                i0 = _i * self.y_size
-                i1 = (_i + 1) * self.y_size
-                coefficient_matrix[_i, _j] = np.max(matrix_squared[i0: i1, j0: j1])
-        coefficient_matrix /= np.mean(coefficient_matrix)
-        coefficient_inv = np.linalg.inv(coefficient_matrix)
-        normalization = 1. / self.n_step**2.0
-        for _j in range(self.n_step):
-            j0 = _j * self.y_size
-            j1 = (_j + 1) * self.y_size
-            for _i in range(self.n_step):
-                i0 = _i * self.y_size
-                i1 = (_i + 1) * self.y_size
-                matrix_squared[i0: i1, j0: j1] = (normalization * coefficient_inv[_i, _j]
-                                                  * (matrix_squared[i0: i1, j0: j1]).T)
-        self.matrix_squared_inv = matrix_squared
-        # edge_pix = 1
-        # matrix_squared_arr = []
-        # for f_i in range(self.n_step):
-        #     f0 = f_i * self.y_size
-        #     f1 = (f_i + 1) * self.y_size
-        #     matrix_single = np.zeros((self.y_size, self.y_size), dtype=np.float64)
-        #     for img_i in range(self.n_images):
-        #         i0 = img_i * self.y_size
-        #         i1 = (img_i + 1) * self.y_size
-        #         # matrix_single += (self.refract_matrix[i0: i1, f0: f1]
-        #         #                   * np.abs(self.refract_matrix[i0: i1, f0: f1]))
-        #         matrix_single += np.einsum('ij,ik->jk', self.refract_matrix[i0: i1, f0: f1],
-        #                                    np.abs(self.refract_matrix[i0: i1, f0: f1]))
-        #     matrix_squared_arr.append(matrix_single)
-        # for matrix in matrix_squared_arr:
-        #     # matrix = np.linalg.inv(matrix)
-        #     matrix = _safe_divide(matrix)
-        #     matrix[0: edge_pix, :] = 0
-        #     matrix[-edge_pix:, :] = 0
-        #     matrix[:, 0: edge_pix] = 0
-        #     matrix[:, -edge_pix:] = 0
-        # # for _j in range(self.n_step):
-        # #     for _i in range(self.n_step):
-        # #         j0 = _j * self.y_size
-        # #         j1 = (_j + 1) * self.y_size
-        # #         i0 = _i * self.y_size
-        # #         i1 = (_i + 1) * self.y_size
-        # #         sub_matrix = matrix_squared[j0:j1, i0:i1]
-        # #         # large array, so perform operation in place
-        # #         matrix_squared[j0:j1, i0:i1] = np.linalg.inv(sub_matrix)
-        # #         matrix_squared[j0, i0:i1] = 0.
-        # #         matrix_squared[j1 - 1, i0:i1] = 0.
-        # #         matrix_squared[j0:j1, i0] = 0.
-        # #         matrix_squared[j0:j1, i1 - 1] = 0.
-        # self.matrix_squared_inv = matrix_squared_arr
+        r_matrix_extend = reduce(lambda mat1, mat2: np.append(mat1, mat2, axis=0), self.refract_matrix)
+        frac = .1
+        r_matrix_squared = np.dot(r_matrix_extend.T, r_matrix_extend)
+        reg_squared = np.dot(self.regular.T, self.regular)
+        reg2_squared = np.dot(self.regular2.T, self.regular2)
+        smthLam_squared = np.dot(self.smthLam.T, self.smthLam)
+        mat_sum = r_matrix_squared + frac * (reg_squared + reg2_squared + smthLam_squared)
+        mat_inv = np.linalg.pinv(mat_sum)
+        self.transfer = np.dot(mat_inv, r_matrix_extend.T)
 
     def build_template(self):
         """Now we have to solve the linear equation for the above matrix for each pixel, across all images."""
         # NOTE: This is purely 1D for now, and assumed to ALWAYS be constrained to the y-axis!!
         # Start with a straightforward loop over the pixels to verify the algorithm. We'll optimize later.
 
-        if self.use_bandpass:
-            bandpass_normalized = self.bandpass.sb / self.bandpass.sb.sum()
-        else:
-            bandpass_normalized = np.ones(self.n_step, dtype=np.float64)
-        # Matrix version of a linear least squares fit
-        template = np.zeros((self.y_size, self.x_size, self.n_step))
+        template = []
         for _i in range(self.x_size):
-            img_vec = np.zeros(self.y_size * self.n_images)
-            for s_i, image in enumerate(self.image_arr):
-                img_vec[s_i * self.y_size: (s_i + 1) * self.y_size] = image[:, _i] / self.n_images
-            # img_vec = np.hstack([image[:, _i] for image in self.image_arr])
-            moment_vec = np.einsum('ij,i->j', self.refract_matrix, img_vec)  # transpose of refract_matrix
+            img_vec = reduce(lambda vec1, vec2: np.append(vec1, vec2),
+                             [image[:, _i] for image in self.image_arr])
+            template.append(np.dot(self.transfer, img_vec.T))
+        self.template = template
+        # if self.use_bandpass:
+        #     bandpass_normalized = self.bandpass.sb / self.bandpass.sb.sum()
+        # else:
+        #     bandpass_normalized = np.ones(self.n_step, dtype=np.float64)
+        # # Matrix version of a linear least squares fit
+        # template = np.zeros((self.y_size, self.x_size, self.n_step))
+        # for _i in range(self.x_size):
+        #     img_vec = reduce(lambda vec1, vec2: np.append(vec1, vec2),
+        #                      [image[:, _i] for image in self.image_arr])
+        #     template_vec = np.dot(self.transfer, img_vec.T)
+        #     for f_i in range(self.n_step):
+        #         template[:, _i, f_i] = template_vec[f_i::self.n_step]
 
-            template_vec = np.einsum('ij,i->j', self.matrix_squared_inv, moment_vec)
+        # self.template = [template[:, :, f_i] * bandpass_normalized[f_i] for f_i in range(self.n_step)]
 
-            # matrix_squared_inv should be the identity matrix times a scale for each slice
-            # template_vec = moment_vec
-            for f_i in range(self.n_step):
-                template[:, _i, f_i] = template_vec[f_i * self.y_size: (f_i + 1) * self.y_size]
-            # for f_i in range(self.n_step):
-            #     moment_single = moment_vec[f_i * self.y_size: (f_i + 1) * self.y_size]
-            #     template[:, _i, f_i] = np.einsum('ji,j->i', self.matrix_squared_inv[f_i], moment_single)
+    def apply_template(self, obsid=None, elevation=None, azimuth=None):
+        if obsid is not None:
+            dataId = _build_dataId(obsid, self.band_name)
+            exposure = self._load_exposures(dataId)
+            elevation = exposure["elevation"]
+            azimuth = exposure["azimuth"]
+        r_matrix = self._calc_refract_matrix(elevation, azimuth)
+        image = np.zeros((self.y_size, self.x_size))
+        for _i, template in enumerate(self.template):
+            image[:, _i] = np.dot(r_matrix, template)
+        return(image)
 
-        self.template = [template[:, :, f_i] * bandpass_normalized[f_i] for f_i in range(self.n_step)]
+    def _load_exposures(self, dataId):
+        calexp = self.butler.get("calexp", dataId=dataId)
+        metadata = calexp.getMetadata()
+        elevation = 90 - metadata.get("ZENITH")
+        azimuth = metadata.get("AZIMUTH")
+        airmass = metadata.get("AIRMASS")
+        scale = calexp.getWcs().pixelScale().asArcseconds()
+        exptime = calexp.getInfo().getCalib().getExptime()
+        image = calexp.getMaskedImage().getImage().getArray()
+        image = image[487: 487 + 128, 128: 256]  # Keep image small to run faster in testing
 
-    def correct_template(self):
-        for img_i, elevation in enumerate(self.elevation_arr):
-            pass
+        mask = calexp.getMaskedImage().getMask().getArray()
+        variance = calexp.getMaskedImage().getVariance().getArray()
+        return {"elevation": elevation, "azimuth": azimuth, "airmass": airmass, "image": image,
+                "mask": mask, "variance": variance, "scale": scale, "exptime": exptime}
 
 
-def _safe_divide(array):
-    result = np.zeros(array.shape)
-    result[np.nonzero(array)] = 1.0 / array[np.nonzero(array)]
-    return(result)
+def _difference(size):
+    # adapted from Nate Lust's DCR Demo iPython notebook
+    """ returns a toeplitz matrix
+    difference regularization
+    """
+    r = np.zeros(size)
+    c = np.zeros(size)
+    r[0] = 1
+    r[size - 1] = -1
+    c[1] = -1
+    return toeplitz(r, c).T
 
 
-def _refract_inverse(refraction_vector, refract_min=None, refract_max=None, dimension=None):
-    if refract_min > -1:
-        refract_min = -1
-    if refract_max < 1:
-        refract_max = 1
-    refract_matrix = np.zeros((dimension, dimension), dtype=np.float64)
-    print(refract_min, refract_max, refraction_vector)
-    for _i in range(np.abs(refract_min)):
-        refract_matrix[0: _i + refract_max + 1, _i] = refraction_vector[np.abs(refract_min + _i):]
-    for _i in range(np.abs(refract_min), dimension - refract_max):
-        refract_matrix[_i + refract_min: _i + refract_max + 1, _i] = refraction_vector
-    for _i in range(dimension - refract_max, dimension):
-        refract_matrix[_i + refract_min:, _i] = refraction_vector[: dimension - (_i + refract_max + 1)]
-    try:
-        refract_inverse = np.linalg.inv(refract_matrix)
-        return refract_inverse
-    except np.linalg.LinAlgError:
-        print("The refraction matrix was not invertable!")
-        return refract_matrix
+def _difference2(size):
+    # adapted from Nate Lust's DCR Demo iPython notebook
+    r = np.zeros(size)
+    r[0] = 2
+    r[1] = -1
+    r[-1] = -1
+    matrix = np.zeros((size, size))
+    for i in range(size):
+        matrix[i] = np.roll(r, i)
+    return matrix
 
 
 def _build_dataId(obsid_range, band):
@@ -405,25 +376,3 @@ def _dcr_generator(bandpass, pixel_scale=None, elevation=50.0, azimuth=0.0, **kw
         dx = refract_amp * np.sin(np.radians(azimuth))
         dy = refract_amp * np.cos(np.radians(azimuth))
         yield((dx, dy))
-
-
-# NOTE: This function was copied from fast_dft.py
-def kernel_1d(locs, size):
-    """
-    pre-compute the 1D sinc function values along each axis.
-
-    @param locs: pixel coordinates of dft locations along single axis (either x or y)
-    @params size: dimension in pixels of the given axis
-    """
-    pi = np.pi
-    pix = np.arange(size, dtype=np.float64)
-    sign = np.power(-1.0, pix)
-    offset = np.floor(locs)
-    delta = locs - offset
-    kernel = np.zeros((len(locs), size), dtype=np.float64)
-    for i, loc in enumerate(locs):
-        if delta[i] == 0:
-            kernel[i, :][offset[i]] = 1.0
-        else:
-            kernel[i, :] = np.sin(-pi * loc) / (pi * (pix - loc)) * sign
-    return kernel
