@@ -30,10 +30,11 @@ from scipy import constants
 from scipy.linalg import toeplitz
 
 import lsst.daf.persistence as daf_persistence
-from lsst.sims.photUtils import Bandpass, PhotometricParameters
-from lsst.utils import getPackageDir
 import lsst.afw.image as afwImage
 import lsst.pex.policy as pexPolicy
+from lsst.pipe.base.struct import Struct
+from lsst.sims.photUtils import Bandpass, PhotometricParameters
+from lsst.utils import getPackageDir
 imp.load_source('calc_refractive_index', '/Users/sullivan/LSST/code/StarFast/calc_refractive_index.py')
 from calc_refractive_index import diff_refraction
 
@@ -91,11 +92,16 @@ class DcrCorrection:
         self.bandpass = bandpass
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=pixel_scale,
                                                  bandpass=band_name)
-        self.band_name = band_name
 
         self._build_regularization()
+
+        # Construct a matrix for each input image that maps multiple sub-bandwidth frequency planes to
+        #  a DCR-affected continuum image
         self.dcr_matrix = []
-        self._build_dcr_matrix()
+        for img_i, elevation in enumerate(self.elevation_arr):
+            azimuth = self.azimuth_arr[img_i]
+            self.dcr_matrix.append(_calc_dcr_matrix(elevation=elevation, azimuth=azimuth, size=self.y_size,
+                                                    pixel_scale=pixel_scale, bandpass=self.bandpass))
 
     def _build_regularization(self):
         # Regularization adapted from Nate Lust's DCR Demo iPython notebook
@@ -125,47 +131,18 @@ class DcrCorrection:
         self.regular2 = Regular2
         self.smthLam = smthLam
 
-    def _build_dcr_matrix(self):
-        # Construct a matrix for each input image that maps multiple sub-bandwidth frequency planes to
-        #  a DCR-affected continuum image
-        for img_i, elevation in enumerate(self.elevation_arr):
-            azimuth = self.azimuth_arr[img_i]
-            self.dcr_matrix.append(self._calc_dcr_matrix(elevation, azimuth))
-
-    def _calc_dcr_matrix(self, elevation, azimuth):
-        dcr_matrix = np.zeros((self.y_size, self.n_step * self.y_size))
-        pixel_scale = self.photoParams.platescale
-        dcr_gen = _dcr_generator(self.bandpass, pixel_scale=pixel_scale,
-                                 elevation=elevation, azimuth=azimuth)
-        # NOTE: This is purely 1D for now! Offset from _dcr_generator is a tuple of the y and x offsets.
-        for f_i, offset in enumerate(dcr_gen):
-            offset_use = offset[1]
-            i_high = np.ceil(offset_use)
-            i_low = np.floor(offset_use)
-            frac_high = offset_use - np.floor(offset_use)
-            frac_low = np.ceil(offset_use) - offset_use
-            for _i in range(self.y_size):
-                if _i + i_low < 0:
-                    dcr_matrix[0, f_i + _i * self.n_step] = 1.
-                elif _i + i_high >= self.y_size:
-                    dcr_matrix[-1, f_i + _i * self.n_step] = 1.
-                else:
-                    dcr_matrix[_i + i_low, f_i + _i * self.n_step] = frac_low
-                    dcr_matrix[_i + i_high, f_i + _i * self.n_step] = frac_high
-        return(dcr_matrix)
-
     def build_transfer_matrix(self):
         """Break out the computationally expensive step of computing the matrix inverse."""
         """Note: this is very slow."""
-        r_matrix_extend = reduce(lambda mat1, mat2: np.append(mat1, mat2, axis=0), self.dcr_matrix)
+        dcr_matrix_extend = reduce(lambda mat1, mat2: np.append(mat1, mat2, axis=0), self.dcr_matrix)
         frac = .1
-        r_matrix_squared = np.dot(r_matrix_extend.T, r_matrix_extend)
+        dcr_matrix_squared = np.dot(dcr_matrix_extend.T, dcr_matrix_extend)
         reg_squared = np.dot(self.regular.T, self.regular)
         reg2_squared = np.dot(self.regular2.T, self.regular2)
         smthLam_squared = np.dot(self.smthLam.T, self.smthLam)
-        mat_sum = r_matrix_squared + frac * (reg_squared + reg2_squared + smthLam_squared)
+        mat_sum = dcr_matrix_squared + frac * (reg_squared + reg2_squared + smthLam_squared)
         mat_inv = np.linalg.pinv(mat_sum)
-        self.transfer = np.dot(mat_inv, r_matrix_extend.T)
+        self.transfer = np.dot(mat_inv, dcr_matrix_extend.T)
 
     def build_model(self):
         """Now we have to solve the linear equation for the above matrix for each pixel, across all images."""
@@ -173,50 +150,86 @@ class DcrCorrection:
         # Start with a straightforward loop over the pixels to verify the algorithm. We'll optimize later.
         """Note: this is very slow."""
 
-        template = []
+        model = []
         for _i in range(self.x_size):
             img_vec = reduce(lambda vec1, vec2: np.append(vec1, vec2),
                              [(calexp.getMaskedImage().getImage().getArray())[:, _i]
                               for calexp in self.exposures])
-            template.append(np.dot(self.transfer, img_vec.T))
-        self.template = template
-
-    def create_template_from_model(self, obsid=None, elevation=None, azimuth=None):
-        """Use the previously generated template and construct a dcr matrix """
-        if obsid is not None:
-            dataId = _build_dataId(obsid, self.band_name)
-            calexp = self.butler.get("calexp", dataId=dataId)
-            elevation = 90 - calexp.getMetadata().get("ZENITH")
-            azimuth = calexp.getMetadata().get("AZIMUTH")
-        r_matrix = self._calc_dcr_matrix(elevation, azimuth)
-        image = np.zeros((self.y_size, self.x_size))
-        for _i, template in enumerate(self.template):
-            image[:, _i] = np.dot(r_matrix, template)
+            model.append(np.dot(self.transfer, img_vec.T))
+        # model_struct = Struct(model=model, azimuths=self.azimuth_arr, elevations=self.elevation_arr,
+        #                       bandpass=self.bandpass, photoParams=self.photoParams,
+        #                       bbox=self.bbox, wcs=self.wcs)
+        self.model = model
 
         # Calculate the variance of the model.
         # This will need to change if the math in build_transfer_matrix changes.
         variance = np.zeros((self.y_size, self.x_size))
         for calexp in self.exposures:
             variance += calexp.getMaskedImage().getVariance().getArray()**2.
-        variance = np.sqrt(variance) / self.n_images
+        self.variance = np.sqrt(variance) / self.n_images
 
-        self.seed = None
-        self.obsid = obsid
-        return(self._create_exposure(image, variance=variance, elevation=elevation, azimuth=azimuth))
+    # def persist_model(self, filepath=None):
+        # pass
+
+    def generate_templates_from_model(self, obsid_range=None, elevation_arr=None, azimuth_arr=None,
+                                      repository=None, output_directory=None):
+        """Use the previously generated model and construct a dcr template image."""
+        if repository is not None:
+            butler = daf_persistence.Butler(repository)
+        else:
+            butler = self.butler
+        if obsid_range is not None:
+            dataId = _build_dataId(obsid_range, self.photoParams.bandpass)
+            elevation_arr = []
+            azimuth_arr = []
+            for _id in dataId:
+                calexp = butler.get("calexp", dataId=dataId[0])
+                elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
+                azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
+        else:
+            if not hasattr(elevation_arr, '__iter__'):
+                elevation_arr = [elevation_arr]
+                obsid_range = [{"visit": None}]
+            else:
+                obsid_range = [{"visit": None} for elevation in elevation_arr]
+            if azimuth_arr is None:
+                azimuth_arr = [0 for _i in range(len(elevation_arr))]
+            elif not hasattr(azimuth_arr, '__iter__'):
+                azimuth = azimuth_arr
+                azimuth_arr = [azimuth for _i in range(len(elevation_arr))]
+
+        for _i, elevation in enumerate(elevation_arr):
+            dcr_matrix = _calc_dcr_matrix(elevation=elevation, azimuth=azimuth_arr[_i], size=self.y_size,
+                                          pixel_scale=self.photoParams.platescale, bandpass=self.bandpass)
+            image = np.zeros((self.y_size, self.x_size))
+            for _j, model in enumerate(self.model):
+                image[:, _j] = np.dot(dcr_matrix, model)
+
+            # seed and obsid will be over-written each iteration, but are needed to use _create_exposure as-is
+            self.seed = None
+            self.obsid = dataId[_i]['visit'] + 500 % 1000
+            exposure = self._create_exposure(image, variance=self.variance, snap=0,
+                                             elevation=elevation, azimuth=azimuth_arr[_i])
+            if output_directory is not None:
+                band_dict = {'u': 0, 'g': 1, 'r': 2, 'i': 3, 'z': 4, 'y': 5}
+                bn = band_dict[self.photoParams.bandpass]
+                filename = "lsst_e_%3i_f%i_R22_S11_E%3.3i.fits" % (exposure.getMetadata().get("OBSID"), bn, 2)
+                exposure.writeFits(output_directory + "images/" + filename)
+            yield(exposure)
 
     # NOTE: This function was copied from StarFast.py
-    def _create_exposure(self, array, variance=None, elevation=None, azimuth=None):
+    def _create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0):
         """Convert a numpy array to an LSST exposure, and units of electron counts."""
         exposure = afwImage.ExposureF(self.bbox)
         exposure.setWcs(self.wcs)
         # We need the filter name in the exposure metadata, and it can't just be set directly
         try:
-            exposure.setFilter(afwImage.Filter(self.band_name))
+            exposure.setFilter(afwImage.Filter(self.photoParams.bandpass))
         except:
             filterPolicy = pexPolicy.Policy()
             filterPolicy.add("lambdaEff", self.bandpass.calc_eff_wavelen())
-            afwImage.Filter.define(afwImage.FilterProperty(self.band_name, filterPolicy))
-            exposure.setFilter(afwImage.Filter(self.band_name))
+            afwImage.Filter.define(afwImage.FilterProperty(self.photoParams.bandpass, filterPolicy))
+            exposure.setFilter(afwImage.Filter(self.photoParams.bandpass))
         calib = afwImage.Calib()
         calib.setExptime(self.photoParams.exptime)
         exposure.setCalib(calib)
@@ -243,7 +256,7 @@ class DcrCorrection:
         meta = exposure.getMetadata()
         meta.add("CHIPID", "R22_S11")
         # Required! Phosim output stores the snap ID in "OUTFILE" as the last three characters in a string.
-        meta.add("OUTFILE", "SnapId_000")
+        meta.add("OUTFILE", ("SnapId_%3.3i" % snap))
 
         meta.add("TAI", mjd)
         meta.add("MJD-OBS", mjd)
@@ -260,6 +273,29 @@ class DcrCorrection:
             meta.add("OBSID", self.obsid)
             self.obsid += 1
         return(exposure)
+
+
+def _calc_dcr_matrix(elevation=None, azimuth=None, size=None, pixel_scale=None, bandpass=None):
+    n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
+    dcr_matrix = np.zeros((size, n_step * size))
+    dcr_gen = _dcr_generator(bandpass, pixel_scale=pixel_scale,
+                             elevation=elevation, azimuth=azimuth)
+    # NOTE: This is purely 1D for now! Offset from _dcr_generator is a tuple of the y and x offsets.
+    for f_i, offset in enumerate(dcr_gen):
+        offset_use = offset[1]
+        i_high = int(np.ceil(offset_use))
+        i_low = int(np.floor(offset_use))
+        frac_high = offset_use - np.floor(offset_use)
+        frac_low = np.ceil(offset_use) - offset_use
+        for _i in range(size):
+            if _i + i_low < 0:
+                dcr_matrix[0, f_i + _i * n_step] = 1.
+            elif _i + i_high >= size:
+                dcr_matrix[-1, f_i + _i * n_step] = 1.
+            else:
+                dcr_matrix[_i + i_low, f_i + _i * n_step] = frac_low
+                dcr_matrix[_i + i_high, f_i + _i * n_step] = frac_high
+    return(dcr_matrix)
 
 
 def _difference(size):
@@ -291,16 +327,16 @@ def _build_dataId(obsid_range, band):
     if hasattr(obsid_range, '__iter__'):
         if len(obsid_range) > 2:
             if obsid_range[2] < obsid_range[0]:
-                dataId = ({'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                          for obsid in np.arange(obsid_range[0], obsid_range[1], obsid_range[2]))
+                dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
+                          for obsid in np.arange(obsid_range[0], obsid_range[1], obsid_range[2])]
             else:
-                dataId = ({'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                          for obsid in obsid_range)
+                dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
+                          for obsid in obsid_range]
         else:
-            dataId = ({'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                      for obsid in np.arange(obsid_range[0], obsid_range[1]))
+            dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
+                      for obsid in np.arange(obsid_range[0], obsid_range[1])]
     else:
-        dataId = ({'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band} for obsid in [obsid_range])
+        dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band} for obsid in [obsid_range]]
     return(dataId)
 
 
