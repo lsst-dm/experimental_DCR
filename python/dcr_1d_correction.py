@@ -28,6 +28,7 @@ import imp
 import numpy as np
 from scipy import constants
 from scipy.linalg import toeplitz
+from scipy.linalg import solve
 
 import lsst.daf.persistence as daf_persistence
 import lsst.afw.image as afwImage
@@ -135,14 +136,14 @@ class DcrCorrection:
         """Break out the computationally expensive step of computing the matrix inverse."""
         """Note: this is very slow."""
         dcr_matrix_extend = reduce(lambda mat1, mat2: np.append(mat1, mat2, axis=0), self.dcr_matrix)
-        frac = .1
-        dcr_matrix_squared = np.dot(dcr_matrix_extend.T, dcr_matrix_extend)
-        reg_squared = np.dot(self.regular.T, self.regular)
-        reg2_squared = np.dot(self.regular2.T, self.regular2)
-        smthLam_squared = np.dot(self.smthLam.T, self.smthLam)
+        frac = .0
+        dcr_matrix_squared = dcr_matrix_extend.T.dot(dcr_matrix_extend)
+        reg_squared = self.regular.T.dot(self.regular)
+        reg2_squared = self.regular2.T.dot(self.regular2)
+        smthLam_squared = self.smthLam.T.dot(self.smthLam)
         mat_sum = dcr_matrix_squared + frac * (reg_squared + reg2_squared + smthLam_squared)
         mat_inv = np.linalg.pinv(mat_sum)
-        self.transfer = np.dot(mat_inv, dcr_matrix_extend.T)
+        self.transfer = mat_inv.dot(dcr_matrix_extend.T)
 
     def build_model(self):
         """Now we have to solve the linear equation for the above matrix for each pixel, across all images."""
@@ -285,16 +286,13 @@ def _calc_dcr_matrix(elevation=None, azimuth=None, size=None, pixel_scale=None, 
         offset_use = offset[1]
         i_high = int(np.ceil(offset_use))
         i_low = int(np.floor(offset_use))
-        frac_high = offset_use - np.floor(offset_use)
-        frac_low = np.ceil(offset_use) - offset_use
         for _i in range(size):
             if _i + i_low < 0:
                 dcr_matrix[0, f_i + _i * n_step] = 1.
             elif _i + i_high >= size:
                 dcr_matrix[-1, f_i + _i * n_step] = 1.
             else:
-                dcr_matrix[_i + i_low, f_i + _i * n_step] = frac_low
-                dcr_matrix[_i + i_high, f_i + _i * n_step] = frac_high
+                dcr_matrix[:, f_i + _i * n_step] = kernel_1d([_i + offset_use], size)
     return(dcr_matrix)
 
 
@@ -442,3 +440,24 @@ def _dcr_generator(bandpass, pixel_scale=None, elevation=50.0, azimuth=0.0, **kw
         dx = refract_amp * np.sin(np.radians(azimuth))
         dy = refract_amp * np.cos(np.radians(azimuth))
         yield((dx, dy))
+
+
+def kernel_1d(locs, size):
+    """
+    pre-compute the 1D sinc function values along each axis.
+
+    @param locs: pixel coordinates of dft locations along single axis (either x or y)
+    @params size: dimension in pixels of the given axis
+    """
+    pi = np.pi
+    pix = np.arange(size, dtype=np.float64)
+    sign = np.power(-1.0, pix)
+    offset = np.floor(locs)
+    delta = locs - offset
+    kernel = np.zeros((len(locs), size), dtype=np.float64)
+    for i, loc in enumerate(locs):
+        if delta[i] == 0:
+            kernel[i, :][offset[i]] = 1.0
+        else:
+            kernel[i, :] = np.sin(-pi * loc) / (pi * (pix - loc)) * sign
+    return kernel
