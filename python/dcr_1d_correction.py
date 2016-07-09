@@ -23,21 +23,22 @@
 Attempts to create airmass-matched template images for existing images in an LSST repository.
 This is a work in progress!
 """
-# from __future__ import print_function, division, absolute_import
+from __future__ import print_function, division, absolute_import
 import imp
 import numpy as np
 from scipy import constants
 from scipy.linalg import toeplitz
-from scipy.linalg import solve
 
 import lsst.daf.persistence as daf_persistence
 import lsst.afw.image as afwImage
 import lsst.pex.policy as pexPolicy
-from lsst.pipe.base.struct import Struct
+# from lsst.pipe.base.struct import Struct
 from lsst.sims.photUtils import Bandpass, PhotometricParameters
 from lsst.utils import getPackageDir
 imp.load_source('calc_refractive_index', '/Users/sullivan/LSST/code/StarFast/calc_refractive_index.py')
 from calc_refractive_index import diff_refraction
+
+__all__ = ["DcrCorrection"]
 
 lsst_lat = -30.244639
 lsst_lon = -70.749417
@@ -93,7 +94,9 @@ class DcrCorrection:
         self.bandpass = bandpass
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=pixel_scale,
                                                  bandpass=band_name)
-
+        min_elevation = np.min(self.elevation_arr)
+        dcr_test = _dcr_generator(bandpass, pixel_scale=pixel_scale, elevation=min_elevation, azimuth=0.)
+        self.dcr_max = np.ceil((dcr_test.next())[1])
         self._build_regularization()
 
         # Construct a matrix for each input image that maps multiple sub-bandwidth frequency planes to
@@ -128,21 +131,28 @@ class DcrCorrection:
         for i in range(self.y_size):
             smthLam[i*self.n_step: i*self.n_step + self.n_step,
                     i*self.n_step: i*self.n_step + self.n_step] = baseLam
-        self.regular = Regular
-        self.regular2 = Regular2
-        self.smthLam = smthLam
+        self.regular = Regular.T
+        self.regular2 = Regular2.T
+        self.smthLam = smthLam.T
 
     def build_transfer_matrix(self):
         """Break out the computationally expensive step of computing the matrix inverse."""
         """Note: this is very slow."""
         dcr_matrix_extend = reduce(lambda mat1, mat2: np.append(mat1, mat2, axis=0), self.dcr_matrix)
-        frac = .0
+        frac = 1.
         dcr_matrix_squared = dcr_matrix_extend.T.dot(dcr_matrix_extend)
         reg_squared = self.regular.T.dot(self.regular)
         reg2_squared = self.regular2.T.dot(self.regular2)
         smthLam_squared = self.smthLam.T.dot(self.smthLam)
         mat_sum = dcr_matrix_squared + frac * (reg_squared + reg2_squared + smthLam_squared)
+        # mat_sum = dcr_matrix_squared + frac * (reg_squared + reg2_squared + smthLam_squared)
         mat_inv = np.linalg.pinv(mat_sum)
+        dcr_radius = int(self.dcr_max * self.n_step)
+        for _i in range(self.y_size * self.n_step):
+            if _i > dcr_radius:
+                mat_inv[_i, 0:_i - dcr_radius] = 0.
+            if _i + dcr_radius < self.y_size * self.n_step:
+                mat_inv[_i, _i + dcr_radius:] = 0.
         self.transfer = mat_inv.dot(dcr_matrix_extend.T)
 
     def build_model(self):
@@ -156,7 +166,7 @@ class DcrCorrection:
             img_vec = reduce(lambda vec1, vec2: np.append(vec1, vec2),
                              [(calexp.getMaskedImage().getImage().getArray())[:, _i]
                               for calexp in self.exposures])
-            model.append(np.dot(self.transfer, img_vec.T))
+            model.append(self.transfer.dot(img_vec.T))
         # model_struct = Struct(model=model, azimuths=self.azimuth_arr, elevations=self.elevation_arr,
         #                       bandpass=self.bandpass, photoParams=self.photoParams,
         #                       bbox=self.bbox, wcs=self.wcs)
@@ -168,6 +178,14 @@ class DcrCorrection:
         for calexp in self.exposures:
             variance += calexp.getMaskedImage().getVariance().getArray()**2.
         self.variance = np.sqrt(variance) / self.n_images
+
+    def view_model(self, index=0):
+        """Simple function to convert the awkward array indexing of the model to a standard array."""
+        model = np.zeros((self.y_size, self.x_size))
+        for _i in range(self.x_size):
+            model[:, _i] = self.model[_i][index::self.n_step]
+        return(model)
+
 
     # def persist_model(self, filepath=None):
         # pass
@@ -279,6 +297,7 @@ class DcrCorrection:
 def _calc_dcr_matrix(elevation=None, azimuth=None, size=None, pixel_scale=None, bandpass=None):
     n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
     dcr_matrix = np.zeros((size, n_step * size))
+    # kernel_size = 4
     dcr_gen = _dcr_generator(bandpass, pixel_scale=pixel_scale,
                              elevation=elevation, azimuth=azimuth)
     # NOTE: This is purely 1D for now! Offset from _dcr_generator is a tuple of the y and x offsets.
@@ -286,13 +305,17 @@ def _calc_dcr_matrix(elevation=None, azimuth=None, size=None, pixel_scale=None, 
         offset_use = offset[1]
         i_high = int(np.ceil(offset_use))
         i_low = int(np.floor(offset_use))
+        frac_high = offset_use - np.floor(offset_use)
+        frac_low = np.ceil(offset_use) - offset_use
+        # kernel = kernel_1d([1 + frac_high], kernel_size)
         for _i in range(size):
             if _i + i_low < 0:
                 dcr_matrix[0, f_i + _i * n_step] = 1.
             elif _i + i_high >= size:
                 dcr_matrix[-1, f_i + _i * n_step] = 1.
             else:
-                dcr_matrix[:, f_i + _i * n_step] = kernel_1d([_i + offset_use], size)
+                dcr_matrix[_i + i_low, f_i + _i * n_step] = frac_low
+                dcr_matrix[_i + i_high, f_i + _i * n_step] = frac_high
     return(dcr_matrix)
 
 
@@ -301,24 +324,27 @@ def _difference(size):
     """ returns a toeplitz matrix
     difference regularization
     """
-    r = np.zeros(size)
-    c = np.zeros(size)
+    size_use = size + 1
+    r = np.zeros(size_use)
+    c = np.zeros(size_use)
     r[0] = 1
-    r[size - 1] = -1
+    r[size_use - 1] = -1
     c[1] = -1
-    return toeplitz(r, c).T
+    result = toeplitz(r, c).T
+    return result[0: size, 0: size]
 
 
 def _difference2(size):
     # adapted from Nate Lust's DCR Demo iPython notebook
-    r = np.zeros(size)
+    size_use = size + 1
+    r = np.zeros(size_use)
     r[0] = 2
     r[1] = -1
     r[-1] = -1
-    matrix = np.zeros((size, size))
-    for i in range(size):
+    matrix = np.zeros((size_use, size_use))
+    for i in range(size_use):
         matrix[i] = np.roll(r, i)
-    return matrix
+    return matrix[0: size, 0: size]
 
 
 def _build_dataId(obsid_range, band):
@@ -452,6 +478,23 @@ def kernel_1d(locs, size):
     pi = np.pi
     pix = np.arange(size, dtype=np.float64)
     sign = np.power(-1.0, pix)
+    offset = np.floor(locs)
+    delta = locs - offset
+    kernel = np.zeros((len(locs), size), dtype=np.float64)
+    for i, loc in enumerate(locs):
+        if delta[i] == 0:
+            kernel[i, :][offset[i]] = 1.0
+        else:
+            kernel[i, :] = np.sin(-pi * loc) / (pi * (pix - loc)) * sign
+    return kernel
+
+def kernel_1d_sparse(locs, size):
+    """Pre-compute a subset of pixels of a 1D sinc function."""
+    pi = np.pi
+
+    sign = [-1., 1, 1, -1]
+
+
     offset = np.floor(locs)
     delta = locs - offset
     kernel = np.zeros((len(locs), size), dtype=np.float64)
