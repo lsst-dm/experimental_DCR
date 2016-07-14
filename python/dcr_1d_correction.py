@@ -95,7 +95,8 @@ class DcrCorrection:
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=pixel_scale,
                                                  bandpass=band_name)
         dcr_test = _dcr_generator(bandpass, pixel_scale=pixel_scale, elevation=elevation_min, azimuth=0.)
-        self.dcr_max = np.ceil((dcr_test.next())[1]) + 1
+        self.dcr_max = int(np.ceil((dcr_test.next())[1]) + 1)
+        self.kernel_size = int(2 * self.dcr_max + 1)
         self._build_regularization()
 
         # Construct a matrix for each input image that maps multiple sub-bandwidth frequency planes to
@@ -103,71 +104,40 @@ class DcrCorrection:
         self.dcr_matrix = []
         for img_i, elevation in enumerate(self.elevation_arr):
             azimuth = self.azimuth_arr[img_i]
-            self.dcr_matrix.append(_calc_dcr_matrix(elevation=elevation, azimuth=azimuth, size=self.y_size,
-                                                    pixel_scale=pixel_scale, bandpass=self.bandpass))
+            self.dcr_matrix.append(_calc_dcr_matrix(elevation=elevation, azimuth=azimuth,
+                                                    size=self.kernel_size, pixel_scale=pixel_scale,
+                                                    bandpass=self.bandpass))
 
     def _build_regularization(self):
         # Regularization adapted from Nate Lust's DCR Demo iPython notebook
         # Calculate a difference matrix for regularization as if each wavelength were a pixel, then scale
         # The difference matrix to the size of the number of pixels times number of wavelengths
-        baseReg = _difference(self.y_size)
-        Regular = np.zeros((self.n_step*self.y_size, self.n_step*self.y_size))
+        baseReg = _difference(self.kernel_size)
+        reg_pix = np.zeros((self.n_step * self.kernel_size, self.n_step * self.kernel_size))
 
         for i in range(self.n_step):
-            Regular[i::self.n_step, i::self.n_step] = baseReg
-
-        # Do the same thing as above but with the second derivative
-        baseReg2 = _difference2(self.y_size)
-        Regular2 = np.zeros((self.n_step*self.y_size, self.n_step*self.y_size))
-
-        for i in range(self.n_step):
-            Regular2[i::self.n_step, i::self.n_step] = baseReg2
+            reg_pix[i::self.n_step, i::self.n_step] = baseReg
 
         # Extra regularization that we force the SED to be smooth
         baseLam = _difference(self.n_step)
-        smthLam = np.zeros(Regular.shape)
+        reg_lambda = np.zeros(reg_pix.shape)
 
-        for i in range(self.y_size):
-            smthLam[i*self.n_step: i*self.n_step + self.n_step,
-                    i*self.n_step: i*self.n_step + self.n_step] = baseLam
-        self.regular = Regular.T
-        self.regular2 = Regular2.T
-        self.smthLam = smthLam.T
+        for i in range(self.kernel_size):
+            reg_lambda[i * self.n_step: i * self.n_step + self.n_step,
+                       i * self.n_step: i * self.n_step + self.n_step] = baseLam
+        self.regularize = np.append(reg_pix.T, reg_lambda.T, axis=0)
 
     def build_transfer_matrix(self):
         """Break out the computationally expensive step of computing the matrix inverse."""
-        """Note: this is very slow."""
+        """No longer slow, since it's now very small"""
         dcr_matrix_extend = reduce(lambda mat1, mat2: np.append(mat1, mat2, axis=0), self.dcr_matrix)
-        regularization = np.append(self.regular, self.smthLam, axis=0)
-        dcr_matrix_reg = np.append(dcr_matrix_extend, regularization, axis=0)
-        # frac = 1.
-        # dcr_matrix_squared = dcr_matrix_extend.T.dot(dcr_matrix_extend)
-        # reg_squared = self.regular.T.dot(self.regular)
-        # reg2_squared = self.regular2.T.dot(self.regular2)
-        # smthLam_squared = self.smthLam.T.dot(self.smthLam)
-        # mat_sum = dcr_matrix_squared + frac * (reg_squared + reg2_squared + smthLam_squared)
-        # mat_inv = np.linalg.pinv(dcr_matrix_squared)
+        dcr_matrix_reg = np.append(dcr_matrix_extend, self.regularize, axis=0)
         mat_inv = np.linalg.pinv(dcr_matrix_reg.T.dot(dcr_matrix_reg))
-        del regularization
-        del dcr_matrix_reg
-        # dcr_radius = int(self.dcr_max * self.n_step)
-        # for _i in range(self.y_size * self.n_step):
-        #     if _i > dcr_radius:
-        #         mat_inv[_i, 0:_i - dcr_radius] = 0.
-        #     if _i + dcr_radius < self.y_size * self.n_step:
-        #         mat_inv[_i, _i + dcr_radius + 1:] = 0.
         transfer = mat_inv.dot(dcr_matrix_extend.T)
-        del mat_inv
-        del dcr_matrix_extend
-        dcr_radius = int(self.dcr_max)
-        # for _i in range(self.y_size * self.n_step):
-        #     i0 = _i * self.n_step
-        #     i1 = i0 + self.n_step
-        #     if _i > dcr_radius:
-        #         transfer[i0: i1, 0:_i - dcr_radius] = 0.
-        #     if _i + dcr_radius < self.y_size * self.n_step:
-        #         transfer[i0: i1, _i + dcr_radius + 1:] = 0.
-        self.transfer = transfer
+        self.transfer = []
+        for _i in range(self.kernel_size):
+            self.transfer.append(transfer[_i * self.n_step: (_i + 1) * self.n_step, :])
+        # self.transfer = [transfer[_i * self.n_step: (_i + 1) * self.n_step, :] for _i in range(self.n_step)]
 
     def build_model(self):
         """Now we have to solve the linear equation for the above matrix for each pixel, across all images."""
@@ -177,13 +147,31 @@ class DcrCorrection:
 
         model = []
         for _i in range(self.x_size):
-            img_vec = reduce(lambda vec1, vec2: np.append(vec1, vec2),
-                             [(calexp.getMaskedImage().getImage().getArray())[:, _i]
-                              for calexp in self.exposures])
-            model.append(self.transfer.dot(img_vec.T))
-        # model_struct = Struct(model=model, azimuths=self.azimuth_arr, elevations=self.elevation_arr,
-        #                       bandpass=self.bandpass, photoParams=self.photoParams,
-        #                       bbox=self.bbox, wcs=self.wcs)
+            img_vec = np.vstack([(calexp.getMaskedImage().getImage().getArray())[:, _i]
+                                for calexp in self.exposures])
+            # img_vec = reduce(lambda vec1, vec2: np.append(vec1, vec2, axis=0),
+            #                  [(calexp.getMaskedImage().getImage().getArray())[:, _i]
+            #                   for calexp in self.exposures])
+            img_vec /= self.n_images
+            model_single = []
+            for _j in range(self.dcr_max):
+                # NOT CORRECT!!!
+                zero_pad = np.zeros((self.n_images, self.dcr_max - _j))
+                img_edge = np.ravel(np.append(zero_pad, img_vec[:, 0: self.kernel_size - self.dcr_max + _j]))
+                # model_single[_j * self.n_step: (_j +1) * self.n_step] = self.transfer.dot(img_edge.T)
+                model_single.append(self.transfer[_j].dot(img_edge.T))
+            for _j in range(self.dcr_max):
+                # NOT CORRECT!!!
+                zero_pad = np.zeros((self.n_images, _j + 1))
+                img_edge = np.ravel(np.append(img_vec[:, _j + 1 - self.kernel_size:], zero_pad))
+                # model_single[_j * self.n_step: (_j +1) * self.n_step] = self.transfer.dot(img_edge.T)
+                model_single.append(self.transfer[-self.dcr_max + _j].dot(img_edge.T))
+            for _j in range(self.dcr_max, self.y_size - self.dcr_max):
+                # This one should be OK
+                # model_single[_j * self.n_step: (_j +1) * self.n_step] = self.transfer.dot(img_edge.T)
+                img_slice = np.ravel(img_vec[:, _j - self.dcr_max: _j + self.dcr_max + 1])
+                model_single.append(self.transfer[self.dcr_max].dot(img_slice.T))
+            model.append(model_single)
         self.model = model
 
         # Calculate the variance of the model.
@@ -196,8 +184,9 @@ class DcrCorrection:
     def view_model(self, index=0):
         """Simple function to convert the awkward array indexing of the model to a standard array."""
         model = np.zeros((self.y_size, self.x_size))
-        for _i in range(self.x_size):
-            model[:, _i] = self.model[_i][index::self.n_step]
+        for _j in range(self.y_size):
+            for _i in range(self.x_size):
+                model[_j, _i] = self.model[_i][_j][index]
         return(model)
 
 
@@ -226,23 +215,26 @@ class DcrCorrection:
             else:
                 obsid_range = [{"visit": None} for elevation in elevation_arr]
             if azimuth_arr is None:
-                azimuth_arr = [0 for _i in range(len(elevation_arr))]
+                azimuth_arr = [0 for _img in range(len(elevation_arr))]
             elif not hasattr(azimuth_arr, '__iter__'):
                 azimuth = azimuth_arr
-                azimuth_arr = [azimuth for _i in range(len(elevation_arr))]
+                azimuth_arr = [azimuth for _img in range(len(elevation_arr))]
 
-        for _i, elevation in enumerate(elevation_arr):
-            dcr_matrix = _calc_dcr_matrix(elevation=elevation, azimuth=azimuth_arr[_i], size=self.y_size,
-                                          pixel_scale=self.photoParams.platescale, bandpass=self.bandpass)
+        for _img, elevation in enumerate(elevation_arr):
+            dcr_matrix = _calc_dcr_matrix(elevation=elevation, azimuth=azimuth_arr[_img],
+                                          size=self.kernel_size, pixel_scale=self.photoParams.platescale,
+                                          bandpass=self.bandpass)
             image = np.zeros((self.y_size, self.x_size))
-            for _j, model in enumerate(self.model):
-                image[:, _j] = np.dot(dcr_matrix, model)
-
+            for _j in range(self.dcr_max, self.y_size - self.dcr_max):
+                for _i in range(self.x_size):
+                    model_vals = np.ravel(np.array(self.model[_i][_j - self.dcr_max: _j + self.dcr_max + 1]))
+                    image[_j - self.dcr_max: _j + self.dcr_max + 1, _i] += np.dot(dcr_matrix, model_vals.T)
+                    # image[_j, _i] = np.dot(dcr_matrix[self.dcr_max, :], model_vals.T)
             # seed and obsid will be over-written each iteration, but are needed to use _create_exposure as-is
             self.seed = None
-            self.obsid = dataId[_i]['visit'] + 500 % 1000
+            self.obsid = dataId[_img]['visit'] + 500 % 1000
             exposure = self._create_exposure(image, variance=self.variance, snap=0,
-                                             elevation=elevation, azimuth=azimuth_arr[_i])
+                                             elevation=elevation, azimuth=azimuth_arr[_img])
             if output_directory is not None:
                 band_dict = {'u': 0, 'g': 1, 'r': 2, 'i': 3, 'z': 4, 'y': 5}
                 bn = band_dict[self.photoParams.bandpass]
@@ -316,21 +308,21 @@ def _calc_dcr_matrix(elevation=None, azimuth=None, size=None, pixel_scale=None, 
                              elevation=elevation, azimuth=azimuth)
     # NOTE: This is purely 1D for now! Offset from _dcr_generator is a tuple of the y and x offsets.
     for f_i, offset in enumerate(dcr_gen):
-        offset_use = -offset[1]
+        offset_use = offset[1]
         i_high = int(np.ceil(offset_use))
         i_low = int(np.floor(offset_use))
         frac_high = offset_use - np.floor(offset_use)
         frac_low = np.ceil(offset_use) - offset_use
         # kernel = kernel_1d([1 + frac_high], kernel_size)
         for _i in range(size):
-            dcr_matrix[:, f_i + _i * n_step] = kernel_1d([_i + offset_use], size)
-            # if _i + i_low < 0:
-            #     dcr_matrix[0, f_i + _i * n_step] = 1.
-            # elif _i + i_high >= size:
-            #     dcr_matrix[-1, f_i + _i * n_step] = 1.
-            # else:
-            #     dcr_matrix[_i + i_low, f_i + _i * n_step] = frac_low
-            #     dcr_matrix[_i + i_high, f_i + _i * n_step] = frac_high
+            # dcr_matrix[:, f_i + _i * n_step] = kernel_1d([_i + offset_use], size)
+            if _i + i_low < 0:
+                dcr_matrix[0, f_i + _i * n_step] = 1.
+            elif _i + i_high >= size:
+                dcr_matrix[-1, f_i + _i * n_step] = 1.
+            else:
+                dcr_matrix[_i + i_low, f_i + _i * n_step] = frac_low
+                dcr_matrix[_i + i_high, f_i + _i * n_step] = frac_high
     return(dcr_matrix)
 
 
