@@ -68,16 +68,13 @@ class DcrCorrection:
             self.azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
             self.airmass_arr.append(calexp.getMetadata().get("AIRMASS"))
 
-        # if np.max(azimuth_arr) != np.min(azimuth_arr):
-        #     print("Multiple azimuth angles detected! Only one angle is supported for now. Returning")
-        #     return
-
         self.n_images = len(self.elevation_arr)
         self.y_size, self.x_size = self.exposures[0].getDimensions()
         pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
         exposure_time = calexp.getInfo().getCalib().getExptime()
         self.bbox = calexp.getBBox()
         self.wcs = calexp.getWcs()
+        self._combine_masks()
 
         bandpass = _load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
         if n_step is not None:
@@ -109,9 +106,11 @@ class DcrCorrection:
                                                     bandpass=self.bandpass))
 
     def _build_regularization(self):
-        # Regularization adapted from Nate Lust's DCR Demo iPython notebook
-        # Calculate a difference matrix for regularization as if each wavelength were a pixel, then scale
-        # The difference matrix to the size of the number of pixels times number of wavelengths
+        """
+        Regularization adapted from Nate Lust's DCR Demo iPython notebook.
+        Calculate a difference matrix for regularization as if each wavelength were a pixel, then scale
+        the difference matrix to the size of the number of pixels times number of wavelengths
+        """
         baseReg = _difference(self.kernel_size)
         reg_pix = np.zeros((self.n_step * self.kernel_size, self.n_step * self.kernel_size))
 
@@ -137,21 +136,16 @@ class DcrCorrection:
         self.transfer = []
         for _i in range(self.kernel_size):
             self.transfer.append(transfer[_i * self.n_step: (_i + 1) * self.n_step, :])
-        # self.transfer = [transfer[_i * self.n_step: (_i + 1) * self.n_step, :] for _i in range(self.n_step)]
 
     def build_model(self):
         """Now we have to solve the linear equation for the above matrix for each pixel, across all images."""
         # NOTE: This is purely 1D for now, and assumed to ALWAYS be constrained to the y-axis!!
         # Start with a straightforward loop over the pixels to verify the algorithm. We'll optimize later.
-        """Note: this is very slow."""
 
         model = []
         for _i in range(self.x_size):
             img_vec = np.vstack([(calexp.getMaskedImage().getImage().getArray())[:, _i]
                                 for calexp in self.exposures])
-            # img_vec = reduce(lambda vec1, vec2: np.append(vec1, vec2, axis=0),
-            #                  [(calexp.getMaskedImage().getImage().getArray())[:, _i]
-            #                   for calexp in self.exposures])
             img_vec /= self.n_images
             model_single = []
             for _j in range(self.dcr_max):
@@ -229,7 +223,6 @@ class DcrCorrection:
                 for _i in range(self.x_size):
                     model_vals = np.ravel(np.array(self.model[_i][_j - self.dcr_max: _j + self.dcr_max + 1]))
                     image[_j - self.dcr_max: _j + self.dcr_max + 1, _i] += np.dot(dcr_matrix, model_vals.T)
-                    # image[_j, _i] = np.dot(dcr_matrix[self.dcr_max, :], model_vals.T)
             # seed and obsid will be over-written each iteration, but are needed to use _create_exposure as-is
             self.seed = None
             self.obsid = dataId[_img]['visit'] + 500 % 1000
@@ -241,6 +234,14 @@ class DcrCorrection:
                 filename = "lsst_e_%3i_f%i_R22_S11_E%3.3i.fits" % (exposure.getMetadata().get("OBSID"), bn, 2)
                 exposure.writeFits(output_directory + "images/" + filename)
             yield(exposure)
+
+    def _combine_masks(self):
+        """Compute the bitwise OR of the input masks."""
+        mask_arr = (exp.getMaskedImage().getMask().getArray() for exp in self.exposures)
+        mask = mask_arr.next()
+        for m in mask_arr:
+            mask = mask | m  # Compute the bitwise OR. This flags a pixel if ANY image is flagged there.
+        self.mask = mask
 
     # NOTE: This function was copied from StarFast.py
     def _create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0):
@@ -263,7 +264,7 @@ class DcrCorrection:
             variance = np.abs(array)
         exposure.getMaskedImage().getVariance().getArray()[:, :] = variance
 
-        # mask = exposure.getMaskedImage().getMask().getArray()
+        exposure.getMaskedImage().getMask().getArray()[:, :] = self.mask
         # edge_maskval = afwImage.MaskU_getPlaneBitMask("EDGE")
         # edge_mask_dist = np.ceil(self.psf.getFWHM())
         # mask[0: edge_mask_dist, :] = edge_maskval
