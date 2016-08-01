@@ -44,7 +44,118 @@ lsst_lat = -30.244639
 lsst_lon = -70.749417
 
 
-class DcrCorrection:
+class DcrModel:
+    """Lightweight object that contains only the minimum needed to generate DCR-matched template exposures."""
+
+    def __init__(self, ):
+        print("Running DcrModel init!")
+        pass
+
+    def generate_templates_from_model(self, obsid_range=None, elevation_arr=None, azimuth_arr=None,
+                                      repository=None, output_directory=None):
+        """Use the previously generated model and construct a dcr template image."""
+        if repository is not None:
+            butler = daf_persistence.Butler(repository)
+        else:
+            butler = self.butler
+        if obsid_range is not None:
+            dataId = _build_dataId(obsid_range, self.photoParams.bandpass)
+            elevation_arr = []
+            azimuth_arr = []
+            for _id in dataId:
+                calexp = butler.get("calexp", dataId=_id)
+                elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
+                azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
+        else:
+            if not hasattr(elevation_arr, '__iter__'):
+                elevation_arr = [elevation_arr]
+                obsid_range = [{"visit": None}]
+            else:
+                obsid_range = [{"visit": None} for elevation in elevation_arr]
+            if azimuth_arr is None:
+                azimuth_arr = [0 for _img in range(len(elevation_arr))]
+            elif not hasattr(azimuth_arr, '__iter__'):
+                azimuth = azimuth_arr
+                azimuth_arr = [azimuth for _img in range(len(elevation_arr))]
+
+        for _img, elevation in enumerate(elevation_arr):
+            dcr_matrix = _calc_dcr_matrix(elevation=elevation, azimuth=azimuth_arr[_img],
+                                          size=self.kernel_size, pixel_scale=self.photoParams.platescale,
+                                          bandpass=self.bandpass)
+            image = np.zeros((self.y_size, self.x_size))
+            radius = self.kernel_size//2
+            for _j in range(radius, self.y_size - radius):
+                for _i in range(self.x_size):
+                    model_vals = np.ravel(np.array(self.model[_i][_j - radius: _j + radius + 1]))
+                    image[_j - radius: _j + radius + 1, _i] += np.dot(dcr_matrix, model_vals.T)
+            # seed and obsid will be over-written each iteration, but are needed to use _create_exposure as-is
+            self.seed = None
+            self.obsid = dataId[_img]['visit'] + 500 % 1000
+            exposure = self._create_exposure(image, variance=self.variance, snap=0,
+                                             elevation=elevation, azimuth=azimuth_arr[_img])
+            if output_directory is not None:
+                band_dict = {'u': 0, 'g': 1, 'r': 2, 'i': 3, 'z': 4, 'y': 5}
+                bn = band_dict[self.photoParams.bandpass]
+                filename = "lsst_e_%3i_f%i_R22_S11_E%3.3i.fits" % (exposure.getMetadata().get("OBSID"), bn, 2)
+                exposure.writeFits(output_directory + "images/" + filename)
+            yield(exposure)
+
+    def view_model(self, index=0):
+        """Simple function to convert the awkward array indexing of the model to a standard array."""
+        model = np.zeros((self.y_size, self.x_size))
+        for _j in range(self.y_size):
+            for _i in range(self.x_size):
+                model[_j, _i] = self.model[_i][_j][index]
+        return(model)
+
+    # NOTE: This function was copied from StarFast.py
+    def _create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0):
+        """Convert a numpy array to an LSST exposure, and units of electron counts."""
+        exposure = afwImage.ExposureF(self.bbox)
+        exposure.setWcs(self.wcs)
+        # We need the filter name in the exposure metadata, and it can't just be set directly
+        try:
+            exposure.setFilter(afwImage.Filter(self.photoParams.bandpass))
+        except:
+            filterPolicy = pexPolicy.Policy()
+            filterPolicy.add("lambdaEff", self.bandpass.calc_eff_wavelen())
+            afwImage.Filter.define(afwImage.FilterProperty(self.photoParams.bandpass, filterPolicy))
+            exposure.setFilter(afwImage.Filter(self.photoParams.bandpass))
+        calib = afwImage.Calib()
+        calib.setExptime(self.photoParams.exptime)
+        exposure.setCalib(calib)
+        exposure.getMaskedImage().getImage().getArray()[:, :] = array
+        if variance is None:
+            variance = np.abs(array)
+        exposure.getMaskedImage().getVariance().getArray()[:, :] = variance
+
+        exposure.getMaskedImage().getMask().getArray()[:, :] = self.mask
+
+        hour_angle = (90.0 - elevation) * np.cos(np.radians(azimuth)) / 15.0
+        mjd = 59000.0 + (lsst_lat / 15.0 - hour_angle) / 24.0
+        meta = exposure.getMetadata()
+        meta.add("CHIPID", "R22_S11")
+        # Required! Phosim output stores the snap ID in "OUTFILE" as the last three characters in a string.
+        meta.add("OUTFILE", ("SnapId_%3.3i" % snap))
+
+        meta.add("TAI", mjd)
+        meta.add("MJD-OBS", mjd)
+
+        meta.add("EXTTYPE", "IMAGE")
+        meta.add("EXPTIME", 30.0)
+        meta.add("AIRMASS", 1.0 / np.sin(np.radians(elevation)))
+        meta.add("ZENITH", 90 - elevation)
+        meta.add("AZIMUTH", azimuth)
+        # meta.add("FILTER", self.band_name)
+        if self.seed is not None:
+            meta.add("SEED", self.seed)
+        if self.obsid is not None:
+            meta.add("OBSID", self.obsid)
+            self.obsid += 1
+        return(exposure)
+
+
+class DcrCorrection(DcrModel):
     """!Class that loads LSST calibrated exposures and produces airmass-matched template images."""
 
     def __init__(self, repository=".", obsid_range=None, band_name='g', wavelength_step=10,
@@ -124,6 +235,8 @@ class DcrCorrection:
         for i in range(self.kernel_size):
             reg_lambda[i * self.n_step: i * self.n_step + self.n_step,
                        i * self.n_step: i * self.n_step + self.n_step] = baseLam
+        # reg_pix = np.append(reg_pix, reg_pix.T, axis=1)
+        # reg_lambda = np.append(reg_lambda, reg_lambda.T, axis=1)
         self.regularize = np.append(reg_pix.T, reg_lambda.T, axis=0)
 
     def build_transfer_matrix(self):
@@ -133,9 +246,15 @@ class DcrCorrection:
         dcr_matrix_reg = np.append(dcr_matrix_extend, self.regularize, axis=0)
         mat_inv = np.linalg.pinv(dcr_matrix_reg.T.dot(dcr_matrix_reg))
         transfer = mat_inv.dot(dcr_matrix_extend.T)
+        # for _i in range(self.n_images):
+        #     for _j in range(self.kernel_size * self.n_step):
+        #         transfer[_j, _i * self.kernel_size: (_i + 1) * self.kernel_size] = \
+        #             _enforce_monotonic(transfer[_j, _i * self.kernel_size: (_i + 1) * self.kernel_size])
+        # transfer[transfer < 0] = 0
         self.transfer = []
         for _i in range(self.kernel_size):
-            self.transfer.append(transfer[_i * self.n_step: (_i + 1) * self.n_step, :])
+            transfer_single = transfer[_i * self.n_step: (_i + 1) * self.n_step, :]
+            self.transfer.append(transfer_single)
 
     def build_model(self):
         """Now we have to solve the linear equation for the above matrix for each pixel, across all images."""
@@ -143,28 +262,29 @@ class DcrCorrection:
         # Start with a straightforward loop over the pixels to verify the algorithm. We'll optimize later.
 
         model = []
+        kernel_radius = self.kernel_size//2
         for _i in range(self.x_size):
             img_vec = np.vstack([(calexp.getMaskedImage().getImage().getArray())[:, _i]
                                 for calexp in self.exposures])
             img_vec /= self.n_images
             model_single = []
-            for _j in range(self.dcr_max):
+            for _j in range(kernel_radius):
                 # NOT CORRECT!!!
-                zero_pad = np.zeros((self.n_images, self.dcr_max - _j))
-                img_edge = np.ravel(np.append(zero_pad, img_vec[:, 0: self.kernel_size - self.dcr_max + _j]))
+                zero_pad = np.zeros((self.n_images, kernel_radius - _j))
+                img_edge = np.ravel(np.append(zero_pad, img_vec[:, 0: kernel_radius + _j + 1]))
                 # model_single[_j * self.n_step: (_j +1) * self.n_step] = self.transfer.dot(img_edge.T)
                 model_single.append(self.transfer[_j].dot(img_edge.T))
-            for _j in range(self.dcr_max):
+            for _j in range(kernel_radius, self.y_size - kernel_radius):
+                # This one should be OK
+                # model_single[_j * self.n_step: (_j +1) * self.n_step] = self.transfer.dot(img_edge.T)
+                img_slice = np.ravel(img_vec[:, _j - kernel_radius: _j + kernel_radius + 1])
+                model_single.append(self.transfer[kernel_radius].dot(img_slice.T))
+            for _j in range(kernel_radius):
                 # NOT CORRECT!!!
                 zero_pad = np.zeros((self.n_images, _j + 1))
                 img_edge = np.ravel(np.append(img_vec[:, _j + 1 - self.kernel_size:], zero_pad))
                 # model_single[_j * self.n_step: (_j +1) * self.n_step] = self.transfer.dot(img_edge.T)
-                model_single.append(self.transfer[-self.dcr_max + _j].dot(img_edge.T))
-            for _j in range(self.dcr_max, self.y_size - self.dcr_max):
-                # This one should be OK
-                # model_single[_j * self.n_step: (_j +1) * self.n_step] = self.transfer.dot(img_edge.T)
-                img_slice = np.ravel(img_vec[:, _j - self.dcr_max: _j + self.dcr_max + 1])
-                model_single.append(self.transfer[self.dcr_max].dot(img_slice.T))
+                model_single.append(self.transfer[-kernel_radius + _j].dot(img_edge.T))
             model.append(model_single)
         self.model = model
 
@@ -175,130 +295,16 @@ class DcrCorrection:
             variance += calexp.getMaskedImage().getVariance().getArray()**2.
         self.variance = np.sqrt(variance) / self.n_images
 
-    def view_model(self, index=0):
-        """Simple function to convert the awkward array indexing of the model to a standard array."""
-        model = np.zeros((self.y_size, self.x_size))
-        for _j in range(self.y_size):
-            for _i in range(self.x_size):
-                model[_j, _i] = self.model[_i][_j][index]
-        return(model)
-
-
     # def persist_model(self, filepath=None):
         # pass
-
-    def generate_templates_from_model(self, obsid_range=None, elevation_arr=None, azimuth_arr=None,
-                                      repository=None, output_directory=None):
-        """Use the previously generated model and construct a dcr template image."""
-        if repository is not None:
-            butler = daf_persistence.Butler(repository)
-        else:
-            butler = self.butler
-        if obsid_range is not None:
-            dataId = _build_dataId(obsid_range, self.photoParams.bandpass)
-            elevation_arr = []
-            azimuth_arr = []
-            for _id in dataId:
-                calexp = butler.get("calexp", dataId=_id)
-                elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
-                azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
-        else:
-            if not hasattr(elevation_arr, '__iter__'):
-                elevation_arr = [elevation_arr]
-                obsid_range = [{"visit": None}]
-            else:
-                obsid_range = [{"visit": None} for elevation in elevation_arr]
-            if azimuth_arr is None:
-                azimuth_arr = [0 for _img in range(len(elevation_arr))]
-            elif not hasattr(azimuth_arr, '__iter__'):
-                azimuth = azimuth_arr
-                azimuth_arr = [azimuth for _img in range(len(elevation_arr))]
-
-        for _img, elevation in enumerate(elevation_arr):
-            dcr_matrix = _calc_dcr_matrix(elevation=elevation, azimuth=azimuth_arr[_img],
-                                          size=self.kernel_size, pixel_scale=self.photoParams.platescale,
-                                          bandpass=self.bandpass)
-            image = np.zeros((self.y_size, self.x_size))
-            for _j in range(self.dcr_max, self.y_size - self.dcr_max):
-                for _i in range(self.x_size):
-                    model_vals = np.ravel(np.array(self.model[_i][_j - self.dcr_max: _j + self.dcr_max + 1]))
-                    image[_j - self.dcr_max: _j + self.dcr_max + 1, _i] += np.dot(dcr_matrix, model_vals.T)
-            # seed and obsid will be over-written each iteration, but are needed to use _create_exposure as-is
-            self.seed = None
-            self.obsid = dataId[_img]['visit'] + 500 % 1000
-            exposure = self._create_exposure(image, variance=self.variance, snap=0,
-                                             elevation=elevation, azimuth=azimuth_arr[_img])
-            if output_directory is not None:
-                band_dict = {'u': 0, 'g': 1, 'r': 2, 'i': 3, 'z': 4, 'y': 5}
-                bn = band_dict[self.photoParams.bandpass]
-                filename = "lsst_e_%3i_f%i_R22_S11_E%3.3i.fits" % (exposure.getMetadata().get("OBSID"), bn, 2)
-                exposure.writeFits(output_directory + "images/" + filename)
-            yield(exposure)
 
     def _combine_masks(self):
         """Compute the bitwise OR of the input masks."""
         mask_arr = (exp.getMaskedImage().getMask().getArray() for exp in self.exposures)
         mask = mask_arr.next()
         for m in mask_arr:
-            mask = mask | m  # Compute the bitwise OR. This flags a pixel if ANY image is flagged there.
+            mask = np.bitwise_or(mask, m)  # Flags a pixel if ANY image is flagged there.
         self.mask = mask
-
-    # NOTE: This function was copied from StarFast.py
-    def _create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0):
-        """Convert a numpy array to an LSST exposure, and units of electron counts."""
-        exposure = afwImage.ExposureF(self.bbox)
-        exposure.setWcs(self.wcs)
-        # We need the filter name in the exposure metadata, and it can't just be set directly
-        try:
-            exposure.setFilter(afwImage.Filter(self.photoParams.bandpass))
-        except:
-            filterPolicy = pexPolicy.Policy()
-            filterPolicy.add("lambdaEff", self.bandpass.calc_eff_wavelen())
-            afwImage.Filter.define(afwImage.FilterProperty(self.photoParams.bandpass, filterPolicy))
-            exposure.setFilter(afwImage.Filter(self.photoParams.bandpass))
-        calib = afwImage.Calib()
-        calib.setExptime(self.photoParams.exptime)
-        exposure.setCalib(calib)
-        exposure.getMaskedImage().getImage().getArray()[:, :] = array
-        if variance is None:
-            variance = np.abs(array)
-        exposure.getMaskedImage().getVariance().getArray()[:, :] = variance
-
-        exposure.getMaskedImage().getMask().getArray()[:, :] = self.mask
-        # edge_maskval = afwImage.MaskU_getPlaneBitMask("EDGE")
-        # edge_mask_dist = np.ceil(self.psf.getFWHM())
-        # mask[0: edge_mask_dist, :] = edge_maskval
-        # mask[:, 0: edge_mask_dist] = edge_maskval
-        # mask[-edge_mask_dist:, :] = edge_maskval
-        # mask[:, -edge_mask_dist:] = edge_maskval
-        # # Check for saturation, and mask any saturated pixels
-        # sat_maskval = afwImage.MaskU_getPlaneBitMask("SAT")
-        # if np.max(array) > self.saturation:
-        #     y_sat, x_sat = np.where(array >= self.saturation)
-        #     mask[y_sat, x_sat] += sat_maskval
-
-        hour_angle = (90.0 - elevation) * np.cos(np.radians(azimuth)) / 15.0
-        mjd = 59000.0 + (lsst_lat / 15.0 - hour_angle) / 24.0
-        meta = exposure.getMetadata()
-        meta.add("CHIPID", "R22_S11")
-        # Required! Phosim output stores the snap ID in "OUTFILE" as the last three characters in a string.
-        meta.add("OUTFILE", ("SnapId_%3.3i" % snap))
-
-        meta.add("TAI", mjd)
-        meta.add("MJD-OBS", mjd)
-
-        meta.add("EXTTYPE", "IMAGE")
-        meta.add("EXPTIME", 30.0)
-        meta.add("AIRMASS", 1.0 / np.sin(np.radians(elevation)))
-        meta.add("ZENITH", 90 - elevation)
-        meta.add("AZIMUTH", azimuth)
-        # meta.add("FILTER", self.band_name)
-        if self.seed is not None:
-            meta.add("SEED", self.seed)
-        if self.obsid is not None:
-            meta.add("OBSID", self.obsid)
-            self.obsid += 1
-        return(exposure)
 
 
 def _calc_dcr_matrix(elevation=None, azimuth=None, size=None, pixel_scale=None, bandpass=None):
@@ -314,16 +320,16 @@ def _calc_dcr_matrix(elevation=None, azimuth=None, size=None, pixel_scale=None, 
         i_low = int(np.floor(offset_use))
         frac_high = offset_use - np.floor(offset_use)
         frac_low = np.ceil(offset_use) - offset_use
-        # kernel = kernel_1d([1 + frac_high], kernel_size)
         for _i in range(size):
-            # dcr_matrix[:, f_i + _i * n_step] = kernel_1d([_i + offset_use], size)
-            if _i + i_low < 0:
-                dcr_matrix[0, f_i + _i * n_step] = 1.
-            elif _i + i_high >= size:
-                dcr_matrix[-1, f_i + _i * n_step] = 1.
-            else:
-                dcr_matrix[_i + i_low, f_i + _i * n_step] = frac_low
-                dcr_matrix[_i + i_high, f_i + _i * n_step] = frac_high
+            dcr_matrix[:, f_i + _i * n_step] = kernel_1d([size//2 + offset_use], size)
+            # if _i + i_low < 0:
+            #     dcr_matrix[0, f_i + _i * n_step] += 1. - np.sum(dcr_matrix[:, f_i + _i * n_step])
+            # elif _i + i_high >= size:
+            #     dcr_matrix[-1, f_i + _i * n_step] += 1. - np.sum(dcr_matrix[:, f_i + _i * n_step])
+            # else:
+            #     dcr_matrix[_i + i_low, f_i + _i * n_step] = frac_low
+            #     dcr_matrix[_i + i_high, f_i + _i * n_step] = frac_high
+    # dcr_matrix = dcr_matrix[:, n_step * size//2: (n_step + 1) * size//2]
     return(dcr_matrix)
 
 
@@ -496,19 +502,20 @@ def kernel_1d(locs, size):
             kernel[i, :] = np.sin(-pi * loc) / (pi * (pix - loc)) * sign
     return kernel
 
-def kernel_1d_sparse(locs, size):
-    """Pre-compute a subset of pixels of a 1D sinc function."""
-    pi = np.pi
 
-    sign = [-1., 1, 1, -1]
-
-
-    offset = np.floor(locs)
-    delta = locs - offset
-    kernel = np.zeros((len(locs), size), dtype=np.float64)
-    for i, loc in enumerate(locs):
-        if delta[i] == 0:
-            kernel[i, :][offset[i]] = 1.0
-        else:
-            kernel[i, :] = np.sin(-pi * loc) / (pi * (pix - loc)) * sign
-    return kernel
+def _enforce_monotonic(array, absolute=True):
+    max_i = np.argmax(array)
+    result = array.copy()
+    for _i in range(0, max_i):
+        # Use result and not array, so that subsequent pixels are also zeroed.
+        if np.abs(result[max_i - _i - 1]) >= np.abs(result[max_i - _i]):
+            result[max_i - _i - 1] = 0
+        # if (result[max_i - _i - 1] < 0) and (result[max_i - _i] < 0):
+        #     result[max_i - _i - 1] = 0
+    for _i in range(max_i + 1, len(result)):
+        if np.abs(result[_i]) >= np.abs(result[_i - 1]):
+            result[_i] = 0
+        # if (result[_i] < 0) and (result[_i - 1] < 0):
+        #     result[_i] = 0
+    # result[max_i] = array[max_i]
+    return(result)
