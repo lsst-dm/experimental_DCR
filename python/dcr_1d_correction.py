@@ -85,9 +85,10 @@ class DcrModel:
             image = np.zeros((self.y_size, self.x_size))
             radius = self.kernel_size//2
             for _j in range(radius, self.y_size - radius):
+                dcr_matrix_use = dcr_matrix[0: self.kernel_size]
                 for _i in range(self.x_size):
                     model_vals = np.ravel(np.array(self.model[_i][_j - radius: _j + radius + 1]))
-                    image[_j - radius: _j + radius + 1, _i] += np.dot(dcr_matrix, model_vals.T)
+                    image[_j - radius: _j + radius + 1, _i] += np.dot(dcr_matrix_use, model_vals.T)
             # seed and obsid will be over-written each iteration, but are needed to use _create_exposure as-is
             self.seed = None
             self.obsid = dataId[_img]['visit'] + 500 % 1000
@@ -233,8 +234,8 @@ class DcrCorrection(DcrModel):
         reg_lambda = np.zeros(reg_pix.shape)
 
         for i in range(self.kernel_size):
-            reg_lambda[i * self.n_step: i * self.n_step + self.n_step,
-                       i * self.n_step: i * self.n_step + self.n_step] = baseLam
+            reg_lambda[i * self.n_step: (i + 1) * self.n_step,
+                       i * self.n_step: (i + 1) * self.n_step] = baseLam
         # reg_pix = np.append(reg_pix, reg_pix.T, axis=1)
         # reg_lambda = np.append(reg_lambda, reg_lambda.T, axis=1)
         self.regularize = np.append(reg_pix.T, reg_lambda.T, axis=0)
@@ -272,19 +273,22 @@ class DcrCorrection(DcrModel):
                 # NOT CORRECT!!!
                 zero_pad = np.zeros((self.n_images, kernel_radius - _j))
                 img_edge = np.ravel(np.append(zero_pad, img_vec[:, 0: kernel_radius + _j + 1]))
+                img_use = np.ravel(np.hstack([img_edge] for _ in range(self.kernel_size)))
                 # model_single[_j * self.n_step: (_j +1) * self.n_step] = self.transfer.dot(img_edge.T)
-                model_single.append(self.transfer[_j].dot(img_edge.T))
+                model_single.append(self.transfer[_j].dot(img_use.T))
             for _j in range(kernel_radius, self.y_size - kernel_radius):
                 # This one should be OK
                 # model_single[_j * self.n_step: (_j +1) * self.n_step] = self.transfer.dot(img_edge.T)
                 img_slice = np.ravel(img_vec[:, _j - kernel_radius: _j + kernel_radius + 1])
-                model_single.append(self.transfer[kernel_radius].dot(img_slice.T))
+                img_use = np.ravel(np.hstack([img_slice] for _ in range(self.kernel_size)))
+                model_single.append(self.transfer[kernel_radius].dot(img_use.T))
             for _j in range(kernel_radius):
                 # NOT CORRECT!!!
                 zero_pad = np.zeros((self.n_images, _j + 1))
                 img_edge = np.ravel(np.append(img_vec[:, _j + 1 - self.kernel_size:], zero_pad))
+                img_use = np.ravel(np.hstack([img_edge] for _ in range(self.kernel_size)))
                 # model_single[_j * self.n_step: (_j +1) * self.n_step] = self.transfer.dot(img_edge.T)
-                model_single.append(self.transfer[-kernel_radius + _j].dot(img_edge.T))
+                model_single.append(self.transfer[-kernel_radius + _j].dot(img_use.T))
             model.append(model_single)
         self.model = model
 
@@ -309,7 +313,7 @@ class DcrCorrection(DcrModel):
 
 def _calc_dcr_matrix(elevation=None, azimuth=None, size=None, pixel_scale=None, bandpass=None):
     n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
-    dcr_matrix = np.zeros((size, n_step * size))
+    dcr_matrix = np.zeros((size * size, n_step * size))
     # kernel_size = 4
     dcr_gen = _dcr_generator(bandpass, pixel_scale=pixel_scale,
                              elevation=elevation, azimuth=azimuth)
@@ -321,7 +325,8 @@ def _calc_dcr_matrix(elevation=None, azimuth=None, size=None, pixel_scale=None, 
         frac_high = offset_use - np.floor(offset_use)
         frac_low = np.ceil(offset_use) - offset_use
         for _i in range(size):
-            dcr_matrix[:, f_i + _i * n_step] = kernel_1d([size//2 + offset_use], size)
+            dcr_matrix[_i * size: (_i + 1) * size, f_i + _i * n_step] = \
+                kernel_1d([size//2 + offset_use], size)
             # if _i + i_low < 0:
             #     dcr_matrix[0, f_i + _i * n_step] += 1. - np.sum(dcr_matrix[:, f_i + _i * n_step])
             # elif _i + i_high >= size:
