@@ -80,25 +80,35 @@ class DcrModel:
             pix = self.photoParams.platescale
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=pix, elevation=el, azimuth=az)
             if self.use_psf:
-                dcr_phase = _calc_psf_kernel(exp, dcr_gen)
+                dcr_kernel = _calc_psf_kernel(exp, dcr_gen)
             else:
-                dcr_phase = _calc_offset_phase(exp, dcr_gen)
-            image = np.fft.irfft2(np.sum(self.model * dcr_phase, axis=0))
-            # dcr_matrix = _calc_dcr_matrix(elevation=elevation, azimuth=azimuth_arr[_img],
-            #                               size=self.kernel_size, pixel_scale=self.photoParams.platescale,
-            #                               bandpass=self.bandpass)
-            # image = np.zeros((self.y_size, self.x_size))
-            # radius = self.kernel_size//2
-            # for _j in range(radius, self.y_size - radius):
-            #     dcr_matrix_use = dcr_matrix[0: self.kernel_size]
-            #     for _i in range(self.x_size):
-            #         model_vals = np.ravel(np.array(self.model[_i][_j - radius: _j + radius + 1]))
-            #         image[_j - radius: _j + radius + 1, _i] += np.dot(dcr_matrix_use, model_vals.T)
+                dcr_kernel = _calc_offset_phase(exp, dcr_gen)
+            if self.use_fft:
+                template = np.fft.ifft2(np.sum(self.model * dcr_kernel, axis=0))
+            else:
+                template = np.zeros((self.y_size, self.x_size))
+                weights = np.zeros((self.y_size, self.x_size))
+                for _j in range(self.y_size):
+                    for _i in range(self.x_size):
+                        # Deal with the edges later. Probably by padding the image with zeroes.
+                        if _i < self.dcr_max + 1:
+                            continue
+                        elif self.x_size - _i < self.dcr_max + 1:
+                            continue
+                        elif _j < self.dcr_max + 1:
+                            continue
+                        elif self.y_size - _j < self.dcr_max + 1:
+                            continue
+                        model_vals = self._extract_model_vals(_j, _i, radius=self.dcr_max, fft=self.use_fft)
+                        template_vals = self._apply_dcr_kernel(dcr_kernel, model_vals)
+                        self._insert_template_vals(_j, _i, template_vals, template, weights)
+                template[weights > 0] /= weights[weights > 0]
+                template[weights == 0] = 0.0
 
             # seed and obsid will be over-written each iteration, but are needed to use _create_exposure as-is
             self.seed = None
             self.obsid = dataId[_img]['visit'] + 500 % 1000
-            exposure = self._create_exposure(image, variance=self.variance, snap=0,
+            exposure = self._create_exposure(template, variance=self.variance, snap=0,
                                              elevation=el, azimuth=az)
             if output_directory is not None:
                 band_dict = {'u': 0, 'g': 1, 'r': 2, 'i': 3, 'z': 4, 'y': 5}
@@ -107,14 +117,38 @@ class DcrModel:
                 exposure.writeFits(output_directory + "images/" + filename)
             yield(exposure)
 
-    def view_model(self, index=0):
-        # """Simple function to convert the awkward array indexing of the model to a standard array."""
-        # model = np.zeros((self.y_size, self.x_size))
-        # for _j in range(self.y_size):
-        #     for _i in range(self.x_size):
-        #         model[_j, _i] = self.model[_i][_j][index]
-        # return(model)
-        pass
+    def _apply_dcr_kernel(self, dcr_kernel, model_vals):
+        if self.use_fft:
+            print("FFT template generation not yet supported!")
+            return
+        else:
+            x_size = self.kernel_size
+            y_size = self.kernel_size
+            template_vals = np.dot(dcr_kernel, model_vals.T)
+            return(np.reshape(template_vals, (y_size, x_size)))
+
+    def _extract_model_vals(self, _j, _i, radius=None, fft=False):
+        """Return all pixles within a radius of a given point as a 1D vector for each dcr plane model."""
+        model_arr = []
+        for _f in range(self.n_step):
+            model = self.model[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1].copy()
+            weights = self.weights[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1]
+            model[weights > 0] /= weights[weights > 0]
+            model[weights <= 0] = 0.0
+            if fft:
+                model = np.fft.fft2(np.fft.fftshift(model))
+            model_arr.append(np.ravel(model))
+        return(np.hstack(model_arr))
+
+    def _insert_template_vals(self, _j, _i, vals, template, weights, radius=None):
+        if self.use_psf:
+            psf_use = self.psf_sum
+            template[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals * psf_use
+            weights[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
+        else:
+            psf_use = self.psf_sum
+            template[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals * psf_use
+            weights[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
 
     # NOTE: This function was copied from StarFast.py
     def _create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0):
@@ -265,8 +299,9 @@ class DcrCorrection(DcrModel):
             az = self.azimuth_arr[_img]
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
             if self.use_psf:
-                dcr_kernel.append(_calc_psf_kernel2(calexp, dcr_gen, fft=self.use_fft, reverse_offset=True,
-                                  x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True, psf_img=self.psf_sum))
+                dcr_kernel.append(_calc_psf_kernel(calexp, dcr_gen, fft=self.use_fft, reverse_offset=True,
+                                  x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True,
+                                  psf_img=self.psf_sum))
             else:
                 dcr_kernel.append(_calc_offset_phase(calexp, dcr_gen, fft=self.use_fft, reverse_offset=True,
                                   x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True))
@@ -293,12 +328,7 @@ class DcrCorrection(DcrModel):
                     if _j > 860-53: continue
                     img_vals = self._extract_image_vals(_j, _i, radius=self.dcr_max, fft=self.use_fft)
 
-                self.debug_dcr_kernel = dcr_kernel
-                self.debug_img_vals = img_vals
-                self.debug_i = _i
-                self.debug_j = _j
                 model_vals = self._solve_model(dcr_kernel, img_vals)
-                self.debug_model_vals = model_vals
                 self._insert_model_vals(_j, _i, model_vals, radius=self.dcr_max)
                 # model[:, _j, _i] = _solve_model(dcr_kernel, img_vals, fft=self.use_fft)
         # self.model = model
@@ -325,25 +355,17 @@ class DcrCorrection(DcrModel):
             img_use = np.reshape(img_vals, (y_size, x_size, self.n_images))
             for _j in range(y_size):
                 for _i in range(x_size):
-                    _ij = _j + _i * y_size
-                    # kernel_single = dcr_kernel[:, _ij:: x_size*y_size]
                     kernel_single = kernel_use[:, _j, _i, :]
-                    # img_single = img_vals[_ij:: x_size*y_size]
                     img_single = img_use[_j, _i, :]
                     model_solution = np.linalg.lstsq(kernel_single.T, img_single)
                     model_fft[:, _j, _i] = model_solution[0]
-            # for _p in range(self.n_step):
-            #     model_fft[_p, :, :] = np.fft.fftshift(model_fft[_p, :, :])
             return(np.real(np.fft.ifftn(model_fft, axes=[1, 2])))
         else:
             x_size = self.kernel_size
             y_size = self.kernel_size
             model_solution = positive_lstsq(dcr_kernel.T, img_vals)
+            # model_solution = np.linalg.lstsq(dcr_kernel.T, img_vals)
             model_vals = model_solution[0]
-            # if len(model_solution[1]) == 1:
-            #     res_use = np.sqrt(model_solution[1])
-            #     self.residuals[_j, _i] = res_use
-            #     model_vals[res_use > np.abs(model_vals)] = 0.
             return(np.reshape(model_vals, (self.n_step, y_size, x_size)))
 
     def view_model(self, index=0):
@@ -380,20 +402,17 @@ def _calc_offset_phase(exposure, offset_gen, fft=False, x_size=None, y_size=None
             for _j in range(y_size):
                 for _i in range(x_size):
                     _ij = _i + _j * x_size
-                    # NOTE: This might need to be transposed
                     shift_mat[_ij, :] = np.ravel(scipy_shift(kernel, (_j - y_size//2, _i - x_size//2),
                                                  order=0, mode='constant', cval=0.0))
             phase_arr.append(shift_mat)
         else:
             phase_arr.append(np.ravel(kernel))
     phase_arr = np.vstack(phase_arr)
-    # if return_matrix:
-    #     phase_arr = np.einsum("i,j->ij", phase_arr, phase_arr)
     return(phase_arr)
 
 
-def _calc_psf_kernel2(exposure, offset_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
-                      reverse_offset=False, psf_img=None):
+def _calc_psf_kernel(exposure, offset_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
+                     reverse_offset=False, psf_img=None):
 
     if y_size is None:
         y_size = exposure.getHeight()
@@ -417,10 +436,10 @@ def _calc_psf_kernel2(exposure, offset_gen, fft=False, x_size=None, y_size=None,
             for _j in range(y_size):
                 for _i in range(x_size):
                     _ij = _i + _j * x_size
-                    # NOTE: This might need to be transposed
                     j_use = _j - y_size//2 + offset_y
                     i_use = _i - x_size//2 + offset_x
-                    psf_mat[_ij, :] = np.ravel(scipy_shift(psf_img, (j_use, i_use), mode='constant', cval=0.0))
+                    psf_mat[_ij, :] = np.ravel(scipy_shift(psf_img, (j_use, i_use),
+                                               mode='constant', cval=0.0))
             psf_kernel_arr.append(psf_mat)
         else:
             psf_kernel_arr.append(np.ravel(psf))
@@ -431,9 +450,10 @@ def _calc_psf_kernel2(exposure, offset_gen, fft=False, x_size=None, y_size=None,
     return(psf_kernel_arr)
 
 
-def _calc_psf_kernel(exposure, offset_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
-                     reverse_offset=False):
-
+def _calc_psf_kernel_modpsf(exposure, offset_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
+                            reverse_offset=False, psf_img=None):
+    # psf_img is passed in but not used so that this function can be swapped in for _calc_psf_kernel
+    # without having to change the keywords
     if y_size is None:
         y_size = exposure.getHeight()
     if x_size is None:
@@ -472,7 +492,6 @@ def _calc_psf_kernel(exposure, offset_gen, fft=False, x_size=None, y_size=None, 
             for _j in range(y_size):
                 for _i in range(x_size):
                     _ij = _i + _j * x_size
-                    # NOTE: This might need to be transposed
                     psf_mat[_ij, :] = np.ravel(scipy_shift(psf, (_j - y_size//2, _i - x_size//2),
                                                order=0, mode='constant', cval=0.0))
             psf_kernel_arr.append(psf_mat)
@@ -480,8 +499,6 @@ def _calc_psf_kernel(exposure, offset_gen, fft=False, x_size=None, y_size=None, 
             psf_kernel_arr.append(np.ravel(psf))
 
     psf_kernel_arr = np.vstack(psf_kernel_arr)
-    # if return_matrix:
-    #     psf_kernel_arr = np.einsum("i,j->ij", psf_kernel_arr, psf_kernel_arr)
     return(psf_kernel_arr)
 
 
