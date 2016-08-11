@@ -280,7 +280,7 @@ class DcrCorrection(DcrModel):
             az = self.azimuth_arr[_img]
             dcr_gen0 = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=90., azimuth=az)
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
-            psf_image.append(_calc_psf_kernel(calexp, dcr_gen0, fft=False,
+            psf_image.append(_calc_psf_kernel_full(calexp, dcr_gen0, fft=False,
                              x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=False))
             dcr_shift.append(_calc_offset_phase(calexp, dcr_gen, fft=False,
                              x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True))
@@ -450,8 +450,8 @@ def _calc_psf_kernel(exposure, offset_gen, fft=False, x_size=None, y_size=None, 
     return(psf_kernel_arr)
 
 
-def _calc_psf_kernel_modpsf(exposure, offset_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
-                            reverse_offset=False, psf_img=None):
+def _calc_psf_kernel_full(exposure, offset_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
+                          reverse_offset=False, psf_img=None):
     # psf_img is passed in but not used so that this function can be swapped in for _calc_psf_kernel
     # without having to change the keywords
     if y_size is None:
