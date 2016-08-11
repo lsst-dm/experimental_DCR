@@ -80,9 +80,13 @@ class DcrModel:
             pix = self.photoParams.platescale
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=pix, elevation=el, azimuth=az)
             if self.use_psf:
-                dcr_kernel = _calc_psf_kernel(exp, dcr_gen)
+                dcr_kernel = _calc_psf_kernel(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
+                                              x_size=self.kernel_size, y_size=self.kernel_size,
+                                              return_matrix=True, psf_img=self.psf_sum)
             else:
-                dcr_kernel = _calc_offset_phase(exp, dcr_gen)
+                dcr_kernel = _calc_offset_phase(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
+                                                x_size=self.kernel_size, y_size=self.kernel_size,
+                                                return_matrix=True)
             if self.use_fft:
                 template = np.fft.ifft2(np.sum(self.model * dcr_kernel, axis=0))
             else:
@@ -101,7 +105,8 @@ class DcrModel:
                             continue
                         model_vals = self._extract_model_vals(_j, _i, radius=self.dcr_max, fft=self.use_fft)
                         template_vals = self._apply_dcr_kernel(dcr_kernel, model_vals)
-                        self._insert_template_vals(_j, _i, template_vals, template, weights)
+                        self._insert_template_vals(_j, _i, template_vals, template, weights,
+                                                   radius=self.dcr_max)
                 template[weights > 0] /= weights[weights > 0]
                 template[weights == 0] = 0.0
 
@@ -124,7 +129,7 @@ class DcrModel:
         else:
             x_size = self.kernel_size
             y_size = self.kernel_size
-            template_vals = np.dot(dcr_kernel, model_vals.T)
+            template_vals = np.dot(dcr_kernel.T, model_vals)
             return(np.reshape(template_vals, (y_size, x_size)))
 
     def _extract_model_vals(self, _j, _i, radius=None, fft=False):
@@ -143,12 +148,12 @@ class DcrModel:
     def _insert_template_vals(self, _j, _i, vals, template, weights, radius=None):
         if self.use_psf:
             psf_use = self.psf_sum
-            template[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals * psf_use
-            weights[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
+            template[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals * psf_use
+            weights[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
         else:
             psf_use = self.psf_sum
-            template[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals * psf_use
-            weights[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
+            template[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals * psf_use
+            weights[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
 
     # NOTE: This function was copied from StarFast.py
     def _create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0):
@@ -321,11 +326,6 @@ class DcrCorrection(DcrModel):
                     continue
                 elif self.y_size - _j < self.dcr_max + 1:
                     continue
-                else:
-                    if _i < 625+25: continue
-                    if _i > 670+25: continue
-                    if _j < 815-53: continue
-                    if _j > 860-53: continue
                     img_vals = self._extract_image_vals(_j, _i, radius=self.dcr_max, fft=self.use_fft)
 
                 model_vals = self._solve_model(dcr_kernel, img_vals)
