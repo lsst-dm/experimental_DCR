@@ -379,7 +379,7 @@ def _calc_offset_phase(exposure, offset_gen, fft=False, x_size=None, y_size=None
             shift_mat = np.zeros((x_size * y_size, x_size * y_size))
             for _j in range(y_size):
                 for _i in range(x_size):
-                    _ij = _j + _i * y_size
+                    _ij = _i + _j * x_size
                     # NOTE: This might need to be transposed
                     shift_mat[_ij, :] = np.ravel(scipy_shift(kernel, (_j - y_size//2, _i - x_size//2),
                                                  order=0, mode='constant', cval=0.0))
@@ -416,7 +416,7 @@ def _calc_psf_kernel2(exposure, offset_gen, fft=False, x_size=None, y_size=None,
             psf_mat = np.zeros((x_size * y_size, x_size * y_size))
             for _j in range(y_size):
                 for _i in range(x_size):
-                    _ij = _j + _i * y_size
+                    _ij = _i + _j * x_size
                     # NOTE: This might need to be transposed
                     j_use = _j - y_size//2 + offset_y
                     i_use = _i - x_size//2 + offset_x
@@ -471,7 +471,7 @@ def _calc_psf_kernel(exposure, offset_gen, fft=False, x_size=None, y_size=None, 
             psf_mat = np.zeros((x_size * y_size, x_size * y_size))
             for _j in range(y_size):
                 for _i in range(x_size):
-                    _ij = _j + _i * y_size
+                    _ij = _i + _j * x_size
                     # NOTE: This might need to be transposed
                     psf_mat[_ij, :] = np.ravel(scipy_shift(psf, (_j - y_size//2, _i - x_size//2),
                                                order=0, mode='constant', cval=0.0))
