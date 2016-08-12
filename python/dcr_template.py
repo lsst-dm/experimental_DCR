@@ -55,7 +55,7 @@ class DcrModel:
         pass
 
     def generate_templates_from_model(self, obsid_range=None, elevation_arr=None, azimuth_arr=None,
-                                      repository=None, output_directory=None):
+                                      repository=None, output_directory=None, add_noise=False):
         """Use the previously generated model and construct a dcr template image."""
         exposures = []
         if repository is not None:
@@ -109,11 +109,17 @@ class DcrModel:
                                                    radius=self.dcr_max)
                 template[weights > 0] /= weights[weights > 0]
                 template[weights == 0] = 0.0
+                if add_noise:
+                    variance_level = np.median(exp.getMaskedImage().getVariance().getArray())
+                    rand_gen = np.random
+                    # if seed is not None:
+                    #     rand_gen.seed(seed - 1)
+                    template += rand_gen.normal(scale=np.sqrt(variance_level), size=template.shape)
 
             # seed and obsid will be over-written each iteration, but are needed to use _create_exposure as-is
             self.seed = None
             self.obsid = dataId[_img]['visit'] + 500 % 1000
-            exposure = self._create_exposure(template, variance=self.variance, snap=0,
+            exposure = self._create_exposure(template, variance=np.abs(template), snap=0,
                                              elevation=el, azimuth=az)
             if output_directory is not None:
                 band_dict = {'u': 0, 'g': 1, 'r': 2, 'i': 3, 'z': 4, 'y': 5}
@@ -326,7 +332,7 @@ class DcrCorrection(DcrModel):
                     continue
                 elif self.y_size - _j < self.dcr_max + 1:
                     continue
-                    img_vals = self._extract_image_vals(_j, _i, radius=self.dcr_max, fft=self.use_fft)
+                img_vals = self._extract_image_vals(_j, _i, radius=self.dcr_max, fft=self.use_fft)
 
                 model_vals = self._solve_model(dcr_kernel, img_vals)
                 self._insert_model_vals(_j, _i, model_vals, radius=self.dcr_max)
