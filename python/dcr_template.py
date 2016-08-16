@@ -46,6 +46,11 @@ __all__ = ["DcrCorrection"]
 lsst_lat = -30.244639
 lsst_lon = -70.749417
 
+x0 = 150
+dx = 65
+y0 = 480
+dy = 70
+
 
 class DcrModel:
     """Lightweight object that contains only the minimum needed to generate DCR-matched template exposures."""
@@ -103,6 +108,11 @@ class DcrModel:
                             continue
                         elif self.y_size - _j < self.dcr_max + 1:
                             continue
+                        elif self.debug:
+                            if _i < x0: continue
+                            if _i > x0+dx: continue
+                            if _j < y0: continue
+                            if _j > y0+dy: continue
                         model_vals = self._extract_model_vals(_j, _i, radius=self.dcr_max, fft=self.use_fft)
                         template_vals = self._apply_dcr_kernel(dcr_kernel, model_vals)
                         self._insert_template_vals(_j, _i, template_vals, template, weights,
@@ -212,7 +222,7 @@ class DcrCorrection(DcrModel):
     """!Class that loads LSST calibrated exposures and produces airmass-matched template images."""
 
     def __init__(self, repository=".", obsid_range=None, band_name='g', wavelength_step=10,
-                 n_step=None, elevation_min=40., use_psf=True, use_fft=False, **kwargs):
+                 n_step=None, elevation_min=40., use_psf=True, use_fft=False, debug_mode=False, **kwargs):
         """
         Load images from the repository and set up parameters.
         @param repository: path to repository with the data. String, defaults to working directory
@@ -260,7 +270,56 @@ class DcrCorrection(DcrModel):
         self.kernel_size = 2 * self.dcr_max + 1
         self.use_psf = use_psf
         self.use_fft = use_fft
+        self.debug = debug_mode
+        self._build_regularization()
         self._calc_psf_model()
+
+    def _build_regularization(self):
+        """
+        Regularization adapted from Nate Lust's DCR Demo iPython notebook.
+        Calculate a difference matrix for regularization as if each wavelength were a pixel, then scale
+        the difference matrix to the size of the number of pixels times number of wavelengths
+        """
+        # baseReg = _difference(self.kernel_size)
+        # reg_pix = np.zeros((self.n_step * self.kernel_size, self.n_step * self.kernel_size))
+
+        # for i in range(self.n_step):
+        #     reg_pix[i::self.n_step, i::self.n_step] = baseReg
+        x_size = self.kernel_size
+        y_size = self.kernel_size
+        reg_pix = None
+
+        # reg_pix_x = np.zeros((self.n_step * x_size * y_size,
+        #                       self.n_step * x_size * y_size - x_size))
+        # for _ij in range(self.n_step * x_size * y_size - x_size):
+        #     reg_pix_x[_ij, _ij] = 1
+        #     reg_pix_x[_ij + x_size, _ij] = -1
+        # reg_pix_x = np.append(reg_pix_x, -reg_pix_x, axis=1)
+
+        # reg_pix_y = np.zeros((self.n_step * x_size * y_size,
+        #                       self.n_step * x_size * y_size - 1))
+        # for _ij in range(self.n_step * x_size * y_size - 1):
+        #     reg_pix_y[_ij, _ij] = 1
+        #     reg_pix_y[_ij + 1, _ij] = -1
+        # reg_pix_y = np.append(reg_pix_y, -reg_pix_y, axis=1)
+        # reg_pix = np.append(reg_pix_x, reg_pix_y, axis=1)
+
+        # # Extra regularization that we force the SED to be smooth
+        reg_lambda = np.zeros((self.n_step * x_size * y_size, (self.n_step - 1) * self.kernel_size**2))
+        for _f in range(self.n_step - 1):
+            for _ij in range(x_size * y_size):
+                reg_lambda[_f * x_size * y_size + _ij, _f * x_size * y_size + _ij] = 1
+                reg_lambda[(_f + 1) * x_size * y_size + _ij, _f * x_size * y_size + _ij] = -1
+        reg_lambda = np.append(reg_lambda, -reg_lambda, axis=1)
+        if reg_pix is None:
+            self.regularize = reg_lambda
+        else:
+            self.regularize = np.append(reg_pix, reg_lambda, axis=1)
+        # for _i in range(self.kernel_size):
+        #     reg_lambda[_i * self.n_step: (_i + 1) * self.n_step,
+        #                _i * self.n_step: (_i + 1) * self.n_step] = baseLam
+        # reg_pix = np.append(reg_pix, reg_pix.T, axis=1)
+        # self.regularize = np.append(reg_pix.T, reg_lambda.T, axis=0)
 
     def _extract_image_vals(self, _j, _i, radius=None, fft=False):
         """Return all pixles within a radius of a given point as a 1D vector for each exposure."""
@@ -297,10 +356,13 @@ class DcrCorrection(DcrModel):
                              x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True))
         psf_image = np.sum(np.hstack(psf_image), axis=0)
         dcr_shift = np.hstack(dcr_shift)
-        psf_soln = np.linalg.lstsq(dcr_shift.T, psf_image)
+        regularize_dim = self.regularize.shape
+        vals_use = np.append(psf_image, np.zeros(regularize_dim[1]))
+        kernel_use = np.append(dcr_shift.T, self.regularize.T, axis=0)
+        psf_soln = positive_lstsq(kernel_use, vals_use)
 
         self.psf_model = np.reshape(psf_soln[0], (self.n_step, self.kernel_size, self.kernel_size))
-        self.psf_sum = np.sum(self.psf_model,axis=0)
+        self.psf_sum = np.sum(self.psf_model, axis=0)
 
     def build_model(self):
         """Calculate a model of the true sky using the known DCR offset for each freq plane."""
@@ -332,6 +394,11 @@ class DcrCorrection(DcrModel):
                     continue
                 elif self.y_size - _j < self.dcr_max + 1:
                     continue
+                elif self.debug:
+                    if _i < x0: continue
+                    if _i > x0+dx: continue
+                    if _j < y0: continue
+                    if _j > y0+dy: continue
                 img_vals = self._extract_image_vals(_j, _i, radius=self.dcr_max, fft=self.use_fft)
 
                 model_vals = self._solve_model(dcr_kernel, img_vals)
@@ -369,7 +436,10 @@ class DcrCorrection(DcrModel):
         else:
             x_size = self.kernel_size
             y_size = self.kernel_size
-            model_solution = positive_lstsq(dcr_kernel.T, img_vals)
+            regularize_dim = self.regularize.shape
+            vals_use = np.append(img_vals, np.zeros(regularize_dim[1]))
+            kernel_use = np.append(self.dcr_kernel.T, self.regularize.T, axis=0)
+            model_solution = positive_lstsq(kernel_use, vals_use)
             # model_solution = np.linalg.lstsq(dcr_kernel.T, img_vals)
             model_vals = model_solution[0]
             return(np.reshape(model_vals, (self.n_step, y_size, x_size)))
