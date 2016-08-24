@@ -60,7 +60,7 @@ class DcrModel:
         pass
 
     def generate_templates_from_model(self, obsid_range=None, elevation_arr=None, azimuth_arr=None,
-                                      repository=None, output_directory=None, add_noise=False):
+                                      repository=None, output_directory=None, add_noise=False, use_full=True):
         """Use the previously generated model and construct a dcr template image."""
         exposures = []
         if repository is not None:
@@ -85,9 +85,14 @@ class DcrModel:
             pix = self.photoParams.platescale
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=pix, elevation=el, azimuth=az)
             if self.use_psf:
-                dcr_kernel = _calc_psf_kernel(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
-                                              x_size=self.kernel_size, y_size=self.kernel_size,
-                                              return_matrix=True, psf_img=self.psf_sum)
+                if use_full:
+                    dcr_kernel = _calc_psf_kernel_full(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
+                                                       x_size=self.kernel_size, y_size=self.kernel_size,
+                                                       return_matrix=True, psf_img=self.psf_avg)
+                else:
+                    dcr_kernel = _calc_psf_kernel(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
+                                                  x_size=self.kernel_size, y_size=self.kernel_size,
+                                                  return_matrix=True, psf_img=self.psf_avg)
             else:
                 dcr_kernel = _calc_offset_phase(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
                                                 x_size=self.kernel_size, y_size=self.kernel_size,
@@ -162,14 +167,14 @@ class DcrModel:
         return(np.hstack(model_arr))
 
     def _insert_template_vals(self, _j, _i, vals, template, weights, radius=None):
-        if self.use_psf:
-            psf_use = self.psf_sum
-            template[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals * psf_use
-            weights[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
-        else:
-            psf_use = self.psf_sum
-            template[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals * psf_use
-            weights[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
+        # if self.use_psf:
+        #     psf_use = self.psf_avg
+        #     template[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals * psf_use
+        #     weights[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
+        # else:
+        psf_use = self.psf_avg
+        template[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals * psf_use
+        weights[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
 
     # NOTE: This function was copied from StarFast.py
     def _create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0):
@@ -334,11 +339,11 @@ class DcrCorrection(DcrModel):
 
     def _insert_model_vals(self, _j, _i, vals, radius=None):
         if self.use_psf:
-            psf_use = self.psf_sum
+            psf_use = self.psf_avg
             self.model[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals * psf_use
             self.weights[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
         else:
-            psf_use = self.psf_sum
+            psf_use = self.psf_avg
             self.model[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals * psf_use
             self.weights[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
 
@@ -362,9 +367,9 @@ class DcrCorrection(DcrModel):
         psf_soln = positive_lstsq(kernel_use, vals_use)
 
         self.psf_model = np.reshape(psf_soln[0], (self.n_step, self.kernel_size, self.kernel_size))
-        self.psf_sum = np.sum(self.psf_model, axis=0)
+        self.psf_avg = np.sum(self.psf_model, axis=0) / self.n_step
 
-    def build_model(self):
+    def build_model(self, use_full=True):
         """Calculate a model of the true sky using the known DCR offset for each freq plane."""
         dcr_kernel = []
         for _img, calexp in enumerate(self.exposures):
@@ -372,9 +377,14 @@ class DcrCorrection(DcrModel):
             az = self.azimuth_arr[_img]
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
             if self.use_psf:
-                dcr_kernel.append(_calc_psf_kernel(calexp, dcr_gen, fft=self.use_fft, reverse_offset=True,
-                                  x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True,
-                                  psf_img=self.psf_sum))
+                if use_full:
+                    dcr_kernel.append(_calc_psf_kernel_full(calexp, dcr_gen, fft=self.use_fft,
+                                      x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True,
+                                      reverse_offset=True, psf_img=self.psf_avg))
+                else:
+                    dcr_kernel.append(_calc_psf_kernel(calexp, dcr_gen, fft=self.use_fft,
+                                      x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True,
+                                      reverse_offset=True, psf_img=self.psf_avg))
             else:
                 dcr_kernel.append(_calc_offset_phase(calexp, dcr_gen, fft=self.use_fft, reverse_offset=True,
                                   x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True))
@@ -542,6 +552,7 @@ def _calc_psf_kernel_full(exposure, offset_gen, fft=False, x_size=None, y_size=N
         else:
             offset_x = offset[0]
             offset_y = offset[1]
+        # psf_pt = afwGeom.Point2D(offset_x + 0.5, offset_y + 0.5)
         psf_pt = afwGeom.Point2D(offset_x, offset_y)
         psf_img = exposure.getPsf().computeImage(psf_pt).getArray()
         psf_y_size, psf_x_size = psf_img.shape
@@ -717,3 +728,8 @@ def _kernel_1d(loc, size):
     else:
         kernel[:] = np.sin(-pi * loc) / (pi * (pix - loc)) * sign
     return kernel
+
+
+class NonnegLstsqIterFit():
+    def __init__():
+        pass
