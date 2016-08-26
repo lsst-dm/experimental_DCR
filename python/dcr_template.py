@@ -325,7 +325,7 @@ class DcrCorrection(DcrModel):
             for _ij in range(x_size * y_size):
                 reg_lambda[_f * x_size * y_size + _ij, _f * x_size * y_size + _ij] = 1
                 reg_lambda[(_f + 1) * x_size * y_size + _ij, _f * x_size * y_size + _ij] = -1
-        reg_lambda = np.append(reg_lambda, -reg_lambda, axis=1)
+        # reg_lambda = np.append(reg_lambda, -reg_lambda, axis=1)
         if reg_pix is None:
             self.regularize = reg_lambda
         else:
@@ -404,7 +404,12 @@ class DcrCorrection(DcrModel):
         self.model = np.zeros((self.n_step, self.y_size, self.x_size))
         self.weights = np.zeros_like(self.model)
         pix_radius = self.kernel_size//2
+        print("Working on column", end="")
         for _j in range(self.y_size):
+            if _j % 100 == 0:
+                print("\n %i" % _j, end="")
+            else:
+                print(".", end="")
             for _i in range(self.x_size):
                 # Deal with the edges later. Probably by padding the image with zeroes.
                 if _i < pix_radius + 1:
@@ -426,7 +431,7 @@ class DcrCorrection(DcrModel):
                 self._insert_model_vals(_j, _i, model_vals, radius=pix_radius)
                 # model[:, _j, _i] = _solve_model(dcr_kernel, img_vals, fft=self.use_fft)
         # self.model = model
-
+        print("\nFinished building model.")
         variance = np.zeros((self.y_size, self.x_size))
         for calexp in self.exposures:
             variance += calexp.getMaskedImage().getVariance().getArray()**2.
@@ -563,7 +568,6 @@ def _calc_psf_kernel_full(exposure, offset_gen, fft=False, x_size=None, y_size=N
     if x_size is None:
         x_size = exposure.getWidth()
     psf_kernel_arr = []
-    flux_norm = exposure.getPsf().computeApertureFlux(np.min([x_size, y_size]))
     for offset in offset_gen:
         if reverse_offset:
             offset_x = -offset[0]
@@ -573,7 +577,7 @@ def _calc_psf_kernel_full(exposure, offset_gen, fft=False, x_size=None, y_size=N
             offset_y = offset[1]
         # psf_pt = afwGeom.Point2D(offset_x + 0.5, offset_y + 0.5)
         psf_pt = afwGeom.Point2D(offset_x, offset_y)
-        psf_img = exposure.getPsf().computeImage(psf_pt).getArray() # / flux_norm
+        psf_img = exposure.getPsf().computeImage(psf_pt).getArray()
         psf_y_size, psf_x_size = psf_img.shape
         psf = np.zeros((y_size, x_size), dtype=psf_img.dtype)
         dx = np.floor(offset_x)
@@ -590,6 +594,8 @@ def _calc_psf_kernel_full(exposure, offset_gen, fft=False, x_size=None, y_size=N
             x0 = int(psf_x_size//2 - x_size//2 - dy)
             x1 = x0 + x_size
             psf = psf_img[y0: y1, x0: x1]
+        psf_norm = np.sum(psf_img) / np.sum(psf)
+        # psf *= psf_norm
         if fft:
             psf = np.fft.fft2(np.fft.fftshift(psf))
             psf_kernel_arr.append(np.ravel(psf))
