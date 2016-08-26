@@ -60,7 +60,8 @@ class DcrModel:
         pass
 
     def generate_templates_from_model(self, obsid_range=None, elevation_arr=None, azimuth_arr=None,
-                                      repository=None, output_directory=None, add_noise=False, use_full=True):
+                                      repository=None, output_directory=None, add_noise=False, use_full=True,
+                                      kernel_size=None, **kwargs):
         """Use the previously generated model and construct a dcr template image."""
         exposures = []
         if repository is not None:
@@ -79,6 +80,10 @@ class DcrModel:
         else:
             print("This version REQUIRES an exposure to match the template.")
 
+        if kernel_size is not None:
+            self.kernel_size = kernel_size
+            self._build_regularization()
+            self._calc_psf_model()
         for _img, exp in enumerate(exposures):
             el = elevation_arr[_img]
             az = azimuth_arr[_img]
@@ -102,26 +107,27 @@ class DcrModel:
             else:
                 template = np.zeros((self.y_size, self.x_size))
                 weights = np.zeros((self.y_size, self.x_size))
+                pix_radius = self.kernel_size//2
                 for _j in range(self.y_size):
                     for _i in range(self.x_size):
                         # Deal with the edges later. Probably by padding the image with zeroes.
-                        if _i < self.dcr_max + 1:
+                        if _i < pix_radius + 1:
                             continue
-                        elif self.x_size - _i < self.dcr_max + 1:
+                        elif self.x_size - _i < pix_radius + 1:
                             continue
-                        elif _j < self.dcr_max + 1:
+                        elif _j < pix_radius + 1:
                             continue
-                        elif self.y_size - _j < self.dcr_max + 1:
+                        elif self.y_size - _j < pix_radius + 1:
                             continue
                         elif self.debug:
                             if _i < x0: continue
                             if _i > x0+dx: continue
                             if _j < y0: continue
                             if _j > y0+dy: continue
-                        model_vals = self._extract_model_vals(_j, _i, radius=self.dcr_max, fft=self.use_fft)
+                        model_vals = self._extract_model_vals(_j, _i, radius=pix_radius, fft=self.use_fft)
                         template_vals = self._apply_dcr_kernel(dcr_kernel, model_vals)
                         self._insert_template_vals(_j, _i, template_vals, template, weights,
-                                                   radius=self.dcr_max)
+                                                   radius=pix_radius)
                 template[weights > 0] /= weights[weights > 0]
                 template[weights == 0] = 0.0
                 if add_noise:
@@ -227,7 +233,8 @@ class DcrCorrection(DcrModel):
     """!Class that loads LSST calibrated exposures and produces airmass-matched template images."""
 
     def __init__(self, repository=".", obsid_range=None, band_name='g', wavelength_step=10,
-                 n_step=None, elevation_min=40., use_psf=True, use_fft=False, debug_mode=False, **kwargs):
+                 n_step=None, elevation_min=40., use_psf=True, use_fft=False, debug_mode=False, 
+                 kernel_size=None, **kwargs):
         """
         Load images from the repository and set up parameters.
         @param repository: path to repository with the data. String, defaults to working directory
@@ -272,7 +279,10 @@ class DcrCorrection(DcrModel):
                                                  bandpass=band_name)
         dcr_test = _dcr_generator(bandpass, pixel_scale=self.pixel_scale, elevation=elevation_min, azimuth=0.)
         self.dcr_max = int(np.ceil(np.max(dcr_test.next())) + 1)
-        self.kernel_size = 2 * self.dcr_max + 1
+        if kernel_size is None:
+            self.kernel_size = 2 * self.dcr_max + 1
+        else:
+            self.kernel_size = kernel_size
         self.use_psf = use_psf
         self.use_fft = use_fft
         self.debug = debug_mode
@@ -369,7 +379,7 @@ class DcrCorrection(DcrModel):
         self.psf_model = np.reshape(psf_soln[0], (self.n_step, self.kernel_size, self.kernel_size))
         self.psf_avg = np.sum(self.psf_model, axis=0) / self.n_step
 
-    def build_model(self, use_full=True):
+    def build_model(self, use_full=True, use_regularization=True):
         """Calculate a model of the true sky using the known DCR offset for each freq plane."""
         dcr_kernel = []
         for _img, calexp in enumerate(self.exposures):
@@ -393,26 +403,27 @@ class DcrCorrection(DcrModel):
 
         self.model = np.zeros((self.n_step, self.y_size, self.x_size))
         self.weights = np.zeros_like(self.model)
+        pix_radius = self.kernel_size//2
         for _j in range(self.y_size):
             for _i in range(self.x_size):
                 # Deal with the edges later. Probably by padding the image with zeroes.
-                if _i < self.dcr_max + 1:
+                if _i < pix_radius + 1:
                     continue
-                elif self.x_size - _i < self.dcr_max + 1:
+                elif self.x_size - _i < pix_radius + 1:
                     continue
-                elif _j < self.dcr_max + 1:
+                elif _j < pix_radius + 1:
                     continue
-                elif self.y_size - _j < self.dcr_max + 1:
+                elif self.y_size - _j < pix_radius + 1:
                     continue
                 elif self.debug:
                     if _i < x0: continue
                     if _i > x0+dx: continue
                     if _j < y0: continue
                     if _j > y0+dy: continue
-                img_vals = self._extract_image_vals(_j, _i, radius=self.dcr_max, fft=self.use_fft)
+                img_vals = self._extract_image_vals(_j, _i, radius=pix_radius, fft=self.use_fft)
 
-                model_vals = self._solve_model(dcr_kernel, img_vals)
-                self._insert_model_vals(_j, _i, model_vals, radius=self.dcr_max)
+                model_vals = self._solve_model(dcr_kernel, img_vals, use_regularization=use_regularization)
+                self._insert_model_vals(_j, _i, model_vals, radius=pix_radius)
                 # model[:, _j, _i] = _solve_model(dcr_kernel, img_vals, fft=self.use_fft)
         # self.model = model
 
@@ -429,7 +440,9 @@ class DcrCorrection(DcrModel):
             mask = np.bitwise_or(mask, m)  # Flags a pixel if ANY image is flagged there.
         self.mask = mask
 
-    def _solve_model(self, dcr_kernel, img_vals):
+    def _solve_model(self, dcr_kernel, img_vals, use_regularization=None):
+        if use_regularization is None:
+            use_regularization = True
         if self.use_fft:
             x_size = self.kernel_size
             y_size = self.kernel_size
@@ -446,10 +459,15 @@ class DcrCorrection(DcrModel):
         else:
             x_size = self.kernel_size
             y_size = self.kernel_size
-            regularize_dim = self.regularize.shape
-            vals_use = np.append(img_vals, np.zeros(regularize_dim[1]))
-            kernel_use = np.append(self.dcr_kernel.T, self.regularize.T, axis=0)
-            model_solution = positive_lstsq(kernel_use, vals_use)
+            if use_regularization:
+                regularize_dim = self.regularize.shape
+                vals_use = np.append(img_vals, np.zeros(regularize_dim[1]))
+                kernel_use = np.append(self.dcr_kernel.T, self.regularize.T, axis=0)
+                model_solution = positive_lstsq(kernel_use, vals_use)
+            else:
+                vals_use = img_vals
+                kernel_use = self.dcr_kernel.T
+                model_solution = positive_lstsq(kernel_use, vals_use)
             # model_solution = np.linalg.lstsq(dcr_kernel.T, img_vals)
             model_vals = model_solution[0]
             return(np.reshape(model_vals, (self.n_step, y_size, x_size)))
@@ -545,6 +563,7 @@ def _calc_psf_kernel_full(exposure, offset_gen, fft=False, x_size=None, y_size=N
     if x_size is None:
         x_size = exposure.getWidth()
     psf_kernel_arr = []
+    flux_norm = exposure.getPsf().computeApertureFlux(np.min([x_size, y_size]))
     for offset in offset_gen:
         if reverse_offset:
             offset_x = -offset[0]
@@ -554,7 +573,7 @@ def _calc_psf_kernel_full(exposure, offset_gen, fft=False, x_size=None, y_size=N
             offset_y = offset[1]
         # psf_pt = afwGeom.Point2D(offset_x + 0.5, offset_y + 0.5)
         psf_pt = afwGeom.Point2D(offset_x, offset_y)
-        psf_img = exposure.getPsf().computeImage(psf_pt).getArray()
+        psf_img = exposure.getPsf().computeImage(psf_pt).getArray() # / flux_norm
         psf_y_size, psf_x_size = psf_img.shape
         psf = np.zeros((y_size, x_size), dtype=psf_img.dtype)
         dx = np.floor(offset_x)
