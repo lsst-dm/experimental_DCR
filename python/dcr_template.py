@@ -89,19 +89,26 @@ class DcrModel:
             az = azimuth_arr[_img]
             pix = self.photoParams.platescale
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=pix, elevation=el, azimuth=az)
+
+            # HACK HACK HACK HACK
+            dcr_gen_x = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
+            dcr_gen_y = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
+            offset_x = np.abs(np.mean(np.gradient([offset[0] for offset in dcr_gen_x])))
+            offset_y = np.abs(np.mean(np.gradient([offset[1] for offset in dcr_gen_y])))
+
             if self.use_psf:
                 if use_full:
                     dcr_kernel = _calc_psf_kernel_full(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
                                                        x_size=self.kernel_size, y_size=self.kernel_size,
-                                                       return_matrix=True, psf_img=self.psf_avg)
+                                                       return_matrix=True, psf_img=self.psf_avg, dx=offset_x, dy=offset_y)
                 else:
                     dcr_kernel = _calc_psf_kernel(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
                                                   x_size=self.kernel_size, y_size=self.kernel_size,
-                                                  return_matrix=True, psf_img=self.psf_avg)
+                                                  return_matrix=True, psf_img=self.psf_avg, dx=offset_x, dy=offset_y)
             else:
                 dcr_kernel = _calc_offset_phase(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
                                                 x_size=self.kernel_size, y_size=self.kernel_size,
-                                                return_matrix=True)
+                                                return_matrix=True, dx=offset_x, dy=offset_y)
             if self.use_fft:
                 template = np.fft.ifft2(np.sum(self.model * dcr_kernel, axis=0))
             else:
@@ -326,6 +333,15 @@ class DcrCorrection(DcrModel):
                 reg_lambda[_f * x_size * y_size + _ij, _f * x_size * y_size + _ij] = 1
                 reg_lambda[(_f + 1) * x_size * y_size + _ij, _f * x_size * y_size + _ij] = -1
         # reg_lambda = np.append(reg_lambda, -reg_lambda, axis=1)
+
+        reg_lambda2 = np.zeros((self.n_step * x_size * y_size, (self.n_step - 2) * self.kernel_size**2))
+        for _f in range(self.n_step - 2):
+            for _ij in range(x_size * y_size):
+                reg_lambda2[_f * x_size * y_size + _ij, _f * x_size * y_size + _ij] = -1
+                reg_lambda2[(_f + 1) * x_size * y_size + _ij, _f * x_size * y_size + _ij] = 2
+                reg_lambda2[(_f + 2) * x_size * y_size + _ij, _f * x_size * y_size + _ij] = -1
+        reg_lambda = np.append(reg_lambda, reg_lambda2, axis=1)
+        # reg_lambda = reg_lambda2
         if reg_pix is None:
             self.regularize = reg_lambda
         else:
@@ -363,12 +379,18 @@ class DcrCorrection(DcrModel):
         for _img, calexp in enumerate(self.exposures):
             el = self.elevation_arr[_img]
             az = self.azimuth_arr[_img]
+            # HACK HACK HACK HACK
+            dcr_gen_x = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
+            dcr_gen_y = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
+            offset_x = np.abs(np.mean(np.gradient([offset[0] for offset in dcr_gen_x])))
+            offset_y = np.abs(np.mean(np.gradient([offset[1] for offset in dcr_gen_y])))
+
             dcr_gen0 = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=90., azimuth=az)
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
             psf_image.append(_calc_psf_kernel_full(calexp, dcr_gen0, fft=False,
                              x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=False))
             dcr_shift.append(_calc_offset_phase(calexp, dcr_gen, fft=False,
-                             x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True))
+                             x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True, dx=offset_x, dy=offset_y))
         psf_image = np.sum(np.hstack(psf_image), axis=0)
         dcr_shift = np.hstack(dcr_shift)
         regularize_dim = self.regularize.shape
@@ -386,18 +408,25 @@ class DcrCorrection(DcrModel):
             el = self.elevation_arr[_img]
             az = self.azimuth_arr[_img]
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
+
+            # HACK HACK HACK HACK
+            dcr_gen_x = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
+            dcr_gen_y = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
+            offset_x = np.abs(np.mean(np.gradient([offset[0] for offset in dcr_gen_x])))
+            offset_y = np.abs(np.mean(np.gradient([offset[1] for offset in dcr_gen_y])))
+
             if self.use_psf:
                 if use_full:
                     dcr_kernel.append(_calc_psf_kernel_full(calexp, dcr_gen, fft=self.use_fft,
                                       x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True,
-                                      reverse_offset=True, psf_img=self.psf_avg))
+                                      reverse_offset=True, psf_img=self.psf_avg, dx=offset_x, dy=offset_y))
                 else:
                     dcr_kernel.append(_calc_psf_kernel(calexp, dcr_gen, fft=self.use_fft,
                                       x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True,
-                                      reverse_offset=True, psf_img=self.psf_avg))
+                                      reverse_offset=True, psf_img=self.psf_avg, dx=offset_x, dy=offset_y))
             else:
                 dcr_kernel.append(_calc_offset_phase(calexp, dcr_gen, fft=self.use_fft, reverse_offset=True,
-                                  x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True))
+                                  x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True, dx=offset_x, dy=offset_y))
         dcr_kernel = np.hstack(dcr_kernel)
         self.dcr_kernel = dcr_kernel
 
@@ -486,13 +515,14 @@ class DcrCorrection(DcrModel):
 
 
 def _calc_offset_phase(exposure, offset_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
-                       reverse_offset=False):
+                       reverse_offset=False, dx=0., dy=0.):
     """Return the 2D FFT of an offset generated by _dcr_generator in the form (dx, dy)."""
     phase_arr = []
     if y_size is None:
         y_size = exposure.getHeight()
     if x_size is None:
         x_size = exposure.getWidth()
+    print("dx: %f, dy: %f" % (dx, dy))
     for offset in offset_gen:
         if reverse_offset:
             offset_x = -offset[0]
@@ -500,8 +530,8 @@ def _calc_offset_phase(exposure, offset_gen, fft=False, x_size=None, y_size=None
         else:
             offset_x = offset[0]
             offset_y = offset[1]
-        kernel_x = _kernel_1d(offset_x + x_size//2, x_size)
-        kernel_y = _kernel_1d(offset_y + y_size//2, y_size)
+        kernel_x = _kernel_1d(offset_x + x_size//2, x_size, width=dx)
+        kernel_y = _kernel_1d(offset_y + y_size//2, y_size, width=dy)
         kernel = np.einsum('i,j->ij', kernel_y, kernel_x)
         if fft:
             kernel = np.fft.fft2(np.fft.fftshift(kernel))
@@ -521,7 +551,7 @@ def _calc_offset_phase(exposure, offset_gen, fft=False, x_size=None, y_size=None
 
 
 def _calc_psf_kernel(exposure, offset_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
-                     reverse_offset=False, psf_img=None):
+                     reverse_offset=False, psf_img=None, dx=0., dy=0.):
 
     if y_size is None:
         y_size = exposure.getHeight()
@@ -549,6 +579,12 @@ def _calc_psf_kernel(exposure, offset_gen, fft=False, x_size=None, y_size=None, 
                     i_use = _i - x_size//2 + offset_x
                     psf_mat[_ij, :] = np.ravel(scipy_shift(psf_img, (j_use, i_use),
                                                mode='constant', cval=0.0))
+                    if dx > 0:
+                        psf_mat[_ij, :] += np.ravel(scipy_shift(psf_img, (j_use + dy/2., i_use + dx/2.),
+                                                    mode='constant', cval=0.0))
+                        psf_mat[_ij, :] += np.ravel(scipy_shift(psf_img, (j_use - dy/2., i_use - dx/2.),
+                                                    mode='constant', cval=0.0))
+                        psf_mat[_ij, :] /= 3.
             psf_kernel_arr.append(psf_mat)
         else:
             psf_kernel_arr.append(np.ravel(psf))
@@ -560,7 +596,7 @@ def _calc_psf_kernel(exposure, offset_gen, fft=False, x_size=None, y_size=None, 
 
 
 def _calc_psf_kernel_full(exposure, offset_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
-                          reverse_offset=False, psf_img=None):
+                          reverse_offset=False, psf_img=None, dx=0., dy=0.):
     # psf_img is passed in but not used so that this function can be swapped in for _calc_psf_kernel
     # without having to change the keywords
     if y_size is None:
@@ -606,6 +642,12 @@ def _calc_psf_kernel_full(exposure, offset_gen, fft=False, x_size=None, y_size=N
                     _ij = _i + _j * x_size
                     psf_mat[_ij, :] = np.ravel(scipy_shift(psf, (_j - y_size//2, _i - x_size//2),
                                                order=0, mode='constant', cval=0.0))
+                    if dx > 0:
+                        psf_mat[_ij, :] += np.ravel(scipy_shift(psf, (_j - y_size//2 + dy/2, _i - x_size//2 + dx/2.),
+                                                    order=0, mode='constant', cval=0.0))
+                        psf_mat[_ij, :] += np.ravel(scipy_shift(psf, (_j - y_size//2 - dy/2, _i - x_size//2 - dx/2.),
+                                                    order=0, mode='constant', cval=0.0))
+                        psf_mat[_ij, :] /= 3.
             psf_kernel_arr.append(psf_mat)
         else:
             psf_kernel_arr.append(np.ravel(psf))
@@ -735,7 +777,7 @@ def _dcr_generator(bandpass, pixel_scale=None, elevation=50.0, azimuth=0.0, **kw
         yield((dx, dy))
 
 
-def _kernel_1d(loc, size):
+def _kernel_1d(loc, size, width=0.0, min_width=0.1):
     """
     pre-compute the 1D sinc function values along each axis.
 
@@ -744,14 +786,18 @@ def _kernel_1d(loc, size):
     """
     pi = np.pi
     pix = np.arange(size, dtype=np.float64)
-    sign = np.power(-1.0, pix)
+    # sign = np.power(-1.0, pix)
     offset = int(np.floor(loc))
     delta = loc - offset
     kernel = np.zeros(size, dtype=np.float64)
     if delta == 0:
         kernel[offset] = 1.0
     else:
-        kernel[:] = np.sin(-pi * loc) / (pi * (pix - loc)) * sign
+        kernel[:] = np.sin(pi * (pix - loc)) / (pi * (pix - loc))
+    if width > min_width:
+        kernel += np.sin(pi * (pix - loc + width/2.)) / (pi * (pix - loc + width / 2.))
+        kernel += np.sin(pi * (pix - loc - width/2.)) / (pi * (pix - loc - width / 2.))
+        kernel /= 3.
     return kernel
 
 
