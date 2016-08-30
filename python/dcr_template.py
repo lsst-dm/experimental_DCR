@@ -90,25 +90,19 @@ class DcrModel:
             pix = self.photoParams.platescale
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=pix, elevation=el, azimuth=az)
 
-            # HACK HACK HACK HACK
-            dcr_gen_x = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
-            dcr_gen_y = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
-            offset_x = np.abs(np.mean(np.gradient([offset[0] for offset in dcr_gen_x])))
-            offset_y = np.abs(np.mean(np.gradient([offset[1] for offset in dcr_gen_y])))
-
             if self.use_psf:
                 if use_full:
                     dcr_kernel = _calc_psf_kernel_full(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
                                                        x_size=self.kernel_size, y_size=self.kernel_size,
-                                                       return_matrix=True, psf_img=self.psf_avg, dx=offset_x, dy=offset_y)
+                                                       return_matrix=True, psf_img=self.psf_avg)
                 else:
                     dcr_kernel = _calc_psf_kernel(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
                                                   x_size=self.kernel_size, y_size=self.kernel_size,
-                                                  return_matrix=True, psf_img=self.psf_avg, dx=offset_x, dy=offset_y)
+                                                  return_matrix=True, psf_img=self.psf_avg)
             else:
                 dcr_kernel = _calc_offset_phase(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
                                                 x_size=self.kernel_size, y_size=self.kernel_size,
-                                                return_matrix=True, dx=offset_x, dy=offset_y)
+                                                return_matrix=True)
             if self.use_fft:
                 template = np.fft.ifft2(np.sum(self.model * dcr_kernel, axis=0))
             else:
@@ -379,18 +373,15 @@ class DcrCorrection(DcrModel):
         for _img, calexp in enumerate(self.exposures):
             el = self.elevation_arr[_img]
             az = self.azimuth_arr[_img]
-            # HACK HACK HACK HACK
-            dcr_gen_x = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
-            dcr_gen_y = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
-            offset_x = np.abs(np.mean(np.gradient([offset[0] for offset in dcr_gen_x])))
-            offset_y = np.abs(np.mean(np.gradient([offset[1] for offset in dcr_gen_y])))
 
-            dcr_gen0 = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=90., azimuth=az)
+            dcr_genZ = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=90., azimuth=az)
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
-            psf_image.append(_calc_psf_kernel_full(calexp, dcr_gen0, fft=False,
+            psf_image.append(_calc_psf_kernel_full(calexp, dcr_genZ, fft=False, reverse_offset=True,
                              x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=False))
-            dcr_shift.append(_calc_offset_phase(calexp, dcr_gen, fft=False,
-                             x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True, dx=offset_x, dy=offset_y))
+            dcr_shift.append(_calc_offset_phase(calexp, dcr_gen, fft=False, reverse_offset=True,
+                             x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True))
+        self.debug_psf_image = psf_image
+        self.debug_dcr_shift = dcr_shift
         psf_image = np.sum(np.hstack(psf_image), axis=0)
         dcr_shift = np.hstack(dcr_shift)
         regularize_dim = self.regularize.shape
@@ -409,24 +400,18 @@ class DcrCorrection(DcrModel):
             az = self.azimuth_arr[_img]
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
 
-            # HACK HACK HACK HACK
-            dcr_gen_x = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
-            dcr_gen_y = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
-            offset_x = np.abs(np.mean(np.gradient([offset[0] for offset in dcr_gen_x])))
-            offset_y = np.abs(np.mean(np.gradient([offset[1] for offset in dcr_gen_y])))
-
             if self.use_psf:
                 if use_full:
                     dcr_kernel.append(_calc_psf_kernel_full(calexp, dcr_gen, fft=self.use_fft,
                                       x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True,
-                                      reverse_offset=True, psf_img=self.psf_avg, dx=offset_x, dy=offset_y))
+                                      reverse_offset=True, psf_img=self.psf_avg))
                 else:
                     dcr_kernel.append(_calc_psf_kernel(calexp, dcr_gen, fft=self.use_fft,
                                       x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True,
-                                      reverse_offset=True, psf_img=self.psf_avg, dx=offset_x, dy=offset_y))
+                                      reverse_offset=True, psf_img=self.psf_avg))
             else:
                 dcr_kernel.append(_calc_offset_phase(calexp, dcr_gen, fft=self.use_fft, reverse_offset=True,
-                                  x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True, dx=offset_x, dy=offset_y))
+                                  x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True))
         dcr_kernel = np.hstack(dcr_kernel)
         self.dcr_kernel = dcr_kernel
 
@@ -437,6 +422,8 @@ class DcrCorrection(DcrModel):
         for _j in range(self.y_size):
             if _j % 100 == 0:
                 print("\n %i" % _j, end="")
+            elif _j % 10 == 0:
+                print("|", end="")
             else:
                 print(".", end="")
             for _i in range(self.x_size):
@@ -474,9 +461,7 @@ class DcrCorrection(DcrModel):
             mask = np.bitwise_or(mask, m)  # Flags a pixel if ANY image is flagged there.
         self.mask = mask
 
-    def _solve_model(self, dcr_kernel, img_vals, use_regularization=None):
-        if use_regularization is None:
-            use_regularization = True
+    def _solve_model(self, dcr_kernel, img_vals, use_regularization=True):
         if self.use_fft:
             x_size = self.kernel_size
             y_size = self.kernel_size
@@ -515,23 +500,16 @@ class DcrCorrection(DcrModel):
 
 
 def _calc_offset_phase(exposure, offset_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
-                       reverse_offset=False, dx=0., dy=0.):
+                       reverse_offset=False):
     """Return the 2D FFT of an offset generated by _dcr_generator in the form (dx, dy)."""
     phase_arr = []
     if y_size is None:
         y_size = exposure.getHeight()
     if x_size is None:
         x_size = exposure.getWidth()
-    print("dx: %f, dy: %f" % (dx, dy))
-    for offset in offset_gen:
-        if reverse_offset:
-            offset_x = -offset[0]
-            offset_y = -offset[1]
-        else:
-            offset_x = offset[0]
-            offset_y = offset[1]
-        kernel_x = _kernel_1d(offset_x + x_size//2, x_size, width=dx)
-        kernel_y = _kernel_1d(offset_y + y_size//2, y_size, width=dy)
+    for offset_x, offset_y in offset_gen:
+        kernel_x = _kernel_1d(offset_x, x_size)
+        kernel_y = _kernel_1d(offset_y, y_size)
         kernel = np.einsum('i,j->ij', kernel_y, kernel_x)
         if fft:
             kernel = np.fft.fft2(np.fft.fftshift(kernel))
@@ -542,7 +520,7 @@ def _calc_offset_phase(exposure, offset_gen, fft=False, x_size=None, y_size=None
                 for _i in range(x_size):
                     _ij = _i + _j * x_size
                     shift_mat[_ij, :] = np.ravel(scipy_shift(kernel, (_j - y_size//2, _i - x_size//2),
-                                                 order=0, mode='constant', cval=0.0))
+                                                 mode='constant', cval=0.0))
             phase_arr.append(shift_mat)
         else:
             phase_arr.append(np.ravel(kernel))
@@ -551,52 +529,30 @@ def _calc_offset_phase(exposure, offset_gen, fft=False, x_size=None, y_size=None
 
 
 def _calc_psf_kernel(exposure, offset_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
-                     reverse_offset=False, psf_img=None, dx=0., dy=0.):
+                     reverse_offset=False, psf_img=None):
 
     if y_size is None:
         y_size = exposure.getHeight()
     if x_size is None:
         x_size = exposure.getWidth()
     psf_kernel_arr = []
-    for offset in offset_gen:
-        if reverse_offset:
-            offset_x = -offset[0]
-            offset_y = -offset[1]
-        else:
-            offset_x = offset[0]
-            offset_y = offset[1]
+    for offset_x, offset_y in offset_gen:
         psf_y_size, psf_x_size = psf_img.shape
         psf = np.zeros((y_size, x_size), dtype=psf_img.dtype)
         if fft:
             psf = np.fft.fft2(np.fft.fftshift(psf_img))
             psf_kernel_arr.append(np.ravel(psf))
         elif return_matrix:
-            psf_mat = np.zeros((x_size * y_size, x_size * y_size))
-            for _j in range(y_size):
-                for _i in range(x_size):
-                    _ij = _i + _j * x_size
-                    j_use = _j - y_size//2 + offset_y
-                    i_use = _i - x_size//2 + offset_x
-                    psf_mat[_ij, :] = np.ravel(scipy_shift(psf_img, (j_use, i_use),
-                                               mode='constant', cval=0.0))
-                    if dx > 0:
-                        psf_mat[_ij, :] += np.ravel(scipy_shift(psf_img, (j_use + dy/2., i_use + dx/2.),
-                                                    mode='constant', cval=0.0))
-                        psf_mat[_ij, :] += np.ravel(scipy_shift(psf_img, (j_use - dy/2., i_use - dx/2.),
-                                                    mode='constant', cval=0.0))
-                        psf_mat[_ij, :] /= 3.
-            psf_kernel_arr.append(psf_mat)
+            psf_kernel_arr.append(_calc_psf_kernel_subroutine(psf_img, offset_x, offset_y))
         else:
             psf_kernel_arr.append(np.ravel(psf))
 
     psf_kernel_arr = np.vstack(psf_kernel_arr)
-    # if return_matrix:
-    #     psf_kernel_arr = np.einsum("i,j->ij", psf_kernel_arr, psf_kernel_arr)
     return(psf_kernel_arr)
 
 
 def _calc_psf_kernel_full(exposure, offset_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
-                          reverse_offset=False, psf_img=None, dx=0., dy=0.):
+                          reverse_offset=False, psf_img=None):
     # psf_img is passed in but not used so that this function can be swapped in for _calc_psf_kernel
     # without having to change the keywords
     if y_size is None:
@@ -604,56 +560,49 @@ def _calc_psf_kernel_full(exposure, offset_gen, fft=False, x_size=None, y_size=N
     if x_size is None:
         x_size = exposure.getWidth()
     psf_kernel_arr = []
-    for offset in offset_gen:
-        if reverse_offset:
-            offset_x = -offset[0]
-            offset_y = -offset[1]
+    for offset_x, offset_y in offset_gen:
+        # psf_pt = afwGeom.Point2D(0., 0.)
+        psf_img = exposure.getPsf().computeKernelImage().getArray()
+        kernel_single = _calc_psf_kernel_subroutine(psf_img, offset_x, offset_y, x_size=x_size, y_size=y_size)
+        if return_matrix:
+            psf_kernel_arr.append(kernel_single)
         else:
-            offset_x = offset[0]
-            offset_y = offset[1]
-        # psf_pt = afwGeom.Point2D(offset_x + 0.5, offset_y + 0.5)
-        psf_pt = afwGeom.Point2D(offset_x, offset_y)
-        psf_img = exposure.getPsf().computeImage(psf_pt).getArray()
-        psf_y_size, psf_x_size = psf_img.shape
-        psf = np.zeros((y_size, x_size), dtype=psf_img.dtype)
-        dx = np.floor(offset_x)
-        dy = np.floor(offset_y)
-        if psf_x_size < x_size:
-            y0 = int(y_size//2 - psf_y_size//2 + dx)
-            y1 = y0 + psf_y_size
-            x0 = int(x_size//2 - psf_x_size//2 + dy)
-            x1 = x0 + psf_x_size
-            psf[y0: y1, x0: x1] = psf_img
-        else:
-            y0 = int(psf_y_size//2 - y_size//2 - dx)
-            y1 = y0 + y_size
-            x0 = int(psf_x_size//2 - x_size//2 - dy)
-            x1 = x0 + x_size
-            psf = psf_img[y0: y1, x0: x1]
-        psf_norm = np.sum(psf_img) / np.sum(psf)
-        # psf *= psf_norm
-        if fft:
-            psf = np.fft.fft2(np.fft.fftshift(psf))
-            psf_kernel_arr.append(np.ravel(psf))
-        elif return_matrix:
-            psf_mat = np.zeros((x_size * y_size, x_size * y_size))
-            for _j in range(y_size):
-                for _i in range(x_size):
-                    _ij = _i + _j * x_size
-                    psf_mat[_ij, :] = np.ravel(scipy_shift(psf, (_j - y_size//2, _i - x_size//2),
-                                               order=0, mode='constant', cval=0.0))
-                    if dx > 0:
-                        psf_mat[_ij, :] += np.ravel(scipy_shift(psf, (_j - y_size//2 + dy/2, _i - x_size//2 + dx/2.),
-                                                    order=0, mode='constant', cval=0.0))
-                        psf_mat[_ij, :] += np.ravel(scipy_shift(psf, (_j - y_size//2 - dy/2, _i - x_size//2 - dx/2.),
-                                                    order=0, mode='constant', cval=0.0))
-                        psf_mat[_ij, :] /= 3.
-            psf_kernel_arr.append(psf_mat)
-        else:
-            psf_kernel_arr.append(np.ravel(psf))
+            kernel_single = kernel_single[y_size * x_size // 2, :]
+            psf_kernel_arr.append(kernel_single)
 
     psf_kernel_arr = np.vstack(psf_kernel_arr)
     return(psf_kernel_arr)
+
+
+def _calc_psf_kernel_subroutine(psf_img, offset_x, offset_y, x_size=None, y_size=None):
+    if (x_size is None) | (y_size is None):
+        y_size, x_size = psf_img.shape
+    psf_y_size, psf_x_size = psf_img.shape
+    if psf_x_size < x_size:
+        x0 = int(x_size//2 - psf_x_size//2)
+        x1 = x0 + psf_x_size
+    else:
+        x0 = int(psf_x_size//2 - x_size//2)
+        x1 = x0 + x_size
+    if psf_y_size < y_size:
+        y0 = int(y_size//2 - psf_y_size//2)
+        y1 = y0 + psf_y_size
+    else:
+        y0 = int(psf_y_size//2 - y_size//2)
+        y1 = y0 + y_size
+
+    n_substep = 10
+    psf_mat = np.zeros((x_size * y_size, x_size * y_size))
+    for _j in range(y_size):
+        for _i in range(x_size):
+            _ij = _i + _j * x_size
+            sub_image = np.zeros_like(psf_img)
+            for _n in range(n_substep):
+                j_use = _j - y_size//2 + (offset_y[0] * (n_substep - _n) + offset_y[1] * _n) / n_substep
+                i_use = _i - x_size//2 + (offset_x[0] * (n_substep - _n) + offset_x[1] * _n) / n_substep
+                sub_image += scipy_shift(psf_img, (j_use, i_use), mode='constant', cval=0.0)
+            psf_mat[_ij, :] = np.ravel(sub_image[x0:x1, y0:y1]) / n_substep
+    return(psf_mat)
 
 
 def _build_dataId(obsid_range, band):
@@ -756,10 +705,10 @@ def _wavelength_iterator(bandpass, use_midpoint=False):
         wave_start = wave_end
 
 
-# NOTE: This function was copied from StarFast.py
+# NOTE: This function was modified from StarFast.py
 def _dcr_generator(bandpass, pixel_scale=None, elevation=50.0, azimuth=0.0, **kwargs):
+    """Call the functions that compute Differential Chromatic Refraction (relative to mid-band)."""
     """
-    !Call the functions that compute Differential Chromatic Refraction (relative to mid-band).
     @param bandpass: bandpass object created with load_bandpass
     @param pixel_scale: plate scale in arcsec/pixel
     @param elevation: elevation angle of the center of the image, in decimal degrees.
@@ -767,38 +716,39 @@ def _dcr_generator(bandpass, pixel_scale=None, elevation=50.0, azimuth=0.0, **kw
     """
     zenith_angle = 90.0 - elevation
     wavelength_midpoint = bandpass.calc_eff_wavelen()
-    for wavelength in _wavelength_iterator(bandpass, use_midpoint=True):
+    for wl_start, wl_end in _wavelength_iterator(bandpass, use_midpoint=False):
         # Note that refract_amp can be negative, since it's relative to the midpoint of the band
-        refract_amp = diff_refraction(wavelength=wavelength, wavelength_ref=wavelength_midpoint,
+        refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
+                                        zenith_angle=zenith_angle, **kwargs)
+        refract_end = diff_refraction(wavelength=wl_end, wavelength_ref=wavelength_midpoint,
                                       zenith_angle=zenith_angle, **kwargs)
-        refract_amp *= 3600.0 / pixel_scale  # Refraction initially in degrees, convert to pixels.
-        dx = refract_amp * np.sin(np.radians(azimuth))
-        dy = refract_amp * np.cos(np.radians(azimuth))
-        yield((dx, dy))
+        refract_start *= 3600.0 / pixel_scale  # Refraction initially in degrees, convert to pixels.
+        refract_end *= 3600.0 / pixel_scale
+        dx_start = refract_start * np.sin(np.radians(azimuth))
+        dx_end = refract_end * np.sin(np.radians(azimuth))
+        dy_start = refract_start * np.cos(np.radians(azimuth))
+        dy_end = refract_end * np.cos(np.radians(azimuth))
+        yield(((dx_start, dx_end), (dy_start, dy_end)))
 
 
-def _kernel_1d(loc, size, width=0.0, min_width=0.1):
+def _kernel_1d(offset, size, width=0.0, min_width=0.1):
+    """Pre-compute the 1D sinc function values along each axis."""
     """
-    pre-compute the 1D sinc function values along each axis.
-
-    @param locs: pixel coordinates of dft locations along single axis (either x or y)
+    @param offset: tuple of start/end pixel offsets of dft locations along single axis (either x or y)
     @params size: dimension in pixels of the given axis
     """
+    n_substep = 10
     pi = np.pi
     pix = np.arange(size, dtype=np.float64)
-    # sign = np.power(-1.0, pix)
-    offset = int(np.floor(loc))
-    delta = loc - offset
+
     kernel = np.zeros(size, dtype=np.float64)
-    if delta == 0:
-        kernel[offset] = 1.0
-    else:
-        kernel[:] = np.sin(pi * (pix - loc)) / (pi * (pix - loc))
-    if width > min_width:
-        kernel += np.sin(pi * (pix - loc + width/2.)) / (pi * (pix - loc + width / 2.))
-        kernel += np.sin(pi * (pix - loc - width/2.)) / (pi * (pix - loc - width / 2.))
-        kernel /= 3.
-    return kernel
+    for _n in range(n_substep):
+        loc = size//2. + (offset[0] * (n_substep - _n) + offset[1] * _n) / n_substep
+        if loc % 1.0 == 0:
+            kernel[int(loc)] += 1.0
+        else:
+            kernel += np.sin(pi * (pix - loc)) / (pi * (pix - loc))
+    return kernel / n_substep
 
 
 class NonnegLstsqIterFit():
