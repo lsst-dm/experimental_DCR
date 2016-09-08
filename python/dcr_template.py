@@ -58,12 +58,13 @@ dy = 70
 class DcrModel:
     """Lightweight object that contains only the minimum needed to generate DCR-matched template exposures."""
 
-    def __init__(self, ):
+    def __init__(self, model_repository=None, band_name='g', debug_mode=False, **kwargs):
         print("Running DcrModel init!")
-        pass
+        self.debug = debug_mode
+        self.load_model(model_repository=model_repository, band_name=band_name, **kwargs)
 
     def generate_templates_from_model(self, obsid_range=None, elevation_arr=None, azimuth_arr=None,
-                                      repository=None, output_directory=None, add_noise=False, use_full=True,
+                                      repository=None, output_repository=None, add_noise=False, use_full=True,
                                       kernel_size=None, **kwargs):
         """Use the previously generated model and construct a dcr template image."""
         exposures = []
@@ -71,8 +72,10 @@ class DcrModel:
             butler = daf_persistence.Butler(repository)
         else:
             butler = self.butler
+        if output_repository is not None:
+            butler_out = daf_persistence.Butler(output_repository)
         if obsid_range is not None:
-            dataId = _build_dataId(obsid_range, self.photoParams.bandpass)
+            dataId = self._build_dataId(obsid_range, self.photoParams.bandpass)
             elevation_arr = []
             azimuth_arr = []
             for _id in dataId:
@@ -141,21 +144,38 @@ class DcrModel:
                     #     rand_gen.seed(seed - 1)
                     template += rand_gen.normal(scale=np.sqrt(variance_level), size=template.shape)
 
-            # seed and obsid will be over-written each iteration, but are needed to use _create_exposure as-is
-            self.seed = None
             dataId_out = dataId[_img]
-            dataId_out['visit'] = dataId_out['visit'] + 500 % 1000
-            self.obsid = dataId_out['visit']
             exposure = self._create_exposure(template, variance=np.abs(template), snap=0,
-                                             elevation=el, azimuth=az)
-            if output_directory is None:
-                butler.put(exposure, "calexp", dataId=dataId_out)
-            else:
-                band_dict = {'u': 0, 'g': 1, 'r': 2, 'i': 3, 'z': 4, 'y': 5}
-                bn = band_dict[self.photoParams.bandpass]
-                filename = "lsst_e_%3i_f%i_R22_S11_E%3.3i.fits" % (exposure.getMetadata().get("OBSID"), bn, 2)
-                exposure.writeFits(output_directory + "images/" + filename)
+                                             elevation=el, azimuth=az, obsid=dataId_out['visit'])
+            if output_repository is not None:
+                butler_out.put(exposure, "calexp", dataId=dataId_out)
             yield(exposure)
+
+    @staticmethod
+    def _build_dataId(obsid_range, band):
+        if hasattr(obsid_range, '__iter__'):
+            if len(obsid_range) > 2:
+                if obsid_range[2] < obsid_range[0]:
+                    dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
+                              for obsid in np.arange(obsid_range[0], obsid_range[1], obsid_range[2])]
+                else:
+                    dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
+                              for obsid in obsid_range]
+            else:
+                dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
+                          for obsid in np.arange(obsid_range[0], obsid_range[1])]
+        else:
+            dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
+                      for obsid in [obsid_range]]
+        return(dataId)
+
+    @staticmethod
+    def _build_model_dataId(band, subfilter=None):
+        if subfilter is None:
+            dataId = {'filter': band, 'tract': 0, 'patch': 0}
+        else:
+            dataId = {'filter': band, 'tract': 0, 'patch': 0, 'subfilter': subfilter}
+        return(dataId)
 
     def _apply_dcr_kernel(self, dcr_kernel, model_vals):
         if self.use_fft:
@@ -229,15 +249,57 @@ class DcrModel:
         meta.add("AIRMASS", 1.0 / np.sin(np.radians(elevation)))
         meta.add("ZENITH", 90 - elevation)
         meta.add("AZIMUTH", azimuth)
-        # meta.add("FILTER", self.band_name)
-        if self.seed is not None:
-            meta.add("SEED", self.seed)
-        if self.obsid is not None:
-            meta.add("OBSID", self.obsid)
-            self.obsid += 1
         for add_item in kwargs:
             meta.add(add_item, kwargs[add_item])
         return(exposure)
+
+    def export_model(self, model_repository=None):
+        if model_repository is None:
+            butler_model = self.butler
+        else:
+            butler_model = daf_persistence.Butler(model_repository)
+        wave_gen = _wavelength_iterator(self.bandpass, use_midpoint=False)
+        for _f in range(self.n_step):
+            wl_start, wl_end = wave_gen.next()
+            exp = self._create_exposure(self.model[_f, :, :], variance=self.weights[_f, :, :],
+                                        elevation=90., azimuth=0.,
+                                        subfilter=_f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
+                                        wavestep=self.bandpass.wavelen_step, psf_flag=self.use_psf)
+            butler_model.put(exp, "dcrModel", dataId=self._build_model_dataId(self.photoParams.bandpass, _f))
+
+    def load_model(self, model_repository=None, band_name='g', **kwargs):
+        if model_repository is None:
+            butler_model = self.butler
+        else:
+            butler_model = daf_persistence.Butler(model_repository)
+        model_arr = []
+        weights_arr = []
+        subfilter_range = butler_model.queryMetadata("dcrModel", "subfilter",
+                                                     dataId=self._build_model_dataId(band_name))
+        for _f in subfilter_range:
+            dcrModel = butler_model.get("dcrModel", dataId=self._build_model_dataId(band_name, subfilter=_f))
+            model_arr.append(dcrModel.getMaskedImage().getImage().getArray())
+            weights_arr.append(dcrModel.getMaskedImage().getVariance().getArray())
+        meta = dcrModel.getMetadata()
+        self.n_step = len(model_arr)
+        wavelength_step = meta.get("WAVESTEP")
+        self.use_psf = meta.get("PSF_FLAG")
+        self.y_size, self.x_size = dcrModel.getDimensions()
+        self.pixel_scale = dcrModel.getWcs().pixelScale().asArcseconds()
+        exposure_time = dcrModel.getInfo().getCalib().getExptime()
+        self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
+                                                 bandpass=band_name)
+        self.bbox = dcrModel.getBBox()
+        self.wcs = dcrModel.getWcs()
+        self.kernel_size = dcrModel.getPsf().computeKernelImage().getArray().shape[0]
+        self.bandpass = _load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
+
+    def view_model(self, index=0):
+        model = self.model[index, :, :].copy()
+        weights = self.weights[index, :, :]
+        model[weights > 0] /= weights[weights > 0]
+        model[weights <= 0] = 0.0
+        return(model)
 
 
 class DcrCorrection(DcrModel):
@@ -252,7 +314,7 @@ class DcrCorrection(DcrModel):
         @param obsid_range: obsid or range of obsids to process.
         """
         self.butler = daf_persistence.Butler(repository)
-        dataId_gen = _build_dataId(obsid_range, band_name)
+        dataId_gen = self._build_dataId(obsid_range, band_name)
         self.elevation_arr = []
         self.azimuth_arr = []
         self.airmass_arr = []
@@ -522,13 +584,6 @@ class DcrCorrection(DcrModel):
             model_vals = model_solution[0]
             return(np.reshape(model_vals, (self.n_step, y_size, x_size)))
 
-    def view_model(self, index=0):
-        model = self.model[index, :, :].copy()
-        weights = self.weights[index, :, :]
-        model[weights > 0] /= weights[weights > 0]
-        model[weights <= 0] = 0.0
-        return(model)
-
 
 def _calc_offset_phase(exposure, offset_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
                        reverse_offset=False):
@@ -634,23 +689,6 @@ def _calc_psf_kernel_subroutine(psf_img, offset_x, offset_y, x_size=None, y_size
                 sub_image += scipy_shift(psf_img, (j_use, i_use), mode='constant', cval=0.0)
             psf_mat[_ij, :] = np.ravel(sub_image[x0:x1, y0:y1]) / n_substep
     return(psf_mat)
-
-
-def _build_dataId(obsid_range, band):
-    if hasattr(obsid_range, '__iter__'):
-        if len(obsid_range) > 2:
-            if obsid_range[2] < obsid_range[0]:
-                dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                          for obsid in np.arange(obsid_range[0], obsid_range[1], obsid_range[2])]
-            else:
-                dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                          for obsid in obsid_range]
-        else:
-            dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                      for obsid in np.arange(obsid_range[0], obsid_range[1])]
-    else:
-        dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band} for obsid in [obsid_range]]
-    return(dataId)
 
 
 # NOTE: This function was copied from StarFast.py
