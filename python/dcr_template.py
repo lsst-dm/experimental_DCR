@@ -62,6 +62,8 @@ class DcrModel:
         print("Running DcrModel init!")
         self.debug = debug_mode
         self.load_model(model_repository=model_repository, band_name=band_name, **kwargs)
+        self.use_fft = False
+        self.butler = None
 
     def generate_templates_from_model(self, obsid_range=None, elevation_arr=None, azimuth_arr=None,
                                       repository=None, output_repository=None, add_noise=False, use_full=True,
@@ -70,6 +72,8 @@ class DcrModel:
         exposures = []
         if repository is not None:
             butler = daf_persistence.Butler(repository)
+            if self.butler is None:
+                self.butler = butler
         else:
             butler = self.butler
         if output_repository is not None:
@@ -262,24 +266,29 @@ class DcrModel:
         for _f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
             exp = self._create_exposure(self.model[_f, :, :], variance=self.weights[_f, :, :],
-                                        elevation=90., azimuth=0.,
+                                        elevation=90., azimuth=0., ksupport=self.kernel_size,
                                         subfilter=_f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
                                         wavestep=self.bandpass.wavelen_step, psf_flag=self.use_psf)
             butler_model.put(exp, "dcrModel", dataId=self._build_model_dataId(self.photoParams.bandpass, _f))
 
     def load_model(self, model_repository=None, band_name='g', **kwargs):
         if model_repository is None:
-            butler_model = self.butler
+            butler = self.butler
         else:
-            butler_model = daf_persistence.Butler(model_repository)
+            butler = daf_persistence.Butler(model_repository)
         model_arr = []
         weights_arr = []
-        subfilter_range = butler_model.queryMetadata("dcrModel", "subfilter",
-                                                     dataId=self._build_model_dataId(band_name))
-        for _f in subfilter_range:
-            dcrModel = butler_model.get("dcrModel", dataId=self._build_model_dataId(band_name, subfilter=_f))
+        _f = 0
+        while butler.datasetExists("dcrModel", dataId=self._build_model_dataId(band_name, subfilter=_f)):
+            dcrModel = butler.get("dcrModel", dataId=self._build_model_dataId(band_name, subfilter=_f))
             model_arr.append(dcrModel.getMaskedImage().getImage().getArray())
             weights_arr.append(dcrModel.getMaskedImage().getVariance().getArray())
+            _f += 1
+
+        self.model = np.array(model_arr)
+        self.weights = np.array(weights_arr)
+        self.mask = dcrModel.getMaskedImage().getMask().getArray()
+
         meta = dcrModel.getMetadata()
         self.n_step = len(model_arr)
         wavelength_step = meta.get("WAVESTEP")
@@ -291,10 +300,16 @@ class DcrModel:
                                                  bandpass=band_name)
         self.bbox = dcrModel.getBBox()
         self.wcs = dcrModel.getWcs()
-        self.kernel_size = dcrModel.getPsf().computeKernelImage().getArray().shape[0]
+        self.kernel_size = meta.get("KSUPPORT")
         self.bandpass = _load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
 
-    def view_model(self, index=0):
+        self.psf = dcrModel.getPsf()
+        self.psf_size = self.psf.computeKernelImage().getArray().shape[0]
+        p0 = self.psf_size//2 - self.kernel_size//2
+        p1 = p0 + self.kernel_size
+        self.psf_avg = self.psf.computeKernelImage().getArray()[p0: p1, p0: p1]
+
+    def view_model(self, index):
         model = self.model[index, :, :].copy()
         weights = self.weights[index, :, :]
         model[weights > 0] /= weights[weights > 0]
