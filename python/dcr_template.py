@@ -38,6 +38,8 @@ import lsst.meas.algorithms as measAlg
 import lsst.pex.policy as pexPolicy
 from lsst.sims.photUtils import Bandpass, PhotometricParameters
 from lsst.utils import getPackageDir
+import unittest
+import lsst.utils.tests
 from .calc_refractive_index import diff_refraction
 
 __all__ = ["DcrModel", "DcrCorrection"]
@@ -506,9 +508,9 @@ class DcrCorrection(DcrModel):
         detected_bit = calexp.getMaskedImage().getMask().getPlaneBitMask("DETECTED")
         print("Working on column", end="")
         for _j in range(self.y_size):
-            if _j%100 == 0:
+            if _j % 100 == 0:
                 print("\n %i" % _j, end="")
-            elif _j%10 == 0:
+            elif _j % 10 == 0:
                 print("|", end="")
             else:
                 print(".", end="")
@@ -528,8 +530,8 @@ class DcrCorrection(DcrModel):
                     if _j < y0: continue
                     if _j > y0+dy: continue
                 # This option saves time by only performing the fit if the center pixel is masked as detected
-                # Note that by gridding the results with the psf and maintaining a separate 'weights' array 
-                # this 
+                # Note that by gridding the results with the psf and maintaining a separate 'weights' array
+                # this
                 if use_only_detected:
                     if self.mask[_j, _i] & detected_bit == 0:
                         continue
@@ -769,7 +771,7 @@ def _wavelength_iterator(bandpass, use_midpoint=False):
 
 
 # NOTE: This function was modified from StarFast.py
-def _dcr_generator(bandpass, pixel_scale=None, elevation=50.0, azimuth=0.0, **kwargs):
+def _dcr_generator(bandpass, pixel_scale=None, elevation=50.0, azimuth=0.0, use_midpoint=False, **kwargs):
     """Call the functions that compute Differential Chromatic Refraction (relative to mid-band)."""
     """
     @param bandpass: bandpass object created with load_bandpass
@@ -780,18 +782,27 @@ def _dcr_generator(bandpass, pixel_scale=None, elevation=50.0, azimuth=0.0, **kw
     zenith_angle = 90.0 - elevation
     wavelength_midpoint = bandpass.calc_eff_wavelen()
     for wl_start, wl_end in _wavelength_iterator(bandpass, use_midpoint=False):
-        # Note that refract_amp can be negative, since it's relative to the midpoint of the band
-        refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
-                                        zenith_angle=zenith_angle, **kwargs)
-        refract_end = diff_refraction(wavelength=wl_end, wavelength_ref=wavelength_midpoint,
-                                      zenith_angle=zenith_angle, **kwargs)
-        refract_start *= 3600.0 / pixel_scale  # Refraction initially in degrees, convert to pixels.
-        refract_end *= 3600.0 / pixel_scale
-        dx_start = refract_start * np.sin(np.radians(azimuth))
-        dx_end = refract_end * np.sin(np.radians(azimuth))
-        dy_start = refract_start * np.cos(np.radians(azimuth))
-        dy_end = refract_end * np.cos(np.radians(azimuth))
-        yield(((dx_start, dx_end), (dy_start, dy_end)))
+        # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
+        if use_midpoint:
+            wl_mid = bandpass.calc_eff_wavelen(wavelength_min=wl_start, wavelength_max=wl_end)
+            refract_mid = diff_refraction(wavelength=wl_mid, wavelength_ref=wavelength_midpoint,
+                                          zenith_angle=zenith_angle, **kwargs)
+            refract_mid *= 3600.0 / pixel_scale
+            dx_mid = refract_mid * np.sin(np.radians(azimuth))
+            dy_mid = refract_mid * np.cos(np.radians(azimuth))
+            yield((dx_mid, dy_mid))
+        else:
+            refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
+                                            zenith_angle=zenith_angle, **kwargs)
+            refract_end = diff_refraction(wavelength=wl_end, wavelength_ref=wavelength_midpoint,
+                                          zenith_angle=zenith_angle, **kwargs)
+            refract_start *= 3600.0 / pixel_scale  # Refraction initially in degrees, convert to pixels.
+            refract_end *= 3600.0 / pixel_scale
+            dx_start = refract_start * np.sin(np.radians(azimuth))
+            dx_end = refract_end * np.sin(np.radians(azimuth))
+            dy_start = refract_start * np.cos(np.radians(azimuth))
+            dy_end = refract_end * np.cos(np.radians(azimuth))
+            yield(((dx_start, dx_end), (dy_start, dy_end)))
 
 
 def _kernel_1d(offset, size, width=0.0, min_width=0.1):
@@ -807,7 +818,7 @@ def _kernel_1d(offset, size, width=0.0, min_width=0.1):
     kernel = np.zeros(size, dtype=np.float64)
     for _n in range(n_substep):
         loc = size//2. + (offset[0]*(n_substep - _n) + offset[1]*_n)/n_substep
-        if loc%1.0 == 0:
+        if loc % 1.0 == 0:
             kernel[int(loc)] += 1.0
         else:
             kernel += np.sin(pi*(pix - loc))/(pi*(pix - loc))
@@ -817,3 +828,130 @@ def _kernel_1d(offset, size, width=0.0, min_width=0.1):
 class NonnegLstsqIterFit():
     def __init__():
         pass
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+
+class _BasicBandpass:
+    """Dummy bandpass object for testing."""
+
+    def __init__(self, band_name='g', wavelength_step=1):
+        """Define the wavelength range and resolution for a given ugrizy band."""
+        band_dict = {'u': (324.0, 395.0), 'g': (405.0, 552.0), 'r': (552.0, 691.0),
+                     'i': (818.0, 921.0), 'z': (922.0, 997.0), 'y': (975.0, 1075.0)}
+        band_range = band_dict[band_name]
+        self.wavelen_min = band_range[0]
+        self.wavelen_max = band_range[1]
+        self.wavelen_step = wavelength_step
+
+    def calc_eff_wavelen(self, wavelength_min=None, wavelength_max=None):
+        """Mimic the calc_eff_wavelen method of the real bandpass class."""
+        if wavelength_min is None:
+            wavelength_min = self.wavelen_min
+        if wavelength_max is None:
+            wavelength_max = self.wavelen_max
+        return((wavelength_min + wavelength_max) / 2.0)
+
+    def calc_bandwidth(self):
+        f0 = constants.speed_of_light / (self.wavelen_min * 1.0e-9)
+        f1 = constants.speed_of_light / (self.wavelen_max * 1.0e-9)
+        f_cen = constants.speed_of_light / (self.calc_eff_wavelen() * 1.0e-9)
+        return(f_cen * 2.0 * (f0 - f1) / (f0 + f1))
+
+    def getBandpass(self):
+        """Mimic the getBandpass method of the real bandpass class."""
+        wl_gen = _wavelength_iterator(self)
+        wavelengths = [wl[0] for wl in wl_gen]
+        wavelengths += [self.wavelen_max]
+        bp_vals = [1] * len(wavelengths)
+        return((wavelengths, bp_vals))
+
+
+class DCRTestCase(lsst.utils.tests.TestCase):
+    """Test the the calculations of Differential Chromatic Refraction."""
+
+    def setUp(self):
+        """Define parameters used by every test."""
+        band_name = 'g'
+        wavelength_step = 10.0
+        self.pixel_scale = 0.25
+        self.bandpass = _BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
+
+    def tearDown(self):
+        """Clean up."""
+        del self.bandpass
+
+    def test_dcr_generator(self):
+        """Check that _dcr_generator returns a generator with n_step iterations, and (0,0) at zenith."""
+        azimuth = 0.0
+        elevation = 90.0
+        zenith_dcr = ((0.0, 0.0), (0.0, 0.0))
+        bp = self.bandpass
+        dcr_gen = _dcr_generator(bp, pixel_scale=self.pixel_scale, elevation=elevation, azimuth=azimuth)
+        n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
+        for _i in range(n_step):
+            dcr_vals = next(dcr_gen)
+            self.assertFloatsEqual(dcr_vals[0][0], zenith_dcr[0][0])
+            self.assertFloatsEqual(dcr_vals[1][0], zenith_dcr[1][0])
+            self.assertFloatsEqual(dcr_vals[0][1], zenith_dcr[0][1])
+            self.assertFloatsEqual(dcr_vals[1][1], zenith_dcr[1][1])
+        with self.assertRaises(StopIteration):
+            next(dcr_gen)
+
+    def test_dcr_values(self):
+        """Check DCR against pre-computed values."""
+        azimuth = 0.0
+        elevation = 50.0
+        dcr_vals = [(1.9847367904770623, 1.6467981843302726),
+                    (1.6467981843302726, 1.3341803407311699),
+                    (1.3341803407311699, 1.0443731947908652),
+                    (1.0443731947908652, 0.77517513542339489),
+                    (0.77517513542339489, 0.52464791969238367),
+                    (0.52464791969238367, 0.29107920440002155),
+                    (0.29107920440002155, 0.072951238300825172),
+                    (0.072951238300825172, -0.13108543143740825),
+                    (-0.13108543143740825, -0.3222341473268886),
+                    (-0.3222341473268886, -0.50157094957602733),
+                    (-0.50157094957602733, -0.6700605866796161),
+                    (-0.6700605866796161, -0.8285701993878597),
+                    (-0.8285701993878597, -0.97788106062563773),
+                    (-0.97788106062563773, -1.1186986838806061),
+                    (-1.1186986838806061, -1.2125619138571659)]
+        bp = self.bandpass
+        dcr_gen = _dcr_generator(bp, pixel_scale=self.pixel_scale, elevation=elevation,
+                                 azimuth=azimuth, use_midpoint=False)
+        n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
+        for _i in range(n_step):
+            dcr_gen_vals = next(dcr_gen)
+            self.assertFloatsEqual(dcr_gen_vals[1][0], dcr_vals[_i][0])
+            self.assertFloatsEqual(dcr_gen_vals[1][1], dcr_vals[_i][1])
+
+
+class BandpassTestCase(lsst.utils.tests.TestCase):
+    """Tests of the interface to Bandpass from lsst.sims.photUtils."""
+
+    def setUp(self):
+        """Define parameters used by every test."""
+        self.band_name = 'g'
+        self.wavelength_step = 10
+        self.bandpass = _load_bandpass(band_name=self.band_name, wavelength_step=self.wavelength_step)
+
+    def test_step_bandpass(self):
+        """Check that the bandpass has necessary methods, and those return the correct number of values."""
+        bp = self.bandpass
+        bp_wavelen, bandpass_vals = bp.getBandpass()
+        n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
+        self.assertEqual(n_step + 1, len(bandpass_vals))
+
+
+class MemoryTester(lsst.utils.tests.MemoryTestCase):
+    pass
+
+
+def setup_module(module):
+    lsst.utils.tests.init()
+
+
+if __name__ == "__main__":
+    lsst.utils.tests.init()
+    unittest.main()
