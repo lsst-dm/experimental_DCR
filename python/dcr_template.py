@@ -33,6 +33,7 @@ from scipy.ndimage.interpolation import shift as scipy_shift
 import scipy.optimize.nnls as positive_lstsq
 
 import lsst.daf.persistence as daf_persistence
+import lsst.afw.geom as afwGeom
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
@@ -54,9 +55,9 @@ class DcrModel:
 
     def __init__(self, model_repository=None, band_name='g', debug_mode=False, **kwargs):
         self.debug = debug_mode
+        self.butler = None
         self.load_model(model_repository=model_repository, band_name=band_name, **kwargs)
         self.use_fft = False
-        self.butler = None
 
     def generate_templates_from_model(self, obsid_range=None, elevation_arr=None, azimuth_arr=None,
                                       repository=None, output_repository=None, add_noise=False, use_full=True,
@@ -95,17 +96,14 @@ class DcrModel:
 
             if self.use_psf:
                 if use_full:
-                    dcr_kernel = _calc_psf_kernel_full(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
-                                                       x_size=self.kernel_size, y_size=self.kernel_size,
-                                                       return_matrix=True, psf_img=self.psf_avg)
+                    dcr_kernel = _calc_psf_kernel_full(exp, dcr_gen, return_matrix=True, psf_img=self.psf_avg,
+                                                       x_size=self.kernel_size, y_size=self.kernel_size)
                 else:
-                    dcr_kernel = _calc_psf_kernel(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
-                                                  x_size=self.kernel_size, y_size=self.kernel_size,
-                                                  return_matrix=True, psf_img=self.psf_avg)
+                    dcr_kernel = _calc_psf_kernel(exp, dcr_gen, return_matrix=True, psf_img=self.psf_avg,
+                                                  x_size=self.kernel_size, y_size=self.kernel_size)
             else:
-                dcr_kernel = _calc_offset_phase(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
-                                                x_size=self.kernel_size, y_size=self.kernel_size,
-                                                return_matrix=True)
+                dcr_kernel = _calc_offset_phase(exp, dcr_gen, return_matrix=True,
+                                                x_size=self.kernel_size, y_size=self.kernel_size)
             if self.use_fft:
                 template = np.fft.ifft2(np.sum(self.model * dcr_kernel, axis=0))
             else:
@@ -172,6 +170,8 @@ class DcrModel:
     def _extract_model_vals(_j, _i, radius=None, fft=False, model=None, weights=None):
         """Return all pixles within a radius of a given point as a 1D vector for each dcr plane model."""
         model_arr = []
+        if weights is None:
+            weights = np.ones_like(model)
         for _f in range(model.shape[0]):
             model_use = model[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1].copy()
             weights_use = weights[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1]
@@ -223,7 +223,7 @@ class DcrModel:
     # NOTE: This function was copied from StarFast.py
     def _create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0, **kwargs):
         """Convert a numpy array to an LSST exposure, and units of electron counts."""
-        exposure = afwImage.ExposureF(self.bbox)
+        exposure = afwImage.ExposureD(self.bbox)
         exposure.setWcs(self.wcs)
         # We need the filter name in the exposure metadata, and it can't just be set directly
         try:
@@ -474,10 +474,10 @@ class DcrCorrection(DcrModel):
 
             dcr_genZ = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=90., azimuth=az)
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
-            psf_mat.append(_calc_psf_kernel_full(exp, dcr_genZ, fft=False, reverse_offset=True,
-                           x_size=self.psf_size, y_size=self.psf_size, return_matrix=False))
-            dcr_shift.append(_calc_offset_phase(exp, dcr_gen, fft=False, reverse_offset=True,
-                             x_size=self.psf_size, y_size=self.psf_size, return_matrix=True))
+            psf_mat.append(_calc_psf_kernel_full(exp, dcr_genZ, return_matrix=False,
+                           x_size=self.psf_size, y_size=self.psf_size))
+            dcr_shift.append(_calc_offset_phase(exp, dcr_gen, return_matrix=True,
+                             x_size=self.psf_size, y_size=self.psf_size))
         psf_mat = np.sum(np.hstack(psf_mat), axis=0)
         dcr_shift = np.hstack(dcr_shift)
         regularize_psf = self._build_regularization(x_size=self.psf_size,
@@ -539,16 +539,14 @@ class DcrCorrection(DcrModel):
 
             if self.use_psf:
                 if use_full:
-                    dcr_kernel.append(_calc_psf_kernel_full(exp, dcr_gen, fft=self.use_fft,
-                                      x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True,
-                                      reverse_offset=True, psf_img=self.psf_avg))
+                    dcr_kernel.append(_calc_psf_kernel_full(exp, dcr_gen, psf_img=self.psf_avg,
+                                      x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True))
                 else:
-                    dcr_kernel.append(_calc_psf_kernel(exp, dcr_gen, fft=self.use_fft,
-                                      x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True,
-                                      reverse_offset=True, psf_img=self.psf_avg))
+                    dcr_kernel.append(_calc_psf_kernel(exp, dcr_gen, psf_img=self.psf_avg,
+                                      x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True))
             else:
-                dcr_kernel.append(_calc_offset_phase(exp, dcr_gen, fft=self.use_fft, reverse_offset=True,
-                                  x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True))
+                dcr_kernel.append(_calc_offset_phase(exp, dcr_gen, return_matrix=True,
+                                  x_size=self.kernel_size, y_size=self.kernel_size))
         dcr_kernel = np.hstack(dcr_kernel)
         return(dcr_kernel)
 
@@ -589,8 +587,7 @@ class DcrCorrection(DcrModel):
             return(np.reshape(model_vals, (self.n_step, y_size, x_size)))
 
 
-def _calc_offset_phase(exposure, dcr_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
-                       reverse_offset=False):
+def _calc_offset_phase(exposure, dcr_gen, x_size=None, y_size=None, return_matrix=False):
     """Return the 2D FFT of an offset generated by _dcr_generator in the form (dx, dy)."""
     phase_arr = []
     if y_size is None:
@@ -601,10 +598,7 @@ def _calc_offset_phase(exposure, dcr_gen, fft=False, x_size=None, y_size=None, r
         kernel_x = _kernel_1d(dx, x_size)
         kernel_y = _kernel_1d(dy, y_size)
         kernel = np.einsum('i,j->ij', kernel_y, kernel_x)
-        if fft:
-            kernel = np.fft.fft2(np.fft.fftshift(kernel))
-            phase_arr.append(np.ravel(kernel))
-        elif return_matrix:
+        if return_matrix:
             shift_mat = np.zeros((x_size*y_size, x_size*y_size))
             for _j in range(y_size):
                 for _i in range(x_size):
@@ -618,8 +612,7 @@ def _calc_offset_phase(exposure, dcr_gen, fft=False, x_size=None, y_size=None, r
     return(phase_arr)
 
 
-def _calc_psf_kernel(exposure, dcr_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
-                     reverse_offset=False, psf_img=None):
+def _calc_psf_kernel(exposure, dcr_gen, x_size=None, y_size=None, return_matrix=False, psf_img=None):
 
     if y_size is None:
         y_size = exposure.getHeight()
@@ -629,10 +622,7 @@ def _calc_psf_kernel(exposure, dcr_gen, fft=False, x_size=None, y_size=None, ret
     for dcr in dcr_gen:
         psf_y_size, psf_x_size = psf_img.shape
         psf = np.zeros((y_size, x_size), dtype=psf_img.dtype)
-        if fft:
-            psf = np.fft.fft2(np.fft.fftshift(psf_img))
-            psf_kernel_arr.append(np.ravel(psf))
-        elif return_matrix:
+        if return_matrix:
             psf_kernel_arr.append(_calc_psf_kernel_subroutine(psf_img, dcr))
         else:
             psf_kernel_arr.append(np.ravel(psf))
@@ -641,8 +631,7 @@ def _calc_psf_kernel(exposure, dcr_gen, fft=False, x_size=None, y_size=None, ret
     return(psf_kernel_arr)
 
 
-def _calc_psf_kernel_full(exposure, dcr_gen, fft=False, x_size=None, y_size=None, return_matrix=False,
-                          reverse_offset=False, psf_img=None):
+def _calc_psf_kernel_full(exposure, dcr_gen, x_size=None, y_size=None, return_matrix=False, psf_img=None):
     # psf_img is passed in but not used so that this function can be swapped in for _calc_psf_kernel
     # without having to change the keywords
     if y_size is None:
@@ -650,8 +639,8 @@ def _calc_psf_kernel_full(exposure, dcr_gen, fft=False, x_size=None, y_size=None
     if x_size is None:
         x_size = exposure.getWidth()
     psf_kernel_arr = []
+    psf_img = exposure.getPsf().computeKernelImage().getArray()
     for dcr in dcr_gen:
-        psf_img = exposure.getPsf().computeKernelImage().getArray()
         kernel_single = _calc_psf_kernel_subroutine(psf_img, dcr, x_size=x_size, y_size=y_size)
         if return_matrix:
             psf_kernel_arr.append(kernel_single)
@@ -876,6 +865,50 @@ class _BasicBandpass:
         return((wavelengths, bp_vals))
 
 
+class _BasicDcrModel(DcrModel):
+    """Dummy DcrModel object for testing without a repository."""
+
+    def __init__(self, size=None, kernel_size=5, n_step=3, band_name='g', exposure_time=30.,
+                 pixel_scale=0.25, wavelength_step=10.0):
+        seed = 5
+        rand_gen = np.random
+        rand_gen.seed(seed)
+        self.butler = None
+        self.use_fft = False
+
+        bandpass = _BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
+        if n_step is not None:
+            wavelength_step = (bandpass.wavelen_max - bandpass.wavelen_min) / n_step
+            bandpass = _BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
+        else:
+            n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
+        self.bandpass = bandpass
+        self.model = rand_gen.random(size=(n_step, size, size))
+        self.weights = np.ones((n_step, size, size))
+        self.mask = np.zeros((size, size), dtype=np.int32)
+
+        self.n_step = n_step
+        self.y_size = size
+        self.x_size = size
+        self.pixel_scale = pixel_scale
+        self.kernel_size = kernel_size
+        self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=pixel_scale,
+                                                 bandpass=band_name)
+        self.bbox = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(size, size))
+        self.wcs = None
+
+        psf_vals = np.zeros((kernel_size, kernel_size))
+        psf_vals[kernel_size//2 - 1: kernel_size//2 + 1,
+                 kernel_size//2 - 1: kernel_size//2 + 1] = 0.5
+        psf_vals[kernel_size//2, kernel_size//2] = 1.
+        psf_image = afwImage.ImageD(kernel_size, kernel_size)
+        psf_image.getArray()[:, :] = psf_vals
+        psfK = afwMath.FixedKernel(psf_image)
+        self.psf = measAlg.KernelPsf(psfK)
+
+        self.psf_avg = psf_vals  # self.psf.computeKernelImage().getArray()
+
+
 class DCRTestCase(lsst.utils.tests.TestCase):
     """Test the the calculations of Differential Chromatic Refraction."""
 
@@ -952,6 +985,145 @@ class BandpassTestCase(lsst.utils.tests.TestCase):
         bp_wavelen, bandpass_vals = bp.getBandpass()
         n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
         self.assertEqual(n_step + 1, len(bandpass_vals))
+
+
+class DcrModelTestBase(lsst.utils.tests.TestCase):
+
+    def setUp(self):
+        band_name = 'g'
+        n_step = 3
+        pixel_scale = 0.25
+        self.kernel_size = 5
+        self.size = 20
+        # NOTE that this array is randomly generated for each instance. 
+        self.array = np.random.random(size=(self.size, self.size))
+        self.dcrModel = _BasicDcrModel(size=self.size, kernel_size=self.kernel_size, band_name=band_name,
+                                       n_step=n_step, pixel_scale=pixel_scale)
+        azimuth = 0.0
+        elevation = 70.0
+        self.dcr_gen = _dcr_generator(self.dcrModel.bandpass, pixel_scale=self.dcrModel.pixel_scale,
+                                      elevation=elevation, azimuth=azimuth, use_midpoint=False)
+        self.exposure = self.dcrModel._create_exposure(self.array, variance=None, elevation=elevation,
+                                                       azimuth=azimuth)
+
+    def tearDown(self):
+        del self.dcrModel
+        del self.exposure
+
+
+class ExposureTestCase(DcrModelTestBase):
+
+    def test_create_exposure(self):
+        self.assertFloatsEqual(self.exposure.getMaskedImage().getImage().getArray(), self.array)
+        meta = self.exposure.getMetadata()
+        # Check that the required metadata is present:
+        try:
+            meta.get("ZENITH")
+        except Exception as e:
+            raise e
+        try:
+            meta.get("AZIMUTH")
+        except Exception as e:
+            raise e
+
+
+class KernelTestCase(DcrModelTestBase):
+    """Tests of the various kernels that incorporate dcr-based shifts."""
+
+    def test_simple_phase_kernel(self):
+        data_file = "test_data/simple_phase_kernel.npy"
+        psf = self.exposure.getPsf()
+        psf_size = psf.computeKernelImage().getArray().shape[0]
+        phase_arr = _calc_offset_phase(self.exposure, self.dcr_gen,
+                                       x_size=psf_size, y_size=psf_size, return_matrix=True)
+        phase_arr_ref = np.load(data_file)
+        self.assertFloatsEqual(phase_arr, phase_arr_ref)
+
+    def test_simple_psf_kernel(self):
+        data_file = "test_data/simple_psf_kernel.npy"
+        psf = self.exposure.getPsf()
+        psf_size = psf.computeKernelImage().getArray().shape[0]
+        phase_arr = _calc_psf_kernel(self.exposure, self.dcr_gen, x_size=psf_size, y_size=psf_size,
+                                     return_matrix=True, psf_img=self.dcrModel.psf_avg)
+        phase_arr_ref = np.load(data_file)
+        self.assertFloatsEqual(phase_arr, phase_arr_ref)
+
+    def test_full_psf_kernel(self):
+        data_file = "test_data/full_psf_kernel.npy"
+        psf = self.exposure.getPsf()
+        psf_size = psf.computeKernelImage().getArray().shape[0]
+        phase_arr = _calc_psf_kernel_full(self.exposure, self.dcr_gen, x_size=psf_size, y_size=psf_size,
+                                          return_matrix=True, psf_img=self.dcrModel.psf_avg)
+        phase_arr_ref = np.load(data_file)
+        self.assertFloatsEqual(phase_arr, phase_arr_ref)
+
+
+class DcrModelTestCase(DcrModelTestBase):
+    """Tests for the functions in the DcrModel class."""
+
+    def test_dataId_single(self):
+        id_ref = 100
+        band_ref = 'g'
+        ref_id = {'visit': id_ref, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
+        dataId = self.dcrModel._build_dataId(id_ref, band_ref)
+        self.assertEqual(ref_id, dataId[0])
+
+    def test_dataId_range(self):
+        id_ref = [100, 103]
+        band_ref = 'g'
+        ref_id = {'visit': id_ref, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
+        dataId = self.dcrModel._build_dataId(id_ref, band_ref)
+        for _i, _id in enumerate(range(id_ref[0], id_ref[1])):
+            ref_id = {'visit': _id, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
+            self.assertEqual(ref_id, dataId[_i])
+
+    def test_extract_model_no_weights(self):
+        # Make j and i different slightly so we can tell if the indices get swapped
+        _i = self.size//2 + 1
+        _j = self.size//2 - 1
+        radius = self.kernel_size//2
+        model_use = self.dcrModel.model
+        model_vals = self.dcrModel._extract_model_vals(_j, _i, radius=radius, model=model_use)
+        input_vals = [np.ravel(model_use[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1])
+                      for _f in range(self.dcrModel.n_step)]
+        self.assertFloatsEqual(np.hstack(input_vals), model_vals)
+
+    def test_extract_model_with_weights(self):
+        # Make j and i different slightly so we can tell if the indices get swapped
+        _i = self.size//2 + 1
+        _j = self.size//2 - 1
+        radius = self.kernel_size//2
+        model = self.dcrModel.model
+        weight_scale = 2.2
+        weights = self.dcrModel.weights * weight_scale
+        weights[:, _j, _i] = 0.
+        model_vals = self.dcrModel._extract_model_vals(_j, _i, radius=radius, model=model, weights=weights)
+        input_arr = []
+        for _f in range(self.dcrModel.n_step):
+            input_vals = model[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] / weight_scale
+            input_vals[radius, radius] = 0.
+            input_arr.append(np.ravel(input_vals))
+
+        # input_vals = [model[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] * weight_scale
+        #               for _f in range(self.dcrModel.n_step)]
+        # # input_vals = np.asarray(input_vals)
+        # input_vals[:][radius, radius] = 0.
+        # input_vals = [np.ravel(input_vals[_f]) for _f in range(self.dcrModel.n_step)]
+        self.assertFloatsEqual(np.hstack(input_arr), model_vals)
+
+    def test_apply_kernel(self):
+        data_file = "test_data/dcr_kernel_vals.npy"
+        i_use = self.size//2
+        j_use = self.size//2
+        radius = self.kernel_size//2
+        model_vals = self.dcrModel._extract_model_vals(j_use, i_use, radius=radius, model=self.dcrModel.model,
+                                                       weights=self.dcrModel.weights)
+        dcr_kernel = _calc_offset_phase(self.exposure, self.dcr_gen, return_matrix=True,
+                                        x_size=self.kernel_size, y_size=self.kernel_size)
+        dcr_vals = self.dcrModel._apply_dcr_kernel(dcr_kernel, model_vals, x_size=self.kernel_size,
+                                                   y_size=self.kernel_size)
+        dcr_ref = np.load(data_file)
+        self.assertFloatsEqual(dcr_vals, dcr_ref)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
