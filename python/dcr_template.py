@@ -33,6 +33,7 @@ from scipy.ndimage.interpolation import shift as scipy_shift
 import scipy.optimize.nnls as positive_lstsq
 
 import lsst.daf.persistence as daf_persistence
+import lsst.afw.coord as afwCoord
 import lsst.afw.geom as afwGeom
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
@@ -268,17 +269,17 @@ class DcrModel:
     def export_model(self, model_repository=None):
         """Persist a DcrModel with metadata to a repository."""
         if model_repository is None:
-            butler_model = self.butler
+            butler = self.butler
         else:
-            butler_model = daf_persistence.Butler(model_repository)
+            butler = daf_persistence.Butler(model_repository)
         wave_gen = _wavelength_iterator(self.bandpass, use_midpoint=False)
         for _f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
             exp = self._create_exposure(self.model[_f, :, :], variance=self.weights[_f, :, :],
                                         elevation=90., azimuth=0., ksupport=self.kernel_size,
-                                        subfilter=_f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
+                                        subfilt=_f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
                                         wavestep=self.bandpass.wavelen_step, psf_flag=self.use_psf)
-            butler_model.put(exp, "dcrModel", dataId=self._build_model_dataId(self.photoParams.bandpass, _f))
+            butler.put(exp, "dcrModel", dataId=self._build_model_dataId(self.photoParams.bandpass, _f))
 
     def load_model(self, model_repository=None, band_name='g', **kwargs):
         """Depersist a DcrModel from a repository and set up the metadata."""
@@ -300,16 +301,16 @@ class DcrModel:
         self.mask = dcrModel.getMaskedImage().getMask().getArray()
 
         meta = dcrModel.getMetadata()
+        self.wcs = dcrModel.getWcs()
         self.n_step = len(model_arr)
         wavelength_step = meta.get("WAVESTEP")
         self.use_psf = meta.get("PSF_FLAG")
         self.y_size, self.x_size = dcrModel.getDimensions()
-        self.pixel_scale = dcrModel.getWcs().pixelScale().asArcseconds()
+        self.pixel_scale = self.wcs.pixelScale().asArcseconds()
         exposure_time = dcrModel.getInfo().getCalib().getExptime()
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
                                                  bandpass=band_name)
         self.bbox = dcrModel.getBBox()
-        self.wcs = dcrModel.getWcs()
         self.kernel_size = meta.get("KSUPPORT")
         self.bandpass = _load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
 
@@ -867,6 +868,17 @@ class _BasicBandpass:
         return((wavelengths, bp_vals))
 
 
+def _create_wcs(bbox=None, pixel_scale=None, ra=None, dec=None, sky_rotation=None):
+    """Create a wcs (coordinate system)."""
+    crval = afwCoord.IcrsCoord(ra * afwGeom.degrees, dec * afwGeom.degrees)
+    crpix = afwGeom.Box2D(bbox).getCenter()
+    cd1_1 = (pixel_scale * afwGeom.arcseconds * np.cos(np.radians(sky_rotation))).asDegrees()
+    cd1_2 = (-pixel_scale * afwGeom.arcseconds * np.sin(np.radians(sky_rotation))).asDegrees()
+    cd2_1 = (pixel_scale * afwGeom.arcseconds * np.sin(np.radians(sky_rotation))).asDegrees()
+    cd2_2 = (pixel_scale * afwGeom.arcseconds * np.cos(np.radians(sky_rotation))).asDegrees()
+    return(afwImage.makeWcs(crval, crpix, cd1_1, cd1_2, cd2_1, cd2_2))
+
+
 class _BasicDcrModel(DcrModel):
     """Dummy DcrModel object for testing without a repository."""
 
@@ -877,6 +889,7 @@ class _BasicDcrModel(DcrModel):
         rand_gen.seed(seed)
         self.butler = None
         self.use_fft = False
+        self.use_psf = False
 
         bandpass = _BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
         if n_step is not None:
@@ -897,7 +910,7 @@ class _BasicDcrModel(DcrModel):
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=pixel_scale,
                                                  bandpass=band_name)
         self.bbox = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(size, size))
-        self.wcs = None
+        self.wcs = _create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=0., dec=0., sky_rotation=0.)
 
         psf_vals = np.zeros((kernel_size, kernel_size))
         psf_vals[kernel_size//2 - 1: kernel_size//2 + 1,
@@ -997,7 +1010,7 @@ class DcrModelTestBase(lsst.utils.tests.TestCase):
         pixel_scale = 0.25
         self.kernel_size = 5
         self.size = 20
-        # NOTE that this array is randomly generated for each instance. 
+        # NOTE that this array is randomly generated for each instance.
         self.array = np.random.random(size=(self.size, self.size))
         self.dcrModel = _BasicDcrModel(size=self.size, kernel_size=self.kernel_size, band_name=band_name,
                                        n_step=n_step, pixel_scale=pixel_scale)
@@ -1011,22 +1024,6 @@ class DcrModelTestBase(lsst.utils.tests.TestCase):
     def tearDown(self):
         del self.dcrModel
         del self.exposure
-
-
-class ExposureTestCase(DcrModelTestBase):
-
-    def test_create_exposure(self):
-        self.assertFloatsEqual(self.exposure.getMaskedImage().getImage().getArray(), self.array)
-        meta = self.exposure.getMetadata()
-        # Check that the required metadata is present:
-        try:
-            meta.get("ZENITH")
-        except Exception as e:
-            raise e
-        try:
-            meta.get("AZIMUTH")
-        except Exception as e:
-            raise e
 
 
 class KernelTestCase(DcrModelTestBase):
@@ -1126,6 +1123,31 @@ class DcrModelTestCase(DcrModelTestBase):
                                                    y_size=self.kernel_size)
         dcr_ref = np.load(data_file)
         self.assertFloatsEqual(dcr_vals, dcr_ref)
+
+
+class PersistanceTestCase(DcrModelTestBase):
+    """Tests that read and write exposures and dcr models to disk."""
+
+    def test_create_exposure(self):
+        self.assertFloatsEqual(self.exposure.getMaskedImage().getImage().getArray(), self.array)
+        meta = self.exposure.getMetadata()
+        # Check that the required metadata is present:
+        try:
+            meta.get("ZENITH")
+        except Exception as e:
+            raise e
+        try:
+            meta.get("AZIMUTH")
+        except Exception as e:
+            raise e
+
+    def test_persist_dcr_model_roundtrip(self):
+        model_repository = "test_data"
+        model = np.float32(self.dcrModel.model)
+        self.dcrModel.export_model(model_repository=model_repository)
+        self.dcrModel.load_model(model_repository=model_repository)
+        # Note that _create_exposure writes floats to FITS files using 32 bit precision.
+        self.assertFloatsEqual(model, self.dcrModel.model)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
