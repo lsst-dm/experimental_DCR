@@ -233,6 +233,8 @@ class DcrModel:
             filterPolicy.add("lambdaEff", self.bandpass.calc_eff_wavelen())
             afwImage.Filter.define(afwImage.FilterProperty(self.photoParams.bandpass, filterPolicy))
             exposure.setFilter(afwImage.Filter(self.photoParams.bandpass))
+            # Need to reset afwImage.Filter to prevent an error in future calls to daf_persistence.Butler
+            afwImage.FilterProperty_reset()
         calib = afwImage.Calib()
         calib.setExptime(self.photoParams.exptime)
         exposure.setCalib(calib)
