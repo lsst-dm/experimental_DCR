@@ -1142,12 +1142,24 @@ class PersistanceTestCase(DcrModelTestBase):
             raise e
 
     def test_persist_dcr_model_roundtrip(self):
+        # Instantiating the butler takes several seconds, so all butler-related tests are condensed into one.
         model_repository = "test_data"
+
+        # First test that the model values are not changed from what is expected
+
+        # The type "dcrModel" is read in as a 32 bit float, set in the lsst.obs.lsstSim.LsstSimMapper policy
         model = np.float32(self.dcrModel.model)
         self.dcrModel.export_model(model_repository=model_repository)
-        self.dcrModel.load_model(model_repository=model_repository)
-        # Note that _create_exposure writes floats to FITS files using 32 bit precision.
-        self.assertFloatsEqual(model, self.dcrModel.model)
+        dcrModel2 = DcrModel(model_repository=model_repository)
+        # self.dcrModel.load_model(model_repository=model_repository)
+        # Note that butler.get() reads the FITS file in 32 bit precision.
+        self.assertFloatsEqual(model, dcrModel2.model)
+
+        # Next, test that the required parameters have been restored
+        param_ref = self.dcrModel.__dict__
+        param_new = dcrModel2.__dict__
+        for key in param_ref.keys():
+            self.assertIn(key, param_new)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
