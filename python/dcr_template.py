@@ -60,7 +60,7 @@ class DcrModel:
         self.load_model(model_repository=model_repository, band_name=band_name, **kwargs)
         self.use_fft = False
 
-    def generate_templates_from_model(self, obsid_range=None, elevation_arr=None, azimuth_arr=None,
+    def generate_templates_from_model(self, obsid_range=None, exposures=None,
                                       repository=None, output_repository=None, add_noise=False, use_full=True,
                                       kernel_size=None, **kwargs):
         """Use the previously generated model and construct a dcr template image."""
@@ -83,6 +83,12 @@ class DcrModel:
                 elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
                 azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
         else:
+            elevation_arr = []
+            azimuth_arr = []
+            for exp in exposures:
+                elevation_arr.append(90 - exp.getMetadata().get("ZENITH"))
+                azimuth_arr.append(exp.getMetadata().get("AZIMUTH"))
+
             print("This version REQUIRES an exposure to match the template.")
 
         if kernel_size is not None:
@@ -1160,6 +1166,19 @@ class PersistanceTestCase(DcrModelTestBase):
         param_new = dcrModel2.__dict__
         for key in param_ref.keys():
             self.assertIn(key, param_new)
+
+    def test_generate_template(self):
+        data_file = "test_data/template.npy"
+        elevation_arr = [50., 70., 85.]
+        az = 0.
+        # Note that self.array is randomly generated each call. That's okay, because the template should
+        # depend only on the metadata.
+        exposures = [self.dcrModel._create_exposure(self.array, variance=None, elevation=el, azimuth=az)
+                     for el in elevation_arr]
+        model_gen = self.dcrModel.generate_templates_from_model(exposures=exposures)
+        model_arr = [model for model in model_gen]
+        model_ref = np.load(data_file)
+        self.assertItemsEqual(model_arr, model_ref)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
