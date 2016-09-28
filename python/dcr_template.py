@@ -58,7 +58,6 @@ class DcrModel:
         self.debug = debug_mode
         self.butler = None
         self.load_model(model_repository=model_repository, band_name=band_name, **kwargs)
-        self.use_fft = False
 
     def generate_templates_from_model(self, obsid_range=None, exposures=None,
                                       repository=None, output_repository=None, add_noise=False, use_full=True,
@@ -109,29 +108,26 @@ class DcrModel:
             else:
                 dcr_kernel = _calc_offset_phase(exp, dcr_gen, return_matrix=True,
                                                 x_size=self.kernel_size, y_size=self.kernel_size)
-            if self.use_fft:
-                template = np.fft.ifft2(np.sum(self.model * dcr_kernel, axis=0))
-            else:
-                template = np.zeros((self.y_size, self.x_size))
-                weights = np.zeros((self.y_size, self.x_size))
-                pix_radius = self.kernel_size//2
-                for _j in range(self.y_size):
-                    for _i in range(self.x_size):
-                        if self._edge_test(_j, _i):
-                            continue
-                        model_vals = self._extract_model_vals(_j, _i, radius=pix_radius, fft=self.use_fft,
-                                                              model=self.model, weights=self.weights)
-                        template_vals = self._apply_dcr_kernel(dcr_kernel, model_vals,
-                                                               x_size=self.kernel_size,
-                                                               y_size=self.kernel_size)
-                        self._insert_template_vals(_j, _i, template_vals, template=template, weights=weights,
-                                                   radius=pix_radius, kernel=self.psf_avg)
-                template[weights > 0] /= weights[weights > 0]
-                template[weights == 0] = 0.0
-                if add_noise:
-                    variance_level = np.median(exp.getMaskedImage().getVariance().getArray())
-                    rand_gen = np.random
-                    template += rand_gen.normal(scale=np.sqrt(variance_level), size=template.shape)
+            template = np.zeros((self.y_size, self.x_size))
+            weights = np.zeros((self.y_size, self.x_size))
+            pix_radius = self.kernel_size//2
+            for _j in range(self.y_size):
+                for _i in range(self.x_size):
+                    if self._edge_test(_j, _i):
+                        continue
+                    model_vals = self._extract_model_vals(_j, _i, radius=pix_radius,
+                                                          model=self.model, weights=self.weights)
+                    template_vals = self._apply_dcr_kernel(dcr_kernel, model_vals,
+                                                           x_size=self.kernel_size,
+                                                           y_size=self.kernel_size)
+                    self._insert_template_vals(_j, _i, template_vals, template=template, weights=weights,
+                                               radius=pix_radius, kernel=self.psf_avg)
+            template[weights > 0] /= weights[weights > 0]
+            template[weights == 0] = 0.0
+            if add_noise:
+                variance_level = np.median(exp.getMaskedImage().getVariance().getArray())
+                rand_gen = np.random
+                template += rand_gen.normal(scale=np.sqrt(variance_level), size=template.shape)
 
             dataId_out = dataId[_img]
             exposure = self._create_exposure(template, variance=np.abs(template), snap=0,
@@ -172,7 +168,7 @@ class DcrModel:
         return(np.reshape(template_vals, (y_size, x_size)))
 
     @staticmethod
-    def _extract_model_vals(_j, _i, radius=None, fft=False, model=None, weights=None):
+    def _extract_model_vals(_j, _i, radius=None, model=None, weights=None):
         """Return all pixles within a radius of a given point as a 1D vector for each dcr plane model."""
         model_arr = []
         if weights is None:
@@ -182,8 +178,6 @@ class DcrModel:
             weights_use = weights[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1]
             model_use[weights_use > 0] /= weights_use[weights_use > 0]
             model_use[weights_use <= 0] = 0.0
-            if fft:
-                model = np.fft.fft2(np.fft.fftshift(model))
             model_arr.append(np.ravel(model_use))
         return(np.hstack(model_arr))
 
@@ -337,7 +331,7 @@ class DcrCorrection(DcrModel):
     """Class that loads LSST calibrated exposures and produces airmass-matched template images."""
 
     def __init__(self, repository=".", obsid_range=None, band_name='g', wavelength_step=10,
-                 n_step=None, use_psf=True, use_fft=False, debug_mode=False,
+                 n_step=None, use_psf=True, debug_mode=False,
                  kernel_size=None, exposures=None, **kwargs):
         """Load images from the repository and set up parameters."""
         """
@@ -402,7 +396,6 @@ class DcrCorrection(DcrModel):
         else:
             self.kernel_size = kernel_size
         self.use_psf = use_psf
-        self.use_fft = use_fft
         self.debug = debug_mode
         self.regularize = self._build_regularization(x_size=self.kernel_size,
                                                      y_size=self.kernel_size, n_step=self.n_step)
@@ -462,14 +455,12 @@ class DcrCorrection(DcrModel):
         else:
             return(np.append(reg_pix, reg_lambda, axis=1))
 
-    def _extract_image_vals(self, _j, _i, radius=None, fft=False):
+    def _extract_image_vals(self, _j, _i, radius=None):
         """Return all pixels within a radius of a given point as a 1D vector for each exposure."""
         img_arr = []
         for exp in self.exposures:
             img = exp.getMaskedImage().getImage().getArray()
             img = img[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1]
-            if fft:
-                img = np.fft.fft2(np.fft.fftshift(img))
             img_arr.append(np.ravel(img))
         return(np.hstack(img_arr))
 
@@ -544,7 +535,7 @@ class DcrCorrection(DcrModel):
                 if use_only_detected:
                     if self.mask[_j, _i] & detected_bit == 0:
                         continue
-                img_vals = self._extract_image_vals(_j, _i, radius=pix_radius, fft=self.use_fft)
+                img_vals = self._extract_image_vals(_j, _i, radius=pix_radius)
 
                 model_vals = self._solve_model(img_vals, use_regularization=use_regularization)
                 self._insert_model_vals(_j, _i, model_vals, radius=pix_radius)
@@ -578,33 +569,19 @@ class DcrCorrection(DcrModel):
         self.mask = reduce(lambda m1, m2: np.bitwise_or(m1, m2), mask_arr)
 
     def _solve_model(self, img_vals, use_regularization=True):
-        if self.use_fft:
-            x_size = self.kernel_size
-            y_size = self.kernel_size
-            model_fft = np.zeros((self.n_step, y_size, x_size), dtype=img_vals.dtype)
-            kernel_use = np.reshape(self.dcr_kernel, (self.n_step, y_size, x_size, self.n_images))
-            img_use = np.reshape(img_vals, (y_size, x_size, self.n_images))
-            for _j in range(y_size):
-                for _i in range(x_size):
-                    kernel_single = kernel_use[:, _j, _i, :]
-                    img_single = img_use[_j, _i, :]
-                    model_solution = np.linalg.lstsq(kernel_single.T, img_single)
-                    model_fft[:, _j, _i] = model_solution[0]
-            return(np.real(np.fft.ifftn(model_fft, axes=[1, 2])))
+        x_size = self.kernel_size
+        y_size = self.kernel_size
+        if use_regularization:
+            regularize_dim = self.regularize.shape
+            vals_use = np.append(img_vals, np.zeros(regularize_dim[1]))
+            kernel_use = np.append(self.dcr_kernel.T, self.regularize.T, axis=0)
+            model_solution = positive_lstsq(kernel_use, vals_use)
         else:
-            x_size = self.kernel_size
-            y_size = self.kernel_size
-            if use_regularization:
-                regularize_dim = self.regularize.shape
-                vals_use = np.append(img_vals, np.zeros(regularize_dim[1]))
-                kernel_use = np.append(self.dcr_kernel.T, self.regularize.T, axis=0)
-                model_solution = positive_lstsq(kernel_use, vals_use)
-            else:
-                vals_use = img_vals
-                kernel_use = self.dcr_kernel.T
-                model_solution = positive_lstsq(kernel_use, vals_use)
-            model_vals = model_solution[0]
-            return(np.reshape(model_vals, (self.n_step, y_size, x_size)))
+            vals_use = img_vals
+            kernel_use = self.dcr_kernel.T
+            model_solution = positive_lstsq(kernel_use, vals_use)
+        model_vals = model_solution[0]
+        return(np.reshape(model_vals, (self.n_step, y_size, x_size)))
 
 
 def _calc_offset_phase(exposure, dcr_gen, x_size=None, y_size=None, return_matrix=False):
@@ -905,7 +882,6 @@ class _BasicDcrModel(DcrModel):
         rand_gen = np.random
         rand_gen.seed(seed)
         self.butler = None
-        self.use_fft = False
         self.use_psf = False
 
         bandpass_init = _BasicBandpass(band_name=band_name, wavelength_step=None)
@@ -942,7 +918,6 @@ class _BasicDcrCorrection(DcrCorrection):
 
     def __init__(self, band_name='g', n_step=3, use_psf=False, kernel_size=5, exposures=None):
         self.butler = None
-        self.use_fft = False
         self.use_psf = use_psf
         self.debug = False
 
