@@ -89,8 +89,6 @@ class DcrModel:
                 elevation_arr.append(90 - exp.getMetadata().get("ZENITH"))
                 azimuth_arr.append(exp.getMetadata().get("AZIMUTH"))
 
-            print("This version REQUIRES an exposure to match the template.")
-
         if kernel_size is not None:
             self.kernel_size = kernel_size
             self._build_regularization()
@@ -339,26 +337,37 @@ class DcrCorrection(DcrModel):
     """Class that loads LSST calibrated exposures and produces airmass-matched template images."""
 
     def __init__(self, repository=".", obsid_range=None, band_name='g', wavelength_step=10,
-                 n_step=None, elevation_min=40., use_psf=True, use_fft=False, debug_mode=False,
-                 kernel_size=None, **kwargs):
+                 n_step=None, use_psf=True, use_fft=False, debug_mode=False,
+                 kernel_size=None, exposures=None, **kwargs):
         """Load images from the repository and set up parameters."""
         """
         @param repository: path to repository with the data. String, defaults to working directory
         @param obsid_range: obsid or range of obsids to process.
         """
-        self.butler = daf_persistence.Butler(repository)
-        dataId_gen = self._build_dataId(obsid_range, band_name)
-        self.elevation_arr = []
-        self.azimuth_arr = []
-        self.airmass_arr = []
-        self.exposures = []
+        if exposures is None:
+            self.butler = daf_persistence.Butler(repository)
+            dataId_gen = self._build_dataId(obsid_range, band_name)
+            self.elevation_arr = []
+            self.azimuth_arr = []
+            self.airmass_arr = []
+            self.exposures = []
 
-        for _id in dataId_gen:
-            calexp = self.butler.get("calexp", dataId=_id)
-            self.exposures.append(calexp)
-            self.elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
-            self.azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
-            self.airmass_arr.append(calexp.getMetadata().get("AIRMASS"))
+            for _id in dataId_gen:
+                calexp = self.butler.get("calexp", dataId=_id)
+                self.exposures.append(calexp)
+                self.elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
+                self.azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
+                self.airmass_arr.append(calexp.getMetadata().get("AIRMASS"))
+
+        else:
+            self.elevation_arr = []
+            self.azimuth_arr = []
+            self.airmass_arr = []
+            for calexp in exposures:
+                self.elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
+                self.azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
+                self.airmass_arr.append(calexp.getMetadata().get("AIRMASS"))
+            self.exposures = exposures
 
         self.n_images = len(self.elevation_arr)
         self.y_size, self.x_size = self.exposures[0].getDimensions()
@@ -384,6 +393,8 @@ class DcrCorrection(DcrModel):
         self.bandpass = bandpass
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
                                                  bandpass=band_name)
+
+        elevation_min = np.min(self.elevation_arr) - 5.  # Calculate slightly worse DCR than maximum.
         dcr_test = _dcr_generator(bandpass, pixel_scale=self.pixel_scale, elevation=elevation_min, azimuth=0.)
         self.dcr_max = int(np.ceil(np.max(dcr_test.next())) + 1)
         if kernel_size is None:
@@ -897,13 +908,9 @@ class _BasicDcrModel(DcrModel):
         self.use_fft = False
         self.use_psf = False
 
-        bandpass = _BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
-        if n_step is not None:
-            wavelength_step = (bandpass.wavelen_max - bandpass.wavelen_min) / n_step
-            bandpass = _BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
-        else:
-            n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
-        self.bandpass = bandpass
+        bandpass_init = _BasicBandpass(band_name=band_name, wavelength_step=None)
+        wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
+        self.bandpass = _BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
         self.model = rand_gen.random(size=(n_step, size, size))
         self.weights = np.ones((n_step, size, size))
         self.mask = np.zeros((size, size), dtype=np.int32)
@@ -928,6 +935,48 @@ class _BasicDcrModel(DcrModel):
         self.psf = measAlg.KernelPsf(psfK)
 
         self.psf_avg = psf_vals  # self.psf.computeKernelImage().getArray()
+
+
+class _BasicDcrCorrection(DcrCorrection):
+    """Dummy DcrCorrection object for testing without a repository."""
+
+    def __init__(self, band_name='g', n_step=3, use_psf=False, kernel_size=5, exposures=None):
+        self.butler = None
+        self.use_fft = False
+        self.use_psf = use_psf
+        self.debug = False
+
+        self.elevation_arr = []
+        self.azimuth_arr = []
+        self.airmass_arr = []
+        for calexp in exposures:
+            self.elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
+            self.azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
+            self.airmass_arr.append(calexp.getMetadata().get("AIRMASS"))
+        self.exposures = exposures
+
+        bandpass_init = _BasicBandpass(band_name=band_name, wavelength_step=None)
+        wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
+        self.bandpass = _BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
+        self.n_step = n_step
+        self.n_images = len(exposures)
+        self.y_size, self.x_size = exposures[0].getDimensions()
+        self.pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
+        exposure_time = calexp.getInfo().getCalib().getExptime()
+        self.bbox = calexp.getBBox()
+        self.wcs = calexp.getWcs()
+        self.psf_size = calexp.getPsf().computeKernelImage().getArray().shape[0]
+        self.kernel_size = kernel_size
+        self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
+                                                 bandpass=band_name)
+        elevation_min = np.min(self.elevation_arr) - 5.  # Calculate slightly worse DCR than maximum.
+        dcr_test = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
+                                  elevation=elevation_min, azimuth=0.)
+        self.dcr_max = int(np.ceil(np.max(dcr_test.next())) + 1)
+        if kernel_size is None:
+            self.kernel_size = 2*self.dcr_max + 1
+        else:
+            self.kernel_size = kernel_size
 
 
 class DCRTestCase(lsst.utils.tests.TestCase):
@@ -1070,14 +1119,14 @@ class DcrModelTestCase(DcrModelTestBase):
         id_ref = 100
         band_ref = 'g'
         ref_id = {'visit': id_ref, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
-        dataId = self.dcrModel._build_dataId(id_ref, band_ref)
+        dataId = DcrModel._build_dataId(id_ref, band_ref)
         self.assertEqual(ref_id, dataId[0])
 
     def test_dataId_range(self):
         id_ref = [100, 103]
         band_ref = 'g'
         ref_id = {'visit': id_ref, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
-        dataId = self.dcrModel._build_dataId(id_ref, band_ref)
+        dataId = DcrModel._build_dataId(id_ref, band_ref)
         for _i, _id in enumerate(range(id_ref[0], id_ref[1])):
             ref_id = {'visit': _id, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
             self.assertEqual(ref_id, dataId[_i])
@@ -1088,7 +1137,7 @@ class DcrModelTestCase(DcrModelTestBase):
         _j = self.size//2 - 1
         radius = self.kernel_size//2
         model_use = self.dcrModel.model
-        model_vals = self.dcrModel._extract_model_vals(_j, _i, radius=radius, model=model_use)
+        model_vals = DcrModel._extract_model_vals(_j, _i, radius=radius, model=model_use)
         input_vals = [np.ravel(model_use[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1])
                       for _f in range(self.dcrModel.n_step)]
         self.assertFloatsEqual(np.hstack(input_vals), model_vals)
@@ -1102,7 +1151,7 @@ class DcrModelTestCase(DcrModelTestBase):
         weight_scale = 2.2
         weights = self.dcrModel.weights * weight_scale
         weights[:, _j, _i] = 0.
-        model_vals = self.dcrModel._extract_model_vals(_j, _i, radius=radius, model=model, weights=weights)
+        model_vals = DcrModel._extract_model_vals(_j, _i, radius=radius, model=model, weights=weights)
         input_arr = []
         for _f in range(self.dcrModel.n_step):
             input_vals = model[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] / weight_scale
@@ -1121,12 +1170,12 @@ class DcrModelTestCase(DcrModelTestBase):
         i_use = self.size//2
         j_use = self.size//2
         radius = self.kernel_size//2
-        model_vals = self.dcrModel._extract_model_vals(j_use, i_use, radius=radius, model=self.dcrModel.model,
-                                                       weights=self.dcrModel.weights)
+        model_vals = DcrModel._extract_model_vals(j_use, i_use, radius=radius, model=self.dcrModel.model,
+                                                  weights=self.dcrModel.weights)
         dcr_kernel = _calc_offset_phase(self.exposure, self.dcr_gen, return_matrix=True,
                                         x_size=self.kernel_size, y_size=self.kernel_size)
-        dcr_vals = self.dcrModel._apply_dcr_kernel(dcr_kernel, model_vals, x_size=self.kernel_size,
-                                                   y_size=self.kernel_size)
+        dcr_vals = DcrModel._apply_dcr_kernel(dcr_kernel, model_vals, x_size=self.kernel_size,
+                                              y_size=self.kernel_size)
         dcr_ref = np.load(data_file)
         self.assertFloatsEqual(dcr_vals, dcr_ref)
 
@@ -1157,7 +1206,6 @@ class PersistanceTestCase(DcrModelTestBase):
         model = np.float32(self.dcrModel.model)
         self.dcrModel.export_model(model_repository=model_repository)
         dcrModel2 = DcrModel(model_repository=model_repository)
-        # self.dcrModel.load_model(model_repository=model_repository)
         # Note that butler.get() reads the FITS file in 32 bit precision.
         self.assertFloatsEqual(model, dcrModel2.model)
 
@@ -1176,9 +1224,40 @@ class PersistanceTestCase(DcrModelTestBase):
         exposures = [self.dcrModel._create_exposure(self.array, variance=None, elevation=el, azimuth=az)
                      for el in elevation_arr]
         model_gen = self.dcrModel.generate_templates_from_model(exposures=exposures)
-        model_arr = [model for model in model_gen]
         model_ref = np.load(data_file)
-        self.assertItemsEqual(model_arr, model_ref)
+        self.assertItemsEqual(model_gen, model_ref)
+
+
+class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
+
+    def setUp(self):
+        band_name = 'g'
+        n_step = 3
+        n_images = 5
+        pixel_scale = 0.25
+        self.kernel_size = 5
+        self.size = 20
+        use_psf = False
+
+        dcrModel = _BasicDcrModel(size=self.size, kernel_size=self.kernel_size, band_name=band_name,
+                                  n_step=n_step, pixel_scale=pixel_scale)
+
+        exposures = []
+        for _i in range(n_images):
+            array = np.random.random(size=(self.size, self.size))*1000.
+            el = np.random.random()*50. + 40.
+            az = np.random.random()*360.
+            exposures.append(dcrModel._create_exposure(array, variance=None, elevation=el, azimuth=az))
+        # NOTE that this array is randomly generated for each instance.
+        self.array = np.random.random(size=(self.size, self.size))
+        self.dcrCorrection = _BasicDcrCorrection(kernel_size=self.kernel_size, band_name=band_name,
+                                                 n_step=n_step, exposures=exposures, use_psf=use_psf)
+
+    def tearDown(self):
+        del self.dcrCorrection
+
+    def test_pass(self):
+        pass
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
