@@ -414,11 +414,11 @@ class DcrCorrection(DcrModel):
         reg_lambda2 = None
 
         if spatial_regularization:
-            baseReg = _difference(kernel_size)
-            reg_pix = np.zeros((n_step * kernel_size, n_step * kernel_size))
+            # baseReg = _difference(kernel_size)
+            # reg_pix = np.zeros((n_step * kernel_size, n_step * kernel_size))
 
-            for i in range(n_step):
-                reg_pix[i::n_step, i::n_step] = baseReg
+            # for i in range(n_step):
+            #     reg_pix[i::n_step, i::n_step] = baseReg
             reg_pix_x = np.zeros((n_step * x_size * y_size,
                                   n_step * x_size * y_size - x_size))
             for _ij in range(n_step * x_size * y_size - x_size):
@@ -455,8 +455,11 @@ class DcrCorrection(DcrModel):
             reg_lambda = reg_lambda2
         elif reg_lambda2 is not None:
             reg_lambda = np.append(reg_lambda, reg_lambda2, axis=1)
+
         if reg_pix is None:
             return(reg_lambda)
+        elif reg_lambda is None:
+            return(reg_pix)
         else:
             return(np.append(reg_pix, reg_lambda, axis=1))
 
@@ -1264,6 +1267,60 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         weights_ref[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
         self.assertFloatsEqual(model_ref, self.dcrCorrection.model)
         self.assertFloatsEqual(weights_ref, self.dcrCorrection.weights)
+
+
+class RegularizationTestCase(lsst.utils.tests.TestCase):
+
+    def setUp(self):
+        self.kernel_size = 5
+        self.n_step = 3
+
+    def test_spatial_regularization(self):
+        data_file = "test_data/spatial_regularization.npy"
+        reg = DcrCorrection._build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
+                                                  n_step=self.n_step, spatial_regularization=True,
+                                                  frequency_regularization=False,
+                                                  frequency_second_regularization=False)
+        test_reg = np.load(data_file)
+        self.assertFloatsEqual(reg, test_reg)
+
+    def test_no_regularization(self):
+        reg = DcrCorrection._build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
+                                                  n_step=self.n_step, spatial_regularization=False,
+                                                  frequency_regularization=False,
+                                                  frequency_second_regularization=False)
+        self.assertIsNone(reg)
+
+    def test_frequency_regularization(self):
+        data_file = "test_data/frequency_regularization.npy"
+        reg = DcrCorrection._build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
+                                                  n_step=self.n_step, spatial_regularization=False,
+                                                  frequency_regularization=True,
+                                                  frequency_second_regularization=False)
+        test_reg = np.load(data_file)
+        self.assertFloatsEqual(reg, test_reg)
+
+    def test_frequency_derivative_regularization(self):
+        data_file = "test_data/frequency_derivative_regularization.npy"
+        reg = DcrCorrection._build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
+                                                  n_step=self.n_step, spatial_regularization=False,
+                                                  frequency_regularization=False,
+                                                  frequency_second_regularization=True)
+        test_reg = np.load(data_file)
+        self.assertFloatsEqual(reg, test_reg)
+
+    def test_multiple_regularization(self):
+        spatial_file = "test_data/spatial_regularization.npy"
+        freq_file = "test_data/frequency_regularization.npy"
+        deriv_file = "test_data/frequency_derivative_regularization.npy"
+
+        reg = DcrCorrection._build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
+                                                  n_step=self.n_step, spatial_regularization=True,
+                                                  frequency_regularization=True,
+                                                  frequency_second_regularization=True)
+        freq_reg = np.append(np.load(freq_file), np.load(deriv_file), axis=1)
+        test_reg = np.append(np.load(spatial_file), freq_reg, axis=1)
+        self.assertFloatsEqual(reg, test_reg)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
