@@ -402,7 +402,8 @@ class DcrCorrection(DcrModel):
         self._calc_psf_model()
 
     @staticmethod
-    def _build_regularization(x_size=None, y_size=None, n_step=None):
+    def _build_regularization(x_size=None, y_size=None, n_step=None, spatial_regularization=False,
+                              frequency_regularization=True, frequency_second_regularization=True):
         """
         Regularization adapted from Nate Lust's DCR Demo iPython notebook.
         Calculate a difference matrix for regularization as if each wavelength were a pixel, then scale
@@ -412,40 +413,44 @@ class DcrCorrection(DcrModel):
         reg_lambda = None
         reg_lambda2 = None
 
-        # baseReg = _difference(kernel_size)
-        # reg_pix = np.zeros((n_step * kernel_size, n_step * kernel_size))
+        if spatial_regularization:
+            baseReg = _difference(kernel_size)
+            reg_pix = np.zeros((n_step * kernel_size, n_step * kernel_size))
 
-        # for i in range(n_step):
-        #     reg_pix[i::n_step, i::n_step] = baseReg
-        # reg_pix_x = np.zeros((n_step * x_size * y_size,
-        #                       n_step * x_size * y_size - x_size))
-        # for _ij in range(n_step * x_size * y_size - x_size):
-        #     reg_pix_x[_ij, _ij] = 1
-        #     reg_pix_x[_ij + x_size, _ij] = -1
-        # reg_pix_x = np.append(reg_pix_x, -reg_pix_x, axis=1)
+            for i in range(n_step):
+                reg_pix[i::n_step, i::n_step] = baseReg
+            reg_pix_x = np.zeros((n_step * x_size * y_size,
+                                  n_step * x_size * y_size - x_size))
+            for _ij in range(n_step * x_size * y_size - x_size):
+                reg_pix_x[_ij, _ij] = 1
+                reg_pix_x[_ij + x_size, _ij] = -1
+            reg_pix_x = np.append(reg_pix_x, -reg_pix_x, axis=1)
 
-        # reg_pix_y = np.zeros((n_step * x_size * y_size,
-        #                       n_step * x_size * y_size - 1))
-        # for _ij in range(n_step * x_size * y_size - 1):
-        #     reg_pix_y[_ij, _ij] = 1
-        #     reg_pix_y[_ij + 1, _ij] = -1
-        # reg_pix_y = np.append(reg_pix_y, -reg_pix_y, axis=1)
-        # reg_pix = np.append(reg_pix_x, reg_pix_y, axis=1)
+            reg_pix_y = np.zeros((n_step * x_size * y_size,
+                                  n_step * x_size * y_size - 1))
+            for _ij in range(n_step * x_size * y_size - 1):
+                reg_pix_y[_ij, _ij] = 1
+                reg_pix_y[_ij + 1, _ij] = -1
+            reg_pix_y = np.append(reg_pix_y, -reg_pix_y, axis=1)
+            reg_pix = np.append(reg_pix_x, reg_pix_y, axis=1)
 
-        # # Extra regularization that we force the SED to be smooth
-        reg_lambda = np.zeros((n_step*x_size*y_size, (n_step - 1)*x_size*y_size))
-        for _f in range(n_step - 1):
-            for _ij in range(x_size*y_size):
-                reg_lambda[_f*x_size*y_size + _ij, _f*x_size*y_size + _ij] = 1
-                reg_lambda[(_f + 1)*x_size*y_size + _ij, _f*x_size*y_size + _ij] = -1
-        reg_lambda = np.append(reg_lambda, -reg_lambda, axis=1)
+        if frequency_regularization:
+            # regularization that forces the SED to be smooth
+            reg_lambda = np.zeros((n_step*x_size*y_size, (n_step - 1)*x_size*y_size))
+            for _f in range(n_step - 1):
+                for _ij in range(x_size*y_size):
+                    reg_lambda[_f*x_size*y_size + _ij, _f*x_size*y_size + _ij] = 1
+                    reg_lambda[(_f + 1)*x_size*y_size + _ij, _f*x_size*y_size + _ij] = -1
+            reg_lambda = np.append(reg_lambda, -reg_lambda, axis=1)
 
-        reg_lambda2 = np.zeros((n_step*x_size*y_size, (n_step - 2)*x_size*y_size))
-        for _f in range(n_step - 2):
-            for _ij in range(x_size * y_size):
-                reg_lambda2[_f * x_size * y_size + _ij, _f * x_size * y_size + _ij] = -1
-                reg_lambda2[(_f + 1) * x_size * y_size + _ij, _f * x_size * y_size + _ij] = 2
-                reg_lambda2[(_f + 2) * x_size * y_size + _ij, _f * x_size * y_size + _ij] = -1
+        if frequency_second_regularization:
+            # regularization that forces the derivative of the SED to be smooth
+            reg_lambda2 = np.zeros((n_step*x_size*y_size, (n_step - 2)*x_size*y_size))
+            for _f in range(n_step - 2):
+                for _ij in range(x_size * y_size):
+                    reg_lambda2[_f * x_size * y_size + _ij, _f * x_size * y_size + _ij] = -1
+                    reg_lambda2[(_f + 1) * x_size * y_size + _ij, _f * x_size * y_size + _ij] = 2
+                    reg_lambda2[(_f + 2) * x_size * y_size + _ij, _f * x_size * y_size + _ij] = -1
         if reg_lambda is None:
             reg_lambda = reg_lambda2
         elif reg_lambda2 is not None:
@@ -1207,32 +1212,58 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
 
     def setUp(self):
         band_name = 'g'
-        n_step = 3
-        n_images = 5
+        self.n_step = 3
+        self.n_images = 5
         pixel_scale = 0.25
         self.kernel_size = 5
         self.size = 20
         use_psf = False
 
         dcrModel = _BasicDcrModel(size=self.size, kernel_size=self.kernel_size, band_name=band_name,
-                                  n_step=n_step, pixel_scale=pixel_scale)
+                                  n_step=self.n_step, pixel_scale=pixel_scale)
 
         exposures = []
-        for _i in range(n_images):
+        self.ref_vals = []
+        for _i in range(self.n_images):
+            # NOTE that this array is randomly generated for each instance.
             array = np.random.random(size=(self.size, self.size))*1000.
+            self.ref_vals.append(array)
             el = np.random.random()*50. + 40.
             az = np.random.random()*360.
             exposures.append(dcrModel._create_exposure(array, variance=None, elevation=el, azimuth=az))
-        # NOTE that this array is randomly generated for each instance.
-        self.array = np.random.random(size=(self.size, self.size))
         self.dcrCorrection = _BasicDcrCorrection(kernel_size=self.kernel_size, band_name=band_name,
-                                                 n_step=n_step, exposures=exposures, use_psf=use_psf)
+                                                 n_step=self.n_step, exposures=exposures, use_psf=use_psf)
+        self.dcrCorrection.psf = dcrModel.psf
+        self.dcrCorrection.psf_avg = dcrModel.psf_avg
 
     def tearDown(self):
         del self.dcrCorrection
 
-    def test_pass(self):
-        pass
+    def test_extract_image(self):
+        # Make j and i different slightly so we can tell if the indices get swapped
+        _i = self.size//2 + 1
+        _j = self.size//2 - 1
+        radius = self.kernel_size//2
+        image_vals = self.dcrCorrection._extract_image_vals(_j, _i, radius=radius)
+        input_vals = [np.ravel(self.ref_vals[_f][_j - radius: _j + radius + 1, _i - radius: _i + radius + 1])
+                      for _f in range(self.n_images)]
+        self.assertFloatsEqual(np.hstack(input_vals), image_vals)
+
+    def test_insert_model_vals(self):
+        _i = self.size//2 + 1
+        _j = self.size//2 - 1
+        radius = self.kernel_size//2
+        test_vals = np.random.random(size=(self.n_step, self.kernel_size, self.kernel_size))
+        model_ref = np.zeros((self.n_step, self.size, self.size))
+        self.dcrCorrection.model = model_ref.copy()
+        weights_ref = np.zeros((self.n_step, self.size, self.size))
+        self.dcrCorrection.weights = weights_ref.copy()
+        self.dcrCorrection._insert_model_vals(_j, _i, test_vals, radius=radius)
+        psf_use = self.dcrCorrection.psf_avg
+        model_ref[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += test_vals*psf_use
+        weights_ref[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
+        self.assertFloatsEqual(model_ref, self.dcrCorrection.model)
+        self.assertFloatsEqual(weights_ref, self.dcrCorrection.weights)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
