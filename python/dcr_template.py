@@ -1,4 +1,5 @@
-#
+"""Attempts to create airmass-matched template images for existing images in an LSST repository."""
+
 # LSST Data Management System
 # Copyright 2016 LSST Corporation.
 #
@@ -19,11 +20,7 @@
 # the GNU General Public License along with this program.  If not,
 # see <http://www.lsstcorp.org/LegalNotices/>.
 #
-"""
-Attempts to create airmass-matched template images for existing images in an LSST repository.
-This version works in 2D and uses Fourier transforms.
-This is a work in progress!
-"""
+
 from __future__ import print_function, division, absolute_import
 from collections import namedtuple
 from functools import reduce
@@ -55,6 +52,7 @@ class DcrModel:
     """Lightweight object that contains only the minimum needed to generate DCR-matched template exposures."""
 
     def __init__(self, model_repository=None, band_name='g', debug_mode=False, **kwargs):
+        """Only run when restoring a model or for testing."""
         self.debug = debug_mode
         self.butler = None
         self.load_model(model_repository=model_repository, band_name=band_name, **kwargs)
@@ -90,8 +88,6 @@ class DcrModel:
 
         if kernel_size is not None:
             self.kernel_size = kernel_size
-            self._build_regularization()
-            self._calc_psf_model()
         for _img, exp in enumerate(exposures):
             el = elevation_arr[_img]
             az = azimuth_arr[_img]
@@ -397,15 +393,15 @@ class DcrCorrection(DcrModel):
             self.kernel_size = kernel_size
         self.use_psf = use_psf
         self.debug = debug_mode
-        self.regularize = self._build_regularization(x_size=self.kernel_size,
-                                                     y_size=self.kernel_size, n_step=self.n_step)
+        self.regularize = self._build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
+                                                     n_step=self.n_step, frequency_regularization=True)
         self._calc_psf_model()
 
     @staticmethod
     def _build_regularization(x_size=None, y_size=None, n_step=None, spatial_regularization=False,
-                              frequency_regularization=True, frequency_second_regularization=True):
+                              frequency_regularization=False, frequency_second_regularization=False):
+        """Regularization adapted from Nate Lust's DCR Demo iPython notebook."""
         """
-        Regularization adapted from Nate Lust's DCR Demo iPython notebook.
         Calculate a difference matrix for regularization as if each wavelength were a pixel, then scale
         the difference matrix to the size of the number of pixels times number of wavelengths
         """
@@ -491,16 +487,19 @@ class DcrCorrection(DcrModel):
             el = self.elevation_arr[_img]
             az = self.azimuth_arr[_img]
 
+            # Use the measured PSF as the solution of the shifted PSFs.
+            # Taken at zenith, since we're solving for the shift and don't want to introduce any extra.
             dcr_genZ = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=90., azimuth=az)
-            dcr_gen = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
             psf_mat.append(_calc_psf_kernel_full(exp, dcr_genZ, return_matrix=False,
                            x_size=self.psf_size, y_size=self.psf_size))
+            # Calculate the expected shift (with no psf) due to DCR
+            dcr_gen = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
             dcr_shift.append(_calc_offset_phase(exp, dcr_gen, return_matrix=True,
                              x_size=self.psf_size, y_size=self.psf_size))
         psf_mat = np.sum(np.hstack(psf_mat), axis=0)
         dcr_shift = np.hstack(dcr_shift)
-        regularize_psf = self._build_regularization(x_size=self.psf_size,
-                                                    y_size=self.psf_size, n_step=self.n_step)
+        regularize_psf = self._build_regularization(x_size=self.psf_size, y_size=self.psf_size,
+                                                    n_step=self.n_step, frequency_regularization=True)
         regularize_dim = regularize_psf.shape
         vals_use = np.append(psf_mat, np.zeros(regularize_dim[1]))
         kernel_use = np.append(dcr_shift.T, regularize_psf.T, axis=0)
@@ -514,9 +513,9 @@ class DcrCorrection(DcrModel):
         psfK = afwMath.FixedKernel(psf_image)
         self.psf = measAlg.KernelPsf(psfK)
 
-    def build_model(self, use_full=True, use_regularization=True, use_only_detected=False):
+    def build_model(self, use_full=True, use_regularization=True, use_only_detected=False, verbose=True):
         """Calculate a model of the true sky using the known DCR offset for each freq plane."""
-        self.dcr_kernel = self._build_dcr_kernel(use_full=use_full)
+        dcr_kernel = self._build_dcr_kernel(use_full=use_full)
         self.model = np.zeros((self.n_step, self.y_size, self.x_size))
         self.weights = np.zeros_like(self.model)
         pix_radius = self.kernel_size//2
@@ -526,14 +525,16 @@ class DcrCorrection(DcrModel):
             variance += exp.getMaskedImage().getVariance().getArray()**2.
         self.variance = np.sqrt(variance) / self.n_images
         detected_bit = exp.getMaskedImage().getMask().getPlaneBitMask("DETECTED")
-        print("Working on column", end="")
+        if verbose:
+            print("Working on column", end="")
         for _j in range(self.y_size):
-            if _j % 100 == 0:
-                print("\n %i" % _j, end="")
-            elif _j % 10 == 0:
-                print("|", end="")
-            else:
-                print(".", end="")
+            if verbose:
+                if _j % 100 == 0:
+                    print("\n %i" % _j, end="")
+                elif _j % 10 == 0:
+                    print("|", end="")
+                else:
+                    print(".", end="")
             for _i in range(self.x_size):
                 if self._edge_test(_j, _i):
                     continue
@@ -545,9 +546,10 @@ class DcrCorrection(DcrModel):
                         continue
                 img_vals = self._extract_image_vals(_j, _i, radius=pix_radius)
 
-                model_vals = self._solve_model(img_vals, use_regularization=use_regularization)
+                model_vals = self._solve_model(dcr_kernel, img_vals, use_regularization=use_regularization)
                 self._insert_model_vals(_j, _i, model_vals, radius=pix_radius)
-        print("\nFinished building model.")
+        if verbose:
+            print("\nFinished building model.")
 
     def _build_dcr_kernel(self, use_full=None):
         dcr_kernel = []
@@ -576,17 +578,17 @@ class DcrCorrection(DcrModel):
         # Flags a pixel if ANY image is flagged there.
         self.mask = reduce(lambda m1, m2: np.bitwise_or(m1, m2), mask_arr)
 
-    def _solve_model(self, img_vals, use_regularization=True):
+    def _solve_model(self, dcr_kernel, img_vals, use_regularization=True):
         x_size = self.kernel_size
         y_size = self.kernel_size
         if use_regularization:
             regularize_dim = self.regularize.shape
             vals_use = np.append(img_vals, np.zeros(regularize_dim[1]))
-            kernel_use = np.append(self.dcr_kernel.T, self.regularize.T, axis=0)
+            kernel_use = np.append(dcr_kernel.T, self.regularize.T, axis=0)
             model_solution = positive_lstsq(kernel_use, vals_use)
         else:
             vals_use = img_vals
-            kernel_use = self.dcr_kernel.T
+            kernel_use = dcr_kernel.T
             model_solution = positive_lstsq(kernel_use, vals_use)
         model_vals = model_solution[0]
         return(np.reshape(model_vals, (self.n_step, y_size, x_size)))
@@ -691,8 +693,8 @@ def _calc_psf_kernel_subroutine(psf_img, dcr, x_size=None, y_size=None):
 # NOTE: This function was copied from StarFast.py
 def _load_bandpass(band_name='g', wavelength_step=None, use_mirror=True, use_lens=True, use_atmos=True,
                    use_filter=True, use_detector=True, **kwargs):
+    """Load in Bandpass object from sims_photUtils."""
     """
-    !Load in Bandpass object from sims_photUtils.
     @param band_name: Common name of the filter used. For LSST, use u, g, r, i, z, or y
     @param wavelength_step: Wavelength resolution, also the wavelength range of each sub-band plane
     @param use_mirror: Flag, include mirror in filter throughput calculation?
@@ -1206,7 +1208,7 @@ class PersistanceTestCase(DcrModelTestBase):
         # depend only on the metadata.
         exposures = [self.dcrModel._create_exposure(self.array, variance=None, elevation=el, azimuth=az)
                      for el in elevation_arr]
-        model_gen = self.dcrModel.generate_templates_from_model(exposures=exposures)
+        model_gen = self.dcrModel.generate_templates_from_model(exposures=exposures, kernel_size=5)
         model_ref = np.load(data_file)
         self.assertItemsEqual(model_gen, model_ref)
 
@@ -1234,20 +1236,20 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
             el = np.random.random()*50. + 40.
             az = np.random.random()*360.
             exposures.append(dcrModel._create_exposure(array, variance=None, elevation=el, azimuth=az))
-        self.dcrCorrection = _BasicDcrCorrection(kernel_size=self.kernel_size, band_name=band_name,
-                                                 n_step=self.n_step, exposures=exposures, use_psf=use_psf)
-        self.dcrCorrection.psf = dcrModel.psf
-        self.dcrCorrection.psf_avg = dcrModel.psf_avg
+        self.dcrCorr = _BasicDcrCorrection(kernel_size=self.kernel_size, band_name=band_name,
+                                           n_step=self.n_step, exposures=exposures, use_psf=use_psf)
+        self.dcrCorr.psf = dcrModel.psf
+        self.dcrCorr.psf_avg = dcrModel.psf_avg
 
     def tearDown(self):
-        del self.dcrCorrection
+        del self.dcrCorr
 
     def test_extract_image(self):
         # Make j and i different slightly so we can tell if the indices get swapped
         _i = self.size//2 + 1
         _j = self.size//2 - 1
         radius = self.kernel_size//2
-        image_vals = self.dcrCorrection._extract_image_vals(_j, _i, radius=radius)
+        image_vals = self.dcrCorr._extract_image_vals(_j, _i, radius=radius)
         input_vals = [np.ravel(self.ref_vals[_f][_j - radius: _j + radius + 1, _i - radius: _i + radius + 1])
                       for _f in range(self.n_images)]
         self.assertFloatsEqual(np.hstack(input_vals), image_vals)
@@ -1258,19 +1260,28 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         radius = self.kernel_size//2
         test_vals = np.random.random(size=(self.n_step, self.kernel_size, self.kernel_size))
         model_ref = np.zeros((self.n_step, self.size, self.size))
-        self.dcrCorrection.model = model_ref.copy()
+        self.dcrCorr.model = model_ref.copy()
         weights_ref = np.zeros((self.n_step, self.size, self.size))
-        self.dcrCorrection.weights = weights_ref.copy()
-        self.dcrCorrection._insert_model_vals(_j, _i, test_vals, radius=radius)
-        psf_use = self.dcrCorrection.psf_avg
+        self.dcrCorr.weights = weights_ref.copy()
+        self.dcrCorr._insert_model_vals(_j, _i, test_vals, radius=radius)
+        psf_use = self.dcrCorr.psf_avg
         model_ref[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += test_vals*psf_use
         weights_ref[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
-        self.assertFloatsEqual(model_ref, self.dcrCorrection.model)
-        self.assertFloatsEqual(weights_ref, self.dcrCorrection.weights)
+        self.assertFloatsEqual(model_ref, self.dcrCorr.model)
+        self.assertFloatsEqual(weights_ref, self.dcrCorr.weights)
+
+    def test_calculate_psf(self):
+        data_file = "test_data/calculate_psf.npy"
+        self.dcrCorr._calc_psf_model()
+        psf_size = self.dcrCorr.psf.computeKernelImage().getArray().shape[0]
+        p0 = psf_size//2 - self.kernel_size//2
+        p1 = p0 + self.kernel_size
+        psf_new = self.dcrCorr.psf.computeKernelImage().getArray()[p0: p1, p0: p1]
+        psf_ref = np.load(data_file)
+        self.assertFloatsEqual(psf_ref, psf_new)
 
 
 class RegularizationTestCase(lsst.utils.tests.TestCase):
-
     def setUp(self):
         self.kernel_size = 5
         self.n_step = 3
@@ -1278,34 +1289,27 @@ class RegularizationTestCase(lsst.utils.tests.TestCase):
     def test_spatial_regularization(self):
         data_file = "test_data/spatial_regularization.npy"
         reg = DcrCorrection._build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
-                                                  n_step=self.n_step, spatial_regularization=True,
-                                                  frequency_regularization=False,
-                                                  frequency_second_regularization=False)
+                                                  n_step=self.n_step, spatial_regularization=True)
         test_reg = np.load(data_file)
         self.assertFloatsEqual(reg, test_reg)
 
     def test_no_regularization(self):
+        # All regularization is set to False by default
         reg = DcrCorrection._build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
-                                                  n_step=self.n_step, spatial_regularization=False,
-                                                  frequency_regularization=False,
-                                                  frequency_second_regularization=False)
+                                                  n_step=self.n_step)
         self.assertIsNone(reg)
 
     def test_frequency_regularization(self):
         data_file = "test_data/frequency_regularization.npy"
         reg = DcrCorrection._build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
-                                                  n_step=self.n_step, spatial_regularization=False,
-                                                  frequency_regularization=True,
-                                                  frequency_second_regularization=False)
+                                                  n_step=self.n_step, frequency_regularization=True)
         test_reg = np.load(data_file)
         self.assertFloatsEqual(reg, test_reg)
 
     def test_frequency_derivative_regularization(self):
         data_file = "test_data/frequency_derivative_regularization.npy"
         reg = DcrCorrection._build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
-                                                  n_step=self.n_step, spatial_regularization=False,
-                                                  frequency_regularization=False,
-                                                  frequency_second_regularization=True)
+                                                  n_step=self.n_step, frequency_second_regularization=True)
         test_reg = np.load(data_file)
         self.assertFloatsEqual(reg, test_reg)
 
@@ -1321,6 +1325,68 @@ class RegularizationTestCase(lsst.utils.tests.TestCase):
         freq_reg = np.append(np.load(freq_file), np.load(deriv_file), axis=1)
         test_reg = np.append(np.load(spatial_file), freq_reg, axis=1)
         self.assertFloatsEqual(reg, test_reg)
+
+
+class SolverTestCast(lsst.utils.tests.TestCase):
+    def setUp(self):
+        data_file = "test_data/exposures.npy"
+        exposures = np.load(data_file)
+        self.dcrCorr = _BasicDcrCorrection(band_name='g', n_step=3, kernel_size=5, exposures=exposures)
+
+    def tearDown(self):
+        del self.dcrCorr
+
+    def test_build_dcr_kernel_full(self):
+        data_file = "test_data/build_dcr_kernel_full_vals.npy"
+        kernel = self.dcrCorr._build_dcr_kernel(use_full=True)
+        kernel_ref = np.load(data_file)
+        self.assertFloatsEqual(kernel, kernel_ref)
+
+    def test_build_dcr_kernel(self):
+        data_file = "test_data/build_dcr_kernel_vals.npy"
+        kernel = self.dcrCorr._build_dcr_kernel(use_full=False)
+        kernel_ref = np.load(data_file)
+        self.assertFloatsEqual(kernel, kernel_ref)
+
+    def test_build_model(self):
+        """Call build_model with as many options as possible turned off."""
+        data_file = "test_data/build_model_vals.npy"
+        self.dcrCorr.psf_avg = 1.
+        self.dcrCorr.build_model(use_full=False, use_regularization=False,
+                                 use_only_detected=False, verbose=False)
+        model_vals = self.dcrCorr.model
+        model_ref = np.load(data_file)
+        self.assertFloatsEqual(model_vals, model_ref)
+
+    def test_solve_model_no_regularization(self):
+        data_file = "test_data/solve_model_vals.npy"
+        y_size, x_size = self.dcrCorr.exposures[0].getDimensions()
+        pix_radius = self.dcrCorr.kernel_size//2
+        # Make j and i different slightly so we can tell if the indices get swapped
+        _i = x_size//2 + 1
+        _j = y_size//2 - 1
+        image_vals = self.dcrCorr._extract_image_vals(_j, _i, radius=pix_radius)
+        dcr_kernel = self.dcrCorr._build_dcr_kernel(use_full=False)
+        model_vals = self.dcrCorr._solve_model(dcr_kernel, image_vals, use_regularization=False)
+        model_ref = np.load(data_file)
+        self.assertFloatsEqual(model_vals, model_ref)
+
+    def test_solve_model_with_regularization(self):
+        data_file = "test_data/solve_model_reg_vals.npy"
+        y_size, x_size = self.dcrCorr.exposures[0].getDimensions()
+        kernel_size = self.dcrCorr.kernel_size
+        n_step = self.dcrCorr.n_step
+        pix_radius = kernel_size//2
+        _i = x_size//2 + 1
+        _j = y_size//2 - 1
+        image_vals = self.dcrCorr._extract_image_vals(_j, _i, radius=pix_radius)
+        dcr_kernel = self.dcrCorr._build_dcr_kernel(use_full=False)
+        self.dcrCorr.regularize = DcrCorrection._build_regularization(x_size=kernel_size, y_size=kernel_size,
+                                                                      n_step=n_step,
+                                                                      frequency_regularization=True)
+        model_vals = self.dcrCorr._solve_model(dcr_kernel, image_vals, use_regularization=True)
+        model_ref = np.load(data_file)
+        self.assertFloatsEqual(model_vals, model_ref)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
