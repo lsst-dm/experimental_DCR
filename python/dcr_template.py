@@ -23,11 +23,13 @@
 
 from __future__ import print_function, division, absolute_import
 from collections import namedtuple
+
 import numpy as np
 from scipy import constants
 from scipy.ndimage.interpolation import shift as scipy_shift
-import scipy.optimize.nnls as positive_lstsq
+import scipy.optimize.nnls
 
+from .calc_refractive_index import diff_refraction
 import lsst.daf.persistence as daf_persistence
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
@@ -35,7 +37,6 @@ import lsst.meas.algorithms as measAlg
 import lsst.pex.policy as pexPolicy
 from lsst.sims.photUtils import Bandpass, PhotometricParameters
 from lsst.utils import getPackageDir
-from .calc_refractive_index import diff_refraction
 
 __all__ = ["DcrModel", "DcrCorrection"]
 
@@ -127,7 +128,7 @@ class DcrModel:
                                              elevation=el, azimuth=az, obsid=dataId_out['visit'])
             if output_repository is not None:
                 butler_out.put(exposure, "calexp", dataId=dataId_out)
-            yield(exposure)
+            yield exposure
 
     @staticmethod
     def _build_dataId(obsid_range, band):
@@ -145,7 +146,7 @@ class DcrModel:
         else:
             dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
                       for obsid in [obsid_range]]
-        return(dataId)
+        return dataId
 
     @staticmethod
     def _build_model_dataId(band, subfilter=None):
@@ -172,7 +173,7 @@ class DcrModel:
             model_use[weights_use > 0] /= weights_use[weights_use > 0]
             model_use[weights_use <= 0] = 0.0
             model_arr.append(np.ravel(model_use))
-        return(np.hstack(model_arr))
+        return np.hstack(model_arr)
 
     @staticmethod
     def _insert_template_vals(j, i, vals, template=None, weights=None, radius=None, kernel=None):
@@ -208,14 +209,14 @@ class DcrModel:
                 if wavelength_max is None:
                     wavelength_max = np.max(self.wavelen)
                 w_inds = (self.wavelen >= wavelength_min) & (self.wavelen <= wavelength_max)
-                effwavelenphi = (self.wavelen[w_inds] * self.phi[w_inds]).sum() / self.phi[w_inds].sum()
+                effwavelenphi = (self.wavelen[w_inds]*self.phi[w_inds]).sum()/self.phi[w_inds].sum()
                 return effwavelenphi
 
             def calc_bandwidth(self):
-                f0 = constants.speed_of_light / (self.wavelen_min * 1.0e-9)
-                f1 = constants.speed_of_light / (self.wavelen_max * 1.0e-9)
-                f_cen = constants.speed_of_light / (self.calc_eff_wavelen() * 1.0e-9)
-                return(f_cen * 2.0 * (f0 - f1) / (f0 + f1))
+                f0 = constants.speed_of_light/(self.wavelen_min*1.0e-9)
+                f1 = constants.speed_of_light/(self.wavelen_max*1.0e-9)
+                f_cen = constants.speed_of_light/(self.calc_eff_wavelen()*1.0e-9)
+                return(f_cen*2.0*(f0 - f1)/(f0 + f1))
 
         """
         Define the wavelength range and resolution for a given ugrizy band.
@@ -247,7 +248,7 @@ class DcrModel:
         # Calculate bandpass phi value if required.
         if bandpass.phi is None:
             bandpass.sbTophi()
-        return(bandpass)
+        return bandpass
 
     # NOTE: This function was copied from StarFast.py
     @staticmethod
@@ -259,9 +260,9 @@ class DcrModel:
             if wave_end > bandpass.wavelen_max:
                 wave_end = bandpass.wavelen_max
             if use_midpoint:
-                yield(bandpass.calc_eff_wavelen(wavelength_min=wave_start, wavelength_max=wave_end))
+                yield bandpass.calc_eff_wavelen(wavelength_min=wave_start, wavelength_max=wave_end)
             else:
-                yield((wave_start, wave_end))
+                yield (wave_start, wave_end)
             wave_start = wave_end
 
     # NOTE: This function was modified from StarFast.py
@@ -287,7 +288,7 @@ class DcrModel:
                 refract_mid *= 3600.0 / pixel_scale
                 dx_mid = refract_mid * np.sin(np.radians(azimuth))
                 dy_mid = refract_mid * np.cos(np.radians(azimuth))
-                yield(dcr(dx=dx_mid, dy=dy_mid))
+                yield dcr(dx=dx_mid, dy=dy_mid)
             else:
                 refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
                                                 zenith_angle=zenith_angle, **kwargs)
@@ -295,11 +296,11 @@ class DcrModel:
                                               zenith_angle=zenith_angle, **kwargs)
                 refract_start *= 3600.0 / pixel_scale  # Refraction initially in degrees, convert to pixels.
                 refract_end *= 3600.0 / pixel_scale
-                dx = delta(start=refract_start * np.sin(np.radians(azimuth)),
-                           end=refract_end * np.sin(np.radians(azimuth)))
-                dy = delta(start=refract_start * np.cos(np.radians(azimuth)),
-                           end=refract_end * np.cos(np.radians(azimuth)))
-                yield(dcr(dx=dx, dy=dy))
+                dx = delta(start=refract_start*np.sin(np.radians(azimuth)),
+                           end=refract_end*np.sin(np.radians(azimuth)))
+                dy = delta(start=refract_start*np.cos(np.radians(azimuth)),
+                           end=refract_end*np.cos(np.radians(azimuth)))
+                yield dcr(dx=dx, dy=dy)
 
     @staticmethod
     def _calc_offset_phase(exposure, dcr_gen, x_size=None, y_size=None, return_matrix=False):
@@ -317,14 +318,14 @@ class DcrModel:
                 shift_mat = np.zeros((x_size*y_size, x_size*y_size))
                 for j in range(y_size):
                     for i in range(x_size):
-                        ij = i + j * x_size
+                        ij = i + j*x_size
                         shift_mat[ij, :] = np.ravel(scipy_shift(kernel, (j - y_size//2, i - x_size//2),
                                                     mode='constant', cval=0.0))
                 phase_arr.append(shift_mat)
             else:
                 phase_arr.append(np.ravel(kernel))
         phase_arr = np.vstack(phase_arr)
-        return(phase_arr)
+        return phase_arr
 
     @staticmethod
     def _calc_psf_kernel(exposure, dcr_gen, x_size=None, y_size=None, return_matrix=False, psf_img=None):
@@ -343,7 +344,7 @@ class DcrModel:
                 psf_kernel_arr.append(np.ravel(psf))
 
         psf_kernel_arr = np.vstack(psf_kernel_arr)
-        return(psf_kernel_arr)
+        return psf_kernel_arr
 
     @staticmethod
     def _calc_psf_kernel_full(exposure, dcr_gen, x_size=None, y_size=None, return_matrix=False, psf_img=None):
@@ -364,7 +365,7 @@ class DcrModel:
                 psf_kernel_arr.append(kernel_single)
 
         psf_kernel_arr = np.vstack(psf_kernel_arr)
-        return(psf_kernel_arr)
+        return psf_kernel_arr
 
     def _edge_test(self, j, i):
         x0 = 150
@@ -395,7 +396,7 @@ class DcrModel:
                 edge = False
         else:
             edge = False
-        return(edge)
+        return edge
 
     # NOTE: This function was copied from StarFast.py
     def _create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0, **kwargs):
@@ -440,7 +441,7 @@ class DcrModel:
         meta.add("AZIMUTH", azimuth)
         for add_item in kwargs:
             meta.add(add_item, kwargs[add_item])
-        return(exposure)
+        return exposure
 
     def export_model(self, model_repository=None):
         """Persist a DcrModel with metadata to a repository."""
@@ -502,7 +503,7 @@ class DcrModel:
         weights = self.weights[index, :, :]
         model[weights > 0] /= weights[weights > 0]
         model[weights <= 0] = 0.0
-        return(model)
+        return model
 
 
 class DcrCorrection(DcrModel):
@@ -593,16 +594,16 @@ class DcrCorrection(DcrModel):
         reg_lambda2 = None
 
         if spatial_regularization:
-            reg_pix_x = np.zeros((n_step * x_size * y_size,
-                                  n_step * x_size * y_size - x_size))
-            for ij in range(n_step * x_size * y_size - x_size):
+            reg_pix_x = np.zeros((n_step*x_size*y_size,
+                                  n_step*x_size*y_size - x_size))
+            for ij in range(n_step*x_size*y_size - x_size):
                 reg_pix_x[ij, ij] = 1
                 reg_pix_x[ij + x_size, ij] = -1
             reg_pix_x = np.append(reg_pix_x, -reg_pix_x, axis=1)
 
-            reg_pix_y = np.zeros((n_step * x_size * y_size,
-                                  n_step * x_size * y_size - 1))
-            for ij in range(n_step * x_size * y_size - 1):
+            reg_pix_y = np.zeros((n_step*x_size*y_size,
+                                  n_step*x_size*y_size - 1))
+            for ij in range(n_step*x_size*y_size - 1):
                 reg_pix_y[ij, ij] = 1
                 reg_pix_y[ij + 1, ij] = -1
             reg_pix_y = np.append(reg_pix_y, -reg_pix_y, axis=1)
@@ -621,21 +622,21 @@ class DcrCorrection(DcrModel):
             # regularization that forces the derivative of the SED to be smooth
             reg_lambda2 = np.zeros((n_step*x_size*y_size, (n_step - 2)*x_size*y_size))
             for f in range(n_step - 2):
-                for ij in range(x_size * y_size):
-                    reg_lambda2[f * x_size * y_size + ij, f * x_size * y_size + ij] = -1
-                    reg_lambda2[(f + 1) * x_size * y_size + ij, f * x_size * y_size + ij] = 2
-                    reg_lambda2[(f + 2) * x_size * y_size + ij, f * x_size * y_size + ij] = -1
+                for ij in range(x_size*y_size):
+                    reg_lambda2[f*x_size*y_size + ij, f*x_size*y_size + ij] = -1
+                    reg_lambda2[(f + 1)*x_size*y_size + ij, f*x_size*y_size + ij] = 2
+                    reg_lambda2[(f + 2)*x_size*y_size + ij, f*x_size*y_size + ij] = -1
         if reg_lambda is None:
             reg_lambda = reg_lambda2
         elif reg_lambda2 is not None:
             reg_lambda = np.append(reg_lambda, reg_lambda2, axis=1)
 
         if reg_pix is None:
-            return(reg_lambda)
+            return reg_lambda
         elif reg_lambda is None:
-            return(reg_pix)
+            return reg_pix
         else:
-            return(np.append(reg_pix, reg_lambda, axis=1))
+            return np.append(reg_pix, reg_lambda, axis=1)
 
     def _extract_image_vals(self, j, i, radius=None):
         """Return all pixels within a radius of a given point as a 1D vector for each exposure."""
@@ -644,7 +645,7 @@ class DcrCorrection(DcrModel):
             img = exp.getMaskedImage().getImage().getArray()
             img = img[j - radius: j + radius + 1, i - radius: i + radius + 1]
             img_arr.append(np.ravel(img))
-        return(np.hstack(img_arr))
+        return np.hstack(img_arr)
 
     def _insert_model_vals(self, j, i, vals, radius=None):
         if self.use_psf:
@@ -683,7 +684,7 @@ class DcrCorrection(DcrModel):
         regularize_dim = regularize_psf.shape
         vals_use = np.append(psf_mat, np.zeros(regularize_dim[1]))
         kernel_use = np.append(dcr_shift.T, regularize_psf.T, axis=0)
-        psf_soln = positive_lstsq(kernel_use, vals_use)
+        psf_soln = scipy.optimize.nnls(kernel_use, vals_use)
         psf_model = np.reshape(psf_soln[0], (self.n_step, self.psf_size, self.psf_size))
         self.psf_model = psf_model[:, p0: p1, p0: p1]
         psf_vals = np.sum(psf_model, axis=0)/self.n_step
@@ -750,7 +751,7 @@ class DcrCorrection(DcrModel):
                 dcr_kernel.append(DcrModel._calc_offset_phase(exp, dcr_gen, return_matrix=True,
                                   x_size=self.kernel_size, y_size=self.kernel_size))
         dcr_kernel = np.hstack(dcr_kernel)
-        return(dcr_kernel)
+        return dcr_kernel
 
     def _combine_masks(self):
         """Compute the bitwise OR of the input masks."""
@@ -771,9 +772,9 @@ class DcrCorrection(DcrModel):
         else:
             vals_use = img_vals
             kernel_use = dcr_kernel.T
-        model_solution = positive_lstsq(kernel_use, vals_use)
+        model_solution = scipy.optimize.nnls(kernel_use, vals_use)
         model_vals = model_solution[0]
-        return(np.reshape(model_vals, (self.n_step, y_size, x_size)))
+        return np.reshape(model_vals, (self.n_step, y_size, x_size))
 
 
 def _calc_psf_kernel_subroutine(psf_img, dcr, x_size=None, y_size=None):
@@ -799,12 +800,12 @@ def _calc_psf_kernel_subroutine(psf_img, dcr, x_size=None, y_size=None):
         for i in range(x_size):
             ij = i + j * x_size
             sub_image = np.zeros_like(psf_img)
-            for _n in range(n_substep):
-                j_use = j - y_size//2 + (dcr.dy.start * (n_substep - _n) + dcr.dy.end*_n)/n_substep
-                i_use = i - x_size//2 + (dcr.dx.start * (n_substep - _n) + dcr.dx.end*_n)/n_substep
+            for n in range(n_substep):
+                j_use = j - y_size//2 + (dcr.dy.start*(n_substep - n) + dcr.dy.end*n)/n_substep
+                i_use = i - x_size//2 + (dcr.dx.start*(n_substep - n) + dcr.dx.end*n)/n_substep
                 sub_image += scipy_shift(psf_img, (j_use, i_use), mode='constant', cval=0.0)
             psf_mat[ij, :] = np.ravel(sub_image[x0:x1, y0:y1]) / n_substep
-    return(psf_mat)
+    return psf_mat
 
 
 def _kernel_1d(offset, size, width=0.0, min_width=0.1):
