@@ -132,7 +132,7 @@ class _BasicDcrCorrection(DcrCorrection):
 
     def __init__(self, band_name='g', n_step=3, use_psf=False, kernel_size=5, exposures=None):
         self.butler = None
-        self.use_psf = use_psf
+        self.use_psf = bool(use_psf)
         self.debug = False
 
         self.elevation_arr = []
@@ -154,7 +154,10 @@ class _BasicDcrCorrection(DcrCorrection):
         exposure_time = calexp.getInfo().getCalib().getExptime()
         self.bbox = calexp.getBBox()
         self.wcs = calexp.getWcs()
-        self.psf_size = calexp.getPsf().computeKernelImage().getArray().shape[0]
+        psf = calexp.getPsf().computeKernelImage().getArray()
+        self.psf_size = psf.shape[0]
+        self.psf_avg = psf
+
         self.kernel_size = kernel_size
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
                                                  bandpass=band_name)
@@ -279,7 +282,7 @@ class KernelTestCase(DcrModelTestBase):
         data_file = "test_data/simple_phase_kernel.npy"
         psf = self.exposure.getPsf()
         psf_size = psf.computeKernelImage().getArray().shape[0]
-        phase_arr = DcrModel._calc_offset_phase(self.exposure, self.dcr_gen, x_size=psf_size,
+        phase_arr = DcrModel._calc_offset_phase(exposure=self.exposure, dcr_gen=self.dcr_gen, x_size=psf_size,
                                                 y_size=psf_size, return_matrix=True)
         phase_arr_ref = np.load(data_file)
         self.assertFloatsEqual(phase_arr, phase_arr_ref)
@@ -288,8 +291,9 @@ class KernelTestCase(DcrModelTestBase):
         data_file = "test_data/simple_psf_kernel.npy"
         psf = self.exposure.getPsf()
         psf_size = psf.computeKernelImage().getArray().shape[0]
-        phase_arr = DcrModel._calc_psf_kernel(self.exposure, self.dcr_gen, x_size=psf_size, y_size=psf_size,
-                                              return_matrix=True, psf_img=self.dcrModel.psf_avg)
+        phase_arr = DcrModel._calc_psf_kernel(exposure=self.exposure, dcr_gen=self.dcr_gen,
+                                              x_size=psf_size, y_size=psf_size, return_matrix=True,
+                                              psf_img=self.dcrModel.psf_avg)
         phase_arr_ref = np.load(data_file)
         self.assertFloatsEqual(phase_arr, phase_arr_ref)
 
@@ -297,8 +301,8 @@ class KernelTestCase(DcrModelTestBase):
         data_file = "test_data/full_psf_kernel.npy"
         psf = self.exposure.getPsf()
         psf_size = psf.computeKernelImage().getArray().shape[0]
-        phase_arr = DcrModel._calc_psf_kernel_full(self.exposure, self.dcr_gen, x_size=psf_size,
-                                                   y_size=psf_size, return_matrix=True,
+        phase_arr = DcrModel._calc_psf_kernel_full(exposure=self.exposure, dcr_gen=self.dcr_gen,
+                                                   x_size=psf_size, y_size=psf_size, return_matrix=True,
                                                    psf_img=self.dcrModel.psf_avg)
         phase_arr_ref = np.load(data_file)
         self.assertFloatsEqual(phase_arr, phase_arr_ref)

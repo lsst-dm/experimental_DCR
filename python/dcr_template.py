@@ -57,7 +57,6 @@ class DcrModel:
                                       repository=None, output_repository=None, add_noise=False, use_full=True,
                                       kernel_size=None, **kwargs):
         """Use the previously generated model and construct a dcr template image."""
-        exposures = []
         if repository is not None:
             butler = daf_persistence.Butler(repository)
             if self.butler is None:
@@ -66,42 +65,38 @@ class DcrModel:
             butler = self.butler
         if output_repository is not None:
             butler_out = daf_persistence.Butler(output_repository)
-        if obsid_range is not None:
-            dataId_gen = self._build_dataId(obsid_range, self.photoParams.bandpass)
-            elevation_arr = []
-            azimuth_arr = []
-            for dataId in dataId_gen:
-                calexp = butler.get("calexp", dataId=dataId)
-                exposures.append(calexp)
-                elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
-                azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
+        if exposures is None:
+            exposures = []
+            if obsid_range is not None:
+                dataId_gen = self._build_dataId(obsid_range, self.photoParams.bandpass)
+                for dataId in dataId_gen:
+                    calexp = butler.get("calexp", dataId=dataId)
+                    exposures.append(calexp)
+            else:
+                raise ValueError("One of obsid_range or exposures must be set.")
         else:
-            elevation_arr = []
-            azimuth_arr = []
-            for exp in exposures:
-                elevation_arr.append(90 - exp.getMetadata().get("ZENITH"))
-                azimuth_arr.append(exp.getMetadata().get("AZIMUTH"))
+            if obsid_range is None:
+                obsid_range = [calexp.getMetadata().get("OBSID") for calexp in exposures]
+        dataId_out_gen = self._build_dataId(obsid_range, self.photoParams.bandpass)
 
         if kernel_size is not None:
             self.kernel_size = kernel_size
-        for img, exp in enumerate(exposures):
-            el = elevation_arr[img]
-            az = azimuth_arr[img]
+        for calexp in exposures:
+            el = 90 - calexp.getMetadata().get("ZENITH")
+            az = calexp.getMetadata().get("AZIMUTH")
             pix = self.photoParams.platescale
             dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=pix, elevation=el, azimuth=az)
 
+            make_kernel_kwargs = dict(exposure=calexp, dcr_gen=dcr_gen, return_matrix=True,
+                                      x_size=self.kernel_size, y_size=self.kernel_size)
             if self.use_psf:
                 if use_full:
-                    dcr_kernel = DcrModel._calc_psf_kernel_full(exp, dcr_gen, x_size=self.kernel_size,
-                                                                y_size=self.kernel_size, psf_img=self.psf_avg,
-                                                                return_matrix=True)
+                    dcr_kernel = DcrModel._calc_psf_kernel_full(**make_kernel_kwargs)
                 else:
-                    dcr_kernel = DcrModel._calc_psf_kernel(exp, dcr_gen, x_size=self.kernel_size,
-                                                           y_size=self.kernel_size, psf_img=self.psf_avg,
-                                                           return_matrix=True)
+                    dcr_kernel = DcrModel._calc_psf_kernel(**make_kernel_kwargs)
             else:
-                dcr_kernel = DcrModel._calc_offset_phase(exp, dcr_gen, return_matrix=True,
-                                                         x_size=self.kernel_size, y_size=self.kernel_size)
+                dcr_kernel = DcrModel._calc_offset_phase(**make_kernel_kwargs)
+
             template = np.zeros((self.y_size, self.x_size))
             weights = np.zeros((self.y_size, self.x_size))
             pix_radius = self.kernel_size//2
@@ -119,11 +114,11 @@ class DcrModel:
             template[weights > 0] /= weights[weights > 0]
             template[weights == 0] = 0.0
             if add_noise:
-                variance_level = np.median(exp.getMaskedImage().getVariance().getArray())
+                variance_level = np.median(calexp.getMaskedImage().getVariance().getArray())
                 rand_gen = np.random
                 template += rand_gen.normal(scale=np.sqrt(variance_level), size=template.shape)
 
-            dataId_out = dataId[img]
+            dataId_out = dataId_out_gen.next()
             exposure = self._create_exposure(template, variance=np.abs(template), snap=0,
                                              elevation=el, azimuth=az, obsid=dataId_out['visit'])
             if output_repository is not None:
@@ -303,7 +298,8 @@ class DcrModel:
                 yield dcr(dx=dx, dy=dy)
 
     @staticmethod
-    def _calc_offset_phase(exposure, dcr_gen, x_size=None, y_size=None, return_matrix=False):
+    def _calc_offset_phase(exposure=None, dcr_gen=None, x_size=None, y_size=None,
+                           return_matrix=False, **kwargs):
         """Return the 2D FFT of an offset generated by _dcr_generator in the form (dx, dy)."""
         phase_arr = []
         if y_size is None:
@@ -328,7 +324,8 @@ class DcrModel:
         return phase_arr
 
     @staticmethod
-    def _calc_psf_kernel(exposure, dcr_gen, x_size=None, y_size=None, return_matrix=False, psf_img=None):
+    def _calc_psf_kernel(exposure=None, dcr_gen=None, x_size=None, y_size=None,
+                         return_matrix=False, psf_img=None, **kwargs):
 
         if y_size is None:
             y_size = exposure.getHeight()
@@ -347,9 +344,8 @@ class DcrModel:
         return psf_kernel_arr
 
     @staticmethod
-    def _calc_psf_kernel_full(exposure, dcr_gen, x_size=None, y_size=None, return_matrix=False, psf_img=None):
-        # psf_img is passed in but not used so that this function can be swapped in for _calc_psf_kernel
-        # without having to change the keywords
+    def _calc_psf_kernel_full(exposure=None, dcr_gen=None, x_size=None, y_size=None,
+                              return_matrix=False, **kwargs):
         if y_size is None:
             y_size = exposure.getHeight()
         if x_size is None:
@@ -520,29 +516,22 @@ class DcrCorrection(DcrModel):
         if exposures is None:
             self.butler = daf_persistence.Butler(repository)
             dataId_gen = self._build_dataId(obsid_range, band_name)
-            self.elevation_arr = []
-            self.azimuth_arr = []
-            self.airmass_arr = []
             self.exposures = []
-
             for dataId in dataId_gen:
                 calexp = self.butler.get("calexp", dataId=dataId)
                 self.exposures.append(calexp)
-                self.elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
-                self.azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
-                self.airmass_arr.append(calexp.getMetadata().get("AIRMASS"))
-
         else:
-            self.elevation_arr = []
-            self.azimuth_arr = []
-            self.airmass_arr = []
-            for calexp in exposures:
-                self.elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
-                self.azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
-                self.airmass_arr.append(calexp.getMetadata().get("AIRMASS"))
             self.exposures = exposures
 
-        self.n_images = len(self.elevation_arr)
+        self.n_images = len(self.exposures)
+        self.elevation_arr = np.zeros(self.n_images, dtype=np.float64)
+        self.azimuth_arr = np.zeros(self.n_images, dtype=np.float64)
+        self.airmass_arr = np.zeros(self.n_images, dtype=np.float64)
+        for i, calexp in enumerate(self.exposures):
+            self.elevation_arr[i] = 90 - calexp.getMetadata().get("ZENITH")
+            self.azimuth_arr[i] = calexp.getMetadata().get("AZIMUTH")
+            self.airmass_arr[i] = calexp.getMetadata().get("AIRMASS")
+
         self.y_size, self.x_size = self.exposures[0].getDimensions()
         self.pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
         exposure_time = calexp.getInfo().getCalib().getExptime()
@@ -572,11 +561,10 @@ class DcrCorrection(DcrModel):
                                            elevation=elevation_min, azimuth=0.)
         self.dcr_max = int(np.ceil(np.max(dcr_test.next())) + 1)
         if kernel_size is None:
-            self.kernel_size = 2*self.dcr_max + 1
-        else:
-            self.kernel_size = kernel_size
-        self.use_psf = use_psf
-        self.debug = debug_mode
+            kernel_size = 2*self.dcr_max + 1
+        self.kernel_size = int(kernel_size)
+        self.use_psf = bool(use_psf)
+        self.debug = bool(debug_mode)
         self.regularize = self._build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
                                                      n_step=self.n_step, frequency_regularization=True)
         self._calc_psf_model()
@@ -670,13 +658,13 @@ class DcrCorrection(DcrModel):
             # Taken at zenith, since we're solving for the shift and don't want to introduce any extra.
             dcr_genZ = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                                elevation=90., azimuth=az)
-            psf_mat.append(DcrModel._calc_psf_kernel_full(exp, dcr_genZ, return_matrix=False,
-                           x_size=self.psf_size, y_size=self.psf_size))
+            psf_mat.append(DcrModel._calc_psf_kernel_full(exposure=exp, dcr_gen=dcr_genZ, return_matrix=False,
+                                                          x_size=self.psf_size, y_size=self.psf_size))
             # Calculate the expected shift (with no psf) due to DCR
             dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                               elevation=el, azimuth=az)
-            dcr_shift.append(DcrModel._calc_offset_phase(exp, dcr_gen, return_matrix=True,
-                             x_size=self.psf_size, y_size=self.psf_size))
+            dcr_shift.append(DcrModel._calc_offset_phase(exposure=exp, dcr_gen=dcr_gen, return_matrix=True,
+                                                         x_size=self.psf_size, y_size=self.psf_size))
         psf_mat = np.sum(np.hstack(psf_mat), axis=0)
         dcr_shift = np.hstack(dcr_shift)
         regularize_psf = self._build_regularization(x_size=self.psf_size, y_size=self.psf_size,
@@ -739,17 +727,15 @@ class DcrCorrection(DcrModel):
             az = self.azimuth_arr[img]
             dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                               elevation=el, azimuth=az)
-
+            make_kernel_kwargs = dict(exposure=exp, dcr_gen=dcr_gen, return_matrix=True, psf_img=self.psf_avg,
+                                      x_size=self.kernel_size, y_size=self.kernel_size)
             if self.use_psf:
                 if use_full:
-                    dcr_kernel.append(DcrModel._calc_psf_kernel_full(exp, dcr_gen, psf_img=self.psf_avg,
-                                      x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True))
+                    dcr_kernel.append(DcrModel._calc_psf_kernel_full(**make_kernel_kwargs))
                 else:
-                    dcr_kernel.append(DcrModel._calc_psf_kernel(exp, dcr_gen, psf_img=self.psf_avg,
-                                      x_size=self.kernel_size, y_size=self.kernel_size, return_matrix=True))
+                    dcr_kernel.append(DcrModel._calc_psf_kernel(**make_kernel_kwargs))
             else:
-                dcr_kernel.append(DcrModel._calc_offset_phase(exp, dcr_gen, return_matrix=True,
-                                  x_size=self.kernel_size, y_size=self.kernel_size))
+                dcr_kernel.append(DcrModel._calc_offset_phase(**make_kernel_kwargs))
         dcr_kernel = np.hstack(dcr_kernel)
         return dcr_kernel
 
