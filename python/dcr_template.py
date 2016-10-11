@@ -71,11 +71,11 @@ class DcrModel:
         if output_repository is not None:
             butler_out = daf_persistence.Butler(output_repository)
         if obsid_range is not None:
-            dataId = self._build_dataId(obsid_range, self.photoParams.bandpass)
+            dataId_gen = self._build_dataId(obsid_range, self.photoParams.bandpass)
             elevation_arr = []
             azimuth_arr = []
-            for _id in dataId:
-                calexp = butler.get("calexp", dataId=_id)
+            for dataId in dataId_gen:
+                calexp = butler.get("calexp", dataId=dataId)
                 exposures.append(calexp)
                 elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
                 azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
@@ -88,9 +88,9 @@ class DcrModel:
 
         if kernel_size is not None:
             self.kernel_size = kernel_size
-        for _img, exp in enumerate(exposures):
-            el = elevation_arr[_img]
-            az = azimuth_arr[_img]
+        for img, exp in enumerate(exposures):
+            el = elevation_arr[img]
+            az = azimuth_arr[img]
             pix = self.photoParams.platescale
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=pix, elevation=el, azimuth=az)
 
@@ -107,16 +107,16 @@ class DcrModel:
             template = np.zeros((self.y_size, self.x_size))
             weights = np.zeros((self.y_size, self.x_size))
             pix_radius = self.kernel_size//2
-            for _j in range(self.y_size):
-                for _i in range(self.x_size):
-                    if self._edge_test(_j, _i):
+            for j in range(self.y_size):
+                for i in range(self.x_size):
+                    if self._edge_test(j, i):
                         continue
-                    model_vals = self._extract_model_vals(_j, _i, radius=pix_radius,
+                    model_vals = self._extract_model_vals(j, i, radius=pix_radius,
                                                           model=self.model, weights=self.weights)
                     template_vals = self._apply_dcr_kernel(dcr_kernel, model_vals,
                                                            x_size=self.kernel_size,
                                                            y_size=self.kernel_size)
-                    self._insert_template_vals(_j, _i, template_vals, template=template, weights=weights,
+                    self._insert_template_vals(j, i, template_vals, template=template, weights=weights,
                                                radius=pix_radius, kernel=self.psf_avg)
             template[weights > 0] /= weights[weights > 0]
             template[weights == 0] = 0.0
@@ -125,7 +125,7 @@ class DcrModel:
                 rand_gen = np.random
                 template += rand_gen.normal(scale=np.sqrt(variance_level), size=template.shape)
 
-            dataId_out = dataId[_img]
+            dataId_out = dataId[img]
             exposure = self._create_exposure(template, variance=np.abs(template), snap=0,
                                              elevation=el, azimuth=az, obsid=dataId_out['visit'])
             if output_repository is not None:
@@ -164,27 +164,27 @@ class DcrModel:
         return(np.reshape(template_vals, (y_size, x_size)))
 
     @staticmethod
-    def _extract_model_vals(_j, _i, radius=None, model=None, weights=None):
+    def _extract_model_vals(j, i, radius=None, model=None, weights=None):
         """Return all pixles within a radius of a given point as a 1D vector for each dcr plane model."""
         model_arr = []
         if weights is None:
             weights = np.ones_like(model)
-        for _f in range(model.shape[0]):
-            model_use = model[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1].copy()
-            weights_use = weights[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1]
+        for f in range(model.shape[0]):
+            model_use = model[f, j - radius: j + radius + 1, i - radius: i + radius + 1].copy()
+            weights_use = weights[f, j - radius: j + radius + 1, i - radius: i + radius + 1]
             model_use[weights_use > 0] /= weights_use[weights_use > 0]
             model_use[weights_use <= 0] = 0.0
             model_arr.append(np.ravel(model_use))
         return(np.hstack(model_arr))
 
     @staticmethod
-    def _insert_template_vals(_j, _i, vals, template=None, weights=None, radius=None, kernel=None):
+    def _insert_template_vals(j, i, vals, template=None, weights=None, radius=None, kernel=None):
         if kernel is None:
             kernel = 1.0
-        template[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals*kernel
-        weights[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += kernel
+        template[j - radius: j + radius + 1, i - radius: i + radius + 1] += vals*kernel
+        weights[j - radius: j + radius + 1, i - radius: i + radius + 1] += kernel
 
-    def _edge_test(self, _j, _i):
+    def _edge_test(self, j, i):
         x0 = 150
         dx = 65
         y0 = 480
@@ -192,22 +192,22 @@ class DcrModel:
         pix_radius = self.kernel_size//2
 
         # Deal with the edges later. Probably by padding the image with zeroes.
-        if _i < pix_radius + 1:
+        if i < pix_radius + 1:
             edge = True
-        elif self.x_size - _i < pix_radius + 1:
+        elif self.x_size - i < pix_radius + 1:
             edge = True
-        elif _j < pix_radius + 1:
+        elif j < pix_radius + 1:
             edge = True
-        elif self.y_size - _j < pix_radius + 1:
+        elif self.y_size - j < pix_radius + 1:
             edge = True
         elif self.debug:
-            if _i < x0:
+            if i < x0:
                 edge = True
-            elif _i > x0+dx:
+            elif i > x0+dx:
                 edge = True
-            elif _j < y0:
+            elif j < y0:
                 edge = True
-            elif _j > y0+dy:
+            elif j > y0+dy:
                 edge = True
             else:
                 edge = False
@@ -267,13 +267,13 @@ class DcrModel:
         else:
             butler = daf_persistence.Butler(model_repository)
         wave_gen = _wavelength_iterator(self.bandpass, use_midpoint=False)
-        for _f in range(self.n_step):
+        for f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
-            exp = self._create_exposure(self.model[_f, :, :], variance=self.weights[_f, :, :],
+            exp = self._create_exposure(self.model[f, :, :], variance=self.weights[f, :, :],
                                         elevation=90., azimuth=0., ksupport=self.kernel_size,
-                                        subfilt=_f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
+                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
                                         wavestep=self.bandpass.wavelen_step, psf_flag=self.use_psf)
-            butler.put(exp, "dcrModel", dataId=self._build_model_dataId(self.photoParams.bandpass, _f))
+            butler.put(exp, "dcrModel", dataId=self._build_model_dataId(self.photoParams.bandpass, f))
 
     def load_model(self, model_repository=None, band_name='g', **kwargs):
         """Depersist a DcrModel from a repository and set up the metadata."""
@@ -283,12 +283,12 @@ class DcrModel:
             butler = daf_persistence.Butler(model_repository)
         model_arr = []
         weights_arr = []
-        _f = 0
-        while butler.datasetExists("dcrModel", dataId=self._build_model_dataId(band_name, subfilter=_f)):
-            dcrModel = butler.get("dcrModel", dataId=self._build_model_dataId(band_name, subfilter=_f))
+        f = 0
+        while butler.datasetExists("dcrModel", dataId=self._build_model_dataId(band_name, subfilter=f)):
+            dcrModel = butler.get("dcrModel", dataId=self._build_model_dataId(band_name, subfilter=f))
             model_arr.append(dcrModel.getMaskedImage().getImage().getArray())
             weights_arr.append(dcrModel.getMaskedImage().getVariance().getArray())
-            _f += 1
+            f += 1
 
         self.model = np.array(model_arr)
         self.weights = np.array(weights_arr)
@@ -342,8 +342,8 @@ class DcrCorrection(DcrModel):
             self.airmass_arr = []
             self.exposures = []
 
-            for _id in dataId_gen:
-                calexp = self.butler.get("calexp", dataId=_id)
+            for dataId in dataId_gen:
+                calexp = self.butler.get("calexp", dataId=dataId)
                 self.exposures.append(calexp)
                 self.elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
                 self.azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
@@ -417,36 +417,36 @@ class DcrCorrection(DcrModel):
             #     reg_pix[i::n_step, i::n_step] = baseReg
             reg_pix_x = np.zeros((n_step * x_size * y_size,
                                   n_step * x_size * y_size - x_size))
-            for _ij in range(n_step * x_size * y_size - x_size):
-                reg_pix_x[_ij, _ij] = 1
-                reg_pix_x[_ij + x_size, _ij] = -1
+            for ij in range(n_step * x_size * y_size - x_size):
+                reg_pix_x[ij, ij] = 1
+                reg_pix_x[ij + x_size, ij] = -1
             reg_pix_x = np.append(reg_pix_x, -reg_pix_x, axis=1)
 
             reg_pix_y = np.zeros((n_step * x_size * y_size,
                                   n_step * x_size * y_size - 1))
-            for _ij in range(n_step * x_size * y_size - 1):
-                reg_pix_y[_ij, _ij] = 1
-                reg_pix_y[_ij + 1, _ij] = -1
+            for ij in range(n_step * x_size * y_size - 1):
+                reg_pix_y[ij, ij] = 1
+                reg_pix_y[ij + 1, ij] = -1
             reg_pix_y = np.append(reg_pix_y, -reg_pix_y, axis=1)
             reg_pix = np.append(reg_pix_x, reg_pix_y, axis=1)
 
         if frequency_regularization:
             # regularization that forces the SED to be smooth
             reg_lambda = np.zeros((n_step*x_size*y_size, (n_step - 1)*x_size*y_size))
-            for _f in range(n_step - 1):
-                for _ij in range(x_size*y_size):
-                    reg_lambda[_f*x_size*y_size + _ij, _f*x_size*y_size + _ij] = 1
-                    reg_lambda[(_f + 1)*x_size*y_size + _ij, _f*x_size*y_size + _ij] = -1
+            for f in range(n_step - 1):
+                for ij in range(x_size*y_size):
+                    reg_lambda[f*x_size*y_size + ij, f*x_size*y_size + ij] = 1
+                    reg_lambda[(f + 1)*x_size*y_size + ij, f*x_size*y_size + ij] = -1
             reg_lambda = np.append(reg_lambda, -reg_lambda, axis=1)
 
         if frequency_second_regularization:
             # regularization that forces the derivative of the SED to be smooth
             reg_lambda2 = np.zeros((n_step*x_size*y_size, (n_step - 2)*x_size*y_size))
-            for _f in range(n_step - 2):
-                for _ij in range(x_size * y_size):
-                    reg_lambda2[_f * x_size * y_size + _ij, _f * x_size * y_size + _ij] = -1
-                    reg_lambda2[(_f + 1) * x_size * y_size + _ij, _f * x_size * y_size + _ij] = 2
-                    reg_lambda2[(_f + 2) * x_size * y_size + _ij, _f * x_size * y_size + _ij] = -1
+            for f in range(n_step - 2):
+                for ij in range(x_size * y_size):
+                    reg_lambda2[f * x_size * y_size + ij, f * x_size * y_size + ij] = -1
+                    reg_lambda2[(f + 1) * x_size * y_size + ij, f * x_size * y_size + ij] = 2
+                    reg_lambda2[(f + 2) * x_size * y_size + ij, f * x_size * y_size + ij] = -1
         if reg_lambda is None:
             reg_lambda = reg_lambda2
         elif reg_lambda2 is not None:
@@ -459,33 +459,33 @@ class DcrCorrection(DcrModel):
         else:
             return(np.append(reg_pix, reg_lambda, axis=1))
 
-    def _extract_image_vals(self, _j, _i, radius=None):
+    def _extract_image_vals(self, j, i, radius=None):
         """Return all pixels within a radius of a given point as a 1D vector for each exposure."""
         img_arr = []
         for exp in self.exposures:
             img = exp.getMaskedImage().getImage().getArray()
-            img = img[_j - radius: _j + radius + 1, _i - radius: _i + radius + 1]
+            img = img[j - radius: j + radius + 1, i - radius: i + radius + 1]
             img_arr.append(np.ravel(img))
         return(np.hstack(img_arr))
 
-    def _insert_model_vals(self, _j, _i, vals, radius=None):
+    def _insert_model_vals(self, j, i, vals, radius=None):
         if self.use_psf:
             psf_use = self.psf_avg
-            self.model[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals*psf_use
-            self.weights[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
+            self.model[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += vals*psf_use
+            self.weights[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += psf_use
         else:
             psf_use = self.psf_avg
-            self.model[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += vals*psf_use
-            self.weights[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
+            self.model[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += vals*psf_use
+            self.weights[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += psf_use
 
     def _calc_psf_model(self):
         psf_mat = []
         dcr_shift = []
         p0 = self.psf_size//2 - self.kernel_size//2
         p1 = p0 + self.kernel_size
-        for _img, exp in enumerate(self.exposures):
-            el = self.elevation_arr[_img]
-            az = self.azimuth_arr[_img]
+        for img, exp in enumerate(self.exposures):
+            el = self.elevation_arr[img]
+            az = self.azimuth_arr[img]
 
             # Use the measured PSF as the solution of the shifted PSFs.
             # Taken at zenith, since we're solving for the shift and don't want to introduce any extra.
@@ -527,35 +527,35 @@ class DcrCorrection(DcrModel):
         detected_bit = exp.getMaskedImage().getMask().getPlaneBitMask("DETECTED")
         if verbose:
             print("Working on column", end="")
-        for _j in range(self.y_size):
+        for j in range(self.y_size):
             if verbose:
-                if _j % 100 == 0:
-                    print("\n %i" % _j, end="")
-                elif _j % 10 == 0:
+                if j % 100 == 0:
+                    print("\n %i" % j, end="")
+                elif j % 10 == 0:
                     print("|", end="")
                 else:
                     print(".", end="")
-            for _i in range(self.x_size):
-                if self._edge_test(_j, _i):
+            for i in range(self.x_size):
+                if self._edge_test(j, i):
                     continue
                 # This option saves time by only performing the fit if the center pixel is masked as detected
                 # Note that by gridding the results with the psf and maintaining a separate 'weights' array
                 # this
                 if use_only_detected:
-                    if self.mask[_j, _i] & detected_bit == 0:
+                    if self.mask[j, i] & detected_bit == 0:
                         continue
-                img_vals = self._extract_image_vals(_j, _i, radius=pix_radius)
+                img_vals = self._extract_image_vals(j, i, radius=pix_radius)
 
                 model_vals = self._solve_model(dcr_kernel, img_vals, use_regularization=use_regularization)
-                self._insert_model_vals(_j, _i, model_vals, radius=pix_radius)
+                self._insert_model_vals(j, i, model_vals, radius=pix_radius)
         if verbose:
             print("\nFinished building model.")
 
     def _build_dcr_kernel(self, use_full=None):
         dcr_kernel = []
-        for _img, exp in enumerate(self.exposures):
-            el = self.elevation_arr[_img]
-            az = self.azimuth_arr[_img]
+        for img, exp in enumerate(self.exposures):
+            el = self.elevation_arr[img]
+            az = self.azimuth_arr[img]
             dcr_gen = _dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, elevation=el, azimuth=az)
 
             if self.use_psf:
@@ -585,11 +585,10 @@ class DcrCorrection(DcrModel):
             regularize_dim = self.regularize.shape
             vals_use = np.append(img_vals, np.zeros(regularize_dim[1]))
             kernel_use = np.append(dcr_kernel.T, self.regularize.T, axis=0)
-            model_solution = positive_lstsq(kernel_use, vals_use)
         else:
             vals_use = img_vals
             kernel_use = dcr_kernel.T
-            model_solution = positive_lstsq(kernel_use, vals_use)
+        model_solution = positive_lstsq(kernel_use, vals_use)
         model_vals = model_solution[0]
         return(np.reshape(model_vals, (self.n_step, y_size, x_size)))
 
@@ -607,11 +606,11 @@ def _calc_offset_phase(exposure, dcr_gen, x_size=None, y_size=None, return_matri
         kernel = np.einsum('i,j->ij', kernel_y, kernel_x)
         if return_matrix:
             shift_mat = np.zeros((x_size*y_size, x_size*y_size))
-            for _j in range(y_size):
-                for _i in range(x_size):
-                    _ij = _i + _j * x_size
-                    shift_mat[_ij, :] = np.ravel(scipy_shift(kernel, (_j - y_size//2, _i - x_size//2),
-                                                 mode='constant', cval=0.0))
+            for j in range(y_size):
+                for i in range(x_size):
+                    ij = i + j * x_size
+                    shift_mat[ij, :] = np.ravel(scipy_shift(kernel, (j - y_size//2, i - x_size//2),
+                                                mode='constant', cval=0.0))
             phase_arr.append(shift_mat)
         else:
             phase_arr.append(np.ravel(kernel))
@@ -678,15 +677,15 @@ def _calc_psf_kernel_subroutine(psf_img, dcr, x_size=None, y_size=None):
 
     n_substep = 10
     psf_mat = np.zeros((x_size * y_size, x_size * y_size))
-    for _j in range(y_size):
-        for _i in range(x_size):
-            _ij = _i + _j * x_size
+    for j in range(y_size):
+        for i in range(x_size):
+            ij = i + j * x_size
             sub_image = np.zeros_like(psf_img)
             for _n in range(n_substep):
-                j_use = _j - y_size//2 + (dcr.dy.start * (n_substep - _n) + dcr.dy.end*_n)/n_substep
-                i_use = _i - x_size//2 + (dcr.dx.start * (n_substep - _n) + dcr.dx.end*_n)/n_substep
+                j_use = j - y_size//2 + (dcr.dy.start * (n_substep - _n) + dcr.dy.end*_n)/n_substep
+                i_use = i - x_size//2 + (dcr.dx.start * (n_substep - _n) + dcr.dx.end*_n)/n_substep
                 sub_image += scipy_shift(psf_img, (j_use, i_use), mode='constant', cval=0.0)
-            psf_mat[_ij, :] = np.ravel(sub_image[x0:x1, y0:y1]) / n_substep
+            psf_mat[ij, :] = np.ravel(sub_image[x0:x1, y0:y1]) / n_substep
     return(psf_mat)
 
 
@@ -821,8 +820,8 @@ def _kernel_1d(offset, size, width=0.0, min_width=0.1):
     pix = np.arange(size, dtype=np.float64)
 
     kernel = np.zeros(size, dtype=np.float64)
-    for _n in range(n_substep):
-        loc = size//2. + (offset.start*(n_substep - _n) + offset.end*_n)/n_substep
+    for n in range(n_substep):
+        loc = size//2. + (offset.start*(n_substep - n) + offset.end*n)/n_substep
         if loc % 1.0 == 0:
             kernel[int(loc)] += 1.0
         else:
@@ -986,7 +985,7 @@ class DCRTestCase(lsst.utils.tests.TestCase):
         bp = self.bandpass
         dcr_gen = _dcr_generator(bp, pixel_scale=self.pixel_scale, elevation=elevation, azimuth=azimuth)
         n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
-        for _i in range(n_step):
+        for f in range(n_step):
             dcr = next(dcr_gen)
             self.assertFloatsEqual(dcr.dx.start, zenith_dcr)
             self.assertFloatsEqual(dcr.dx.end, zenith_dcr)
@@ -1019,10 +1018,10 @@ class DCRTestCase(lsst.utils.tests.TestCase):
         dcr_gen = _dcr_generator(bp, pixel_scale=self.pixel_scale, elevation=elevation,
                                  azimuth=azimuth, use_midpoint=False)
         n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
-        for _i in range(n_step):
+        for f in range(n_step):
             dcr = next(dcr_gen)
-            self.assertFloatsEqual(dcr.dy.start, dcr_ref_vals[_i][0])
-            self.assertFloatsEqual(dcr.dy.end, dcr_ref_vals[_i][1])
+            self.assertFloatsEqual(dcr.dy.start, dcr_ref_vals[f][0])
+            self.assertFloatsEqual(dcr.dy.end, dcr_ref_vals[f][1])
 
 
 class BandpassTestCase(lsst.utils.tests.TestCase):
@@ -1112,34 +1111,34 @@ class DcrModelTestCase(DcrModelTestBase):
         band_ref = 'g'
         ref_id = {'visit': id_ref, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
         dataId = DcrModel._build_dataId(id_ref, band_ref)
-        for _i, _id in enumerate(range(id_ref[0], id_ref[1])):
-            ref_id = {'visit': _id, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
-            self.assertEqual(ref_id, dataId[_i])
+        for i, id in enumerate(range(id_ref[0], id_ref[1])):
+            ref_id = {'visit': id, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
+            self.assertEqual(ref_id, dataId[i])
 
     def test_extract_model_no_weights(self):
         # Make j and i different slightly so we can tell if the indices get swapped
-        _i = self.size//2 + 1
-        _j = self.size//2 - 1
+        i = self.size//2 + 1
+        j = self.size//2 - 1
         radius = self.kernel_size//2
         model_use = self.dcrModel.model
-        model_vals = DcrModel._extract_model_vals(_j, _i, radius=radius, model=model_use)
-        input_vals = [np.ravel(model_use[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1])
-                      for _f in range(self.dcrModel.n_step)]
+        model_vals = DcrModel._extract_model_vals(j, i, radius=radius, model=model_use)
+        input_vals = [np.ravel(model_use[f, j - radius: j + radius + 1, i - radius: i + radius + 1])
+                      for f in range(self.dcrModel.n_step)]
         self.assertFloatsEqual(np.hstack(input_vals), model_vals)
 
     def test_extract_model_with_weights(self):
         # Make j and i different slightly so we can tell if the indices get swapped
-        _i = self.size//2 + 1
-        _j = self.size//2 - 1
+        i = self.size//2 + 1
+        j = self.size//2 - 1
         radius = self.kernel_size//2
         model = self.dcrModel.model
         weight_scale = 2.2
         weights = self.dcrModel.weights * weight_scale
-        weights[:, _j, _i] = 0.
-        model_vals = DcrModel._extract_model_vals(_j, _i, radius=radius, model=model, weights=weights)
+        weights[:, j, i] = 0.
+        model_vals = DcrModel._extract_model_vals(j, i, radius=radius, model=model, weights=weights)
         input_arr = []
-        for _f in range(self.dcrModel.n_step):
-            input_vals = model[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] / weight_scale
+        for f in range(self.dcrModel.n_step):
+            input_vals = model[f, j - radius: j + radius + 1, i - radius: i + radius + 1] / weight_scale
             input_vals[radius, radius] = 0.
             input_arr.append(np.ravel(input_vals))
 
@@ -1229,7 +1228,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
 
         exposures = []
         self.ref_vals = []
-        for _i in range(self.n_images):
+        for i in range(self.n_images):
             # NOTE that this array is randomly generated for each instance.
             array = np.random.random(size=(self.size, self.size))*1000.
             self.ref_vals.append(array)
@@ -1246,27 +1245,27 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
 
     def test_extract_image(self):
         # Make j and i different slightly so we can tell if the indices get swapped
-        _i = self.size//2 + 1
-        _j = self.size//2 - 1
+        i = self.size//2 + 1
+        j = self.size//2 - 1
         radius = self.kernel_size//2
-        image_vals = self.dcrCorr._extract_image_vals(_j, _i, radius=radius)
-        input_vals = [np.ravel(self.ref_vals[_f][_j - radius: _j + radius + 1, _i - radius: _i + radius + 1])
-                      for _f in range(self.n_images)]
+        image_vals = self.dcrCorr._extract_image_vals(j, i, radius=radius)
+        input_vals = [np.ravel(self.ref_vals[f][j - radius: j + radius + 1, i - radius: i + radius + 1])
+                      for f in range(self.n_images)]
         self.assertFloatsEqual(np.hstack(input_vals), image_vals)
 
     def test_insert_model_vals(self):
-        _i = self.size//2 + 1
-        _j = self.size//2 - 1
+        i = self.size//2 + 1
+        j = self.size//2 - 1
         radius = self.kernel_size//2
         test_vals = np.random.random(size=(self.n_step, self.kernel_size, self.kernel_size))
         model_ref = np.zeros((self.n_step, self.size, self.size))
         self.dcrCorr.model = model_ref.copy()
         weights_ref = np.zeros((self.n_step, self.size, self.size))
         self.dcrCorr.weights = weights_ref.copy()
-        self.dcrCorr._insert_model_vals(_j, _i, test_vals, radius=radius)
+        self.dcrCorr._insert_model_vals(j, i, test_vals, radius=radius)
         psf_use = self.dcrCorr.psf_avg
-        model_ref[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += test_vals*psf_use
-        weights_ref[:, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] += psf_use
+        model_ref[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += test_vals*psf_use
+        weights_ref[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += psf_use
         self.assertFloatsEqual(model_ref, self.dcrCorr.model)
         self.assertFloatsEqual(weights_ref, self.dcrCorr.weights)
 
@@ -1363,9 +1362,9 @@ class SolverTestCast(lsst.utils.tests.TestCase):
         y_size, x_size = self.dcrCorr.exposures[0].getDimensions()
         pix_radius = self.dcrCorr.kernel_size//2
         # Make j and i different slightly so we can tell if the indices get swapped
-        _i = x_size//2 + 1
-        _j = y_size//2 - 1
-        image_vals = self.dcrCorr._extract_image_vals(_j, _i, radius=pix_radius)
+        i = x_size//2 + 1
+        j = y_size//2 - 1
+        image_vals = self.dcrCorr._extract_image_vals(j, i, radius=pix_radius)
         dcr_kernel = self.dcrCorr._build_dcr_kernel(use_full=False)
         model_vals = self.dcrCorr._solve_model(dcr_kernel, image_vals, use_regularization=False)
         model_ref = np.load(data_file)
@@ -1377,9 +1376,9 @@ class SolverTestCast(lsst.utils.tests.TestCase):
         kernel_size = self.dcrCorr.kernel_size
         n_step = self.dcrCorr.n_step
         pix_radius = kernel_size//2
-        _i = x_size//2 + 1
-        _j = y_size//2 - 1
-        image_vals = self.dcrCorr._extract_image_vals(_j, _i, radius=pix_radius)
+        i = x_size//2 + 1
+        j = y_size//2 - 1
+        image_vals = self.dcrCorr._extract_image_vals(j, i, radius=pix_radius)
         dcr_kernel = self.dcrCorr._build_dcr_kernel(use_full=False)
         self.dcrCorr.regularize = DcrCorrection._build_regularization(x_size=kernel_size, y_size=kernel_size,
                                                                       n_step=n_step,
