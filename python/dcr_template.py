@@ -23,7 +23,6 @@
 
 from __future__ import print_function, division, absolute_import
 from collections import namedtuple
-from functools import reduce
 import numpy as np
 from scipy import constants
 from scipy.ndimage.interpolation import shift as scipy_shift
@@ -758,7 +757,9 @@ class DcrCorrection(DcrModel):
         mask_arr = (exp.getMaskedImage().getMask().getArray() for exp in self.exposures)
 
         # Flags a pixel if ANY image is flagged there.
-        self.mask = reduce(lambda m1, m2: np.bitwise_or(m1, m2), mask_arr)
+        self.mask = np.zeros_like(mask_arr[0])
+        for mask in mask_arr:
+            self.mask = np.bitwise_or(self.mask, mask)
 
     def _solve_model(self, dcr_kernel, img_vals, use_regularization=True):
         x_size = self.kernel_size
