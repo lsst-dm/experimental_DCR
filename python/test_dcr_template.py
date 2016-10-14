@@ -31,12 +31,6 @@ import lsst.meas.algorithms as measAlg
 from lsst.sims.photUtils import PhotometricParameters
 import unittest
 import lsst.utils.tests
-# from .dcr_template import _calc_offset_phase
-# from .dcr_template import _calc_psf_kernel
-# from .dcr_template import _calc_psf_kernel_full
-# from .dcr_template import _dcr_generator
-# from .dcr_template import _load_bandpass
-# from .dcr_template import _wavelength_iterator
 from .dcr_template import DcrModel
 from .dcr_template import DcrCorrection
 

@@ -49,24 +49,38 @@ class DcrModel:
     """Lightweight object that contains only the minimum needed to generate DCR-matched template exposures."""
 
     def __init__(self, model_repository=None, band_name='g', debug_mode=False, **kwargs):
-        """Only run when restoring a model or for testing."""
+        """Only run when restoring a model or for testing; otherwise superceded by DcrCorrection __init__."""
+        """
+        @param model_repository: path to the repository where the previously-generated DCR model is stored.
+        @param band_name: name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
+        @param debug_mode: if set, only use a subset of the data for speed (used in _edge_test)
+        """
         self.debug = debug_mode
         self.butler = None
         self.load_model(model_repository=model_repository, band_name=band_name, **kwargs)
 
-    def generate_templates_from_model(self, obsid_range=None, exposures=None,
-                                      repository=None, output_repository=None, add_noise=False, use_full=True,
-                                      kernel_size=None, **kwargs):
+    def generate_templates_from_model(self, obsid_range=None, exposures=None, add_noise=False, use_full=True,
+                                      repository=None, output_repository=None, kernel_size=None, **kwargs):
         """Use the previously generated model and construct a dcr template image."""
-        if repository is not None:
-            butler = daf_persistence.Butler(repository)
-            if self.butler is None:
-                self.butler = butler
-        else:
-            butler = self.butler
+        """
+        @param obsid_range: single, range, or list of observation IDs in repository to create matched
+                            templates for. Ignored if exposures are supplied directly.
+        @param exposures: optional, list of exposure objects that will have matched templates created.
+        @param add_noise: If set to true, add Poisson noise to the template based on the variance.
+        @param use_full: debugging keyword. Set to use the full psf kernel instead of the average.
+        @param repository: path to the repository where the exposure data to be matched are stored.
+                           Ignored if exposures are supplied directly.
+        @param output_repository: path to repository directory where templates will be saved.
+        """
         if output_repository is not None:
             butler_out = daf_persistence.Butler(output_repository)
         if exposures is None:
+            if repository is not None:
+                butler = daf_persistence.Butler(repository)
+                if self.butler is None:
+                    self.butler = butler
+            else:
+                butler = self.butler
             exposures = []
             if obsid_range is not None:
                 dataId_gen = self._build_dataId(obsid_range, self.photoParams.bandpass)
