@@ -34,6 +34,7 @@ import lsst.daf.persistence as daf_persistence
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
+import lsst.pex.exceptions
 import lsst.pex.policy as pexPolicy
 from lsst.sims.photUtils import Bandpass, PhotometricParameters
 from lsst.utils import getPackageDir
@@ -76,26 +77,26 @@ class DcrModel:
                 raise ValueError("One of obsid_range or exposures must be set.")
         else:
             if obsid_range is None:
-                obsid_range = [calexp.getMetadata().get("OBSID") for calexp in exposures]
-        dataId_out_gen = self._build_dataId(obsid_range, self.photoParams.bandpass)
+                obsid_range = [self._fetch_metadata(calexp, "OBSID", default_value=0) for calexp in exposures]
+        dataId_out_arr = self._build_dataId(obsid_range, self.photoParams.bandpass)
 
         if kernel_size is not None:
             self.kernel_size = kernel_size
-        for calexp in exposures:
+        for exp_i, calexp in enumerate(exposures):
             el = 90 - calexp.getMetadata().get("ZENITH")
             az = calexp.getMetadata().get("AZIMUTH")
             pix = self.photoParams.platescale
-            dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=pix, elevation=el, azimuth=az)
+            dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=pix, elevation=el, azimuth=az)
 
             make_kernel_kwargs = dict(exposure=calexp, dcr_gen=dcr_gen, return_matrix=True,
                                       x_size=self.kernel_size, y_size=self.kernel_size)
             if self.use_psf:
                 if use_full:
-                    dcr_kernel = DcrModel._calc_psf_kernel_full(**make_kernel_kwargs)
+                    dcr_kernel = self._calc_psf_kernel_full(psf_img=self.psf_avg, **make_kernel_kwargs)
                 else:
-                    dcr_kernel = DcrModel._calc_psf_kernel(**make_kernel_kwargs)
+                    dcr_kernel = self._calc_psf_kernel(psf_img=self.psf_avg, **make_kernel_kwargs)
             else:
-                dcr_kernel = DcrModel._calc_offset_phase(**make_kernel_kwargs)
+                dcr_kernel = self._calc_offset_phase(**make_kernel_kwargs)
 
             template = np.zeros((self.y_size, self.x_size))
             weights = np.zeros((self.y_size, self.x_size))
@@ -118,12 +119,24 @@ class DcrModel:
                 rand_gen = np.random
                 template += rand_gen.normal(scale=np.sqrt(variance_level), size=template.shape)
 
-            dataId_out = dataId_out_gen.next()
+            dataId_out = dataId_out_arr[exp_i]
             exposure = self._create_exposure(template, variance=np.abs(template), snap=0,
                                              elevation=el, azimuth=az, obsid=dataId_out['visit'])
             if output_repository is not None:
                 butler_out.put(exposure, "calexp", dataId=dataId_out)
             yield exposure
+
+    @staticmethod
+    def _fetch_metadata(exposure, property_name, default_value=None):
+        try:
+            value = exposure.getMetadata().get(property_name)
+        except lsst.pex.exceptions.wrappers.NotFoundError as e:
+            if default_value is not None:
+                print("WARNING: " + str(e) + ". Using default value: %s" % repr(default_value))
+                return default_value
+            else:
+                raise e
+        return value
 
     @staticmethod
     def _build_dataId(obsid_range, band):
@@ -473,6 +486,7 @@ class DcrModel:
         self.weights = np.array(weights_arr)
         self.mask = dcrModel.getMaskedImage().getMask().getArray()
 
+        # This only uses the mask of the last image. For real data all masks should be used.
         meta = dcrModel.getMetadata()
         self.wcs = dcrModel.getWcs()
         self.n_step = len(model_arr)
@@ -538,6 +552,7 @@ class DcrCorrection(DcrModel):
         self.bbox = calexp.getBBox()
         self.wcs = calexp.getWcs()
         self.psf_size = calexp.getPsf().computeKernelImage().getArray().shape[0]
+        self.mask = None
         self._combine_masks()
 
         bandpass = DcrModel._load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
@@ -744,9 +759,11 @@ class DcrCorrection(DcrModel):
         mask_arr = (exp.getMaskedImage().getMask().getArray() for exp in self.exposures)
 
         # Flags a pixel if ANY image is flagged there.
-        self.mask = np.zeros_like(mask_arr[0])
         for mask in mask_arr:
-            self.mask = np.bitwise_or(self.mask, mask)
+            if self.mask is None:
+                self.mask = mask
+            else:
+                self.mask = np.bitwise_or(self.mask, mask)
 
     def _solve_model(self, dcr_kernel, img_vals, use_regularization=True):
         x_size = self.kernel_size

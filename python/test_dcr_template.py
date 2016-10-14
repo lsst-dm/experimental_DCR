@@ -97,6 +97,7 @@ class _BasicDcrModel(DcrModel):
         rand_gen.seed(seed)
         self.butler = None
         self.use_psf = False
+        self.debug = False
 
         bandpass_init = _BasicBandpass(band_name=band_name, wavelength_step=None)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
@@ -420,8 +421,12 @@ class PersistanceTestCase(DcrModelTestBase):
         exposures = [self.dcrModel._create_exposure(self.array, variance=None, elevation=el, azimuth=az)
                      for el in elevation_arr]
         model_gen = self.dcrModel.generate_templates_from_model(exposures=exposures, kernel_size=5)
+        model_test = [model for model in model_gen]
         model_ref = np.load(data_file)
-        self.assertItemsEqual(model_gen, model_ref)
+        for m_i in range(len(model_test)):
+            m_test = model_test[m_i].getMaskedImage().getImage().getArray()
+            m_ref = model_ref[m_i].getMaskedImage().getImage().getArray()
+            self.assertFloatsEqual(m_test, m_ref)
 
 
 class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
