@@ -71,6 +71,9 @@ class DcrModel:
         @param repository: path to the repository where the exposure data to be matched are stored.
                            Ignored if exposures are supplied directly.
         @param output_repository: path to repository directory where templates will be saved.
+        @param kernel_size: [optional] size, in pixels, of the region surrounding each image pixel that DCR
+                            shifts are calculated. Default is to use the same value the model was created with
+        @return Returns a generator that builds DCR-matched templates for each exposure.
         """
         if output_repository is not None:
             butler_out = daf_persistence.Butler(output_repository)
@@ -102,7 +105,7 @@ class DcrModel:
             pix = self.photoParams.platescale
             dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=pix, elevation=el, azimuth=az)
 
-            make_kernel_kwargs = dict(exposure=calexp, dcr_gen=dcr_gen, return_matrix=True,
+            make_kernel_kwargs = dict(exposure=calexp, dcr_gen=dcr_gen,
                                       x_size=self.kernel_size, y_size=self.kernel_size)
             if self.use_psf:
                 if use_full:
@@ -121,9 +124,7 @@ class DcrModel:
                         continue
                     model_vals = self._extract_model_vals(j, i, radius=pix_radius,
                                                           model=self.model, weights=self.weights)
-                    template_vals = self._apply_dcr_kernel(dcr_kernel, model_vals,
-                                                           x_size=self.kernel_size,
-                                                           y_size=self.kernel_size)
+                    template_vals = self._apply_dcr_kernel(dcr_kernel, model_vals)
                     self._insert_template_vals(j, i, template_vals, template=template, weights=weights,
                                                radius=pix_radius, kernel=self.psf_avg)
             template[weights > 0] /= weights[weights > 0]
@@ -142,6 +143,13 @@ class DcrModel:
 
     @staticmethod
     def _fetch_metadata(exposure, property_name, default_value=None):
+        """Simple wrapper to extract metadata from an exposure, with some error handling."""
+        """
+        @param exposure: An LSST exposure object
+        @param property_name: String, name of the property to be extracted
+        @param default_value: Value to be returned if the property is not found in the exposure metadata.
+        @return Returns the value of property_name from the metadata of exposure.
+        """
         try:
             value = exposure.getMetadata().get(property_name)
         except lsst.pex.exceptions.wrappers.NotFoundError as e:
@@ -154,6 +162,13 @@ class DcrModel:
 
     @staticmethod
     def _build_dataId(obsid_range, band):
+        """Construct a dataId dictionary for the butler to find a calexp."""
+        """
+        @param obsid_range: A single, list, or range of obsids. Interpreted as a range if two elements long,
+                            and as a list if more than two elements long.
+        @param band: name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
+        @return Return a dataId for the butler to use to load a calexp from a repository
+        """
         if hasattr(obsid_range, '__iter__'):
             if len(obsid_range) > 2:
                 if obsid_range[2] < obsid_range[0]:
@@ -172,6 +187,12 @@ class DcrModel:
 
     @staticmethod
     def _build_model_dataId(band, subfilter=None):
+        """Construct a dataId dictionary for the butler to find a dcrModel."""
+        """
+        @param band: name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
+        @param subfilter: DCR model index within the band.
+        @return Return a dataId for the butler to use to load a dcrModel from a repository
+        """
         if subfilter is None:
             dataId = {'filter': band, 'tract': 0, 'patch': '0'}
         else:
@@ -179,13 +200,27 @@ class DcrModel:
         return(dataId)
 
     @staticmethod
-    def _apply_dcr_kernel(dcr_kernel, model_vals, x_size=None, y_size=None):
+    def _apply_dcr_kernel(dcr_kernel, model_vals):
+        """Apply a DCR kernel to a matched region of model values to build template values in that region."""
+        """
+        @param dcr_kernel: A DCR kernel created with DcrCorrection._build_dcr_kernel()
+        @param model_vals: Model values returned by DcrModel._extract_model_vals()
+        @return Returns DCR-matched template values for pixels within the kernel footprint.
+        """
         template_vals = np.dot(dcr_kernel.T, model_vals)
-        return(np.reshape(template_vals, (y_size, x_size)))
+        size = int(np.sqrt(template_vals.shape))
+        return(np.reshape(template_vals, (size, size)))
 
     @staticmethod
     def _extract_model_vals(j, i, radius=None, model=None, weights=None):
         """Return all pixles within a radius of a given point as a 1D vector for each dcr plane model."""
+        """
+        @param j: Vertical pixel index
+        @param i: Horizontal pixel index
+        @param radius: radius, in pixels, of the box surrounding (j, i) to be extracted.
+        @param model: dcrModel read in with DcrModel._load_model or DcrCorrection
+        @return Returns the weighted model values within the range of pixels, formatted for _apply_dcr_kernel
+        """
         model_arr = []
         if weights is None:
             weights = np.ones_like(model)
@@ -199,10 +234,22 @@ class DcrModel:
 
     @staticmethod
     def _insert_template_vals(j, i, vals, template=None, weights=None, radius=None, kernel=None):
+        """Update a template image in place."""
+        """
+        @param j: Vertical pixel index
+        @param i: Horizontal pixel index
+        @param vals: DCR-corrected template values, from _apply_dcr_kernel
+        @param template: The existing template image, which will be modified in place.
+        @param weights: An array of weights, to be modified in place.
+        @param radius: radius, in pixels, of the box surrounding (j, i) to be updated.
+        @param kernel: [optional] Weight inserted template values with this kernel.
+        """
         if kernel is None:
-            kernel = 1.0
-        template[j - radius: j + radius + 1, i - radius: i + radius + 1] += vals*kernel
-        weights[j - radius: j + radius + 1, i - radius: i + radius + 1] += kernel
+            kernel_use = 1.0
+        else:
+            kernel_use = kernel
+        template[j - radius: j + radius + 1, i - radius: i + radius + 1] += vals*kernel_use
+        weights[j - radius: j + radius + 1, i - radius: i + radius + 1] += kernel_use
 
     # NOTE: This function was copied from StarFast.py
     @staticmethod
@@ -216,6 +263,8 @@ class DcrModel:
         @param use_lens: Flag, use LSST lens in filter throughput calculation?
         @param use_atmos: Flag, use standard atmosphere transmission in filter throughput calculation?
         @param use_filter: Flag, use LSST filters in filter throughput calculation?
+        @param use_detector: Flag, use LSST detector efficiency in filter throughput calculation?
+        @return Returns a bandpass object.
         """
         class BandpassMod(Bandpass):
             """Customize a few methods of the Bandpass class from sims_photUtils."""
@@ -276,6 +325,12 @@ class DcrModel:
     @staticmethod
     def _wavelength_iterator(bandpass, use_midpoint=False):
         """Define iterator to ensure that loops over wavelength are consistent."""
+        """
+        @param bandpass: Bandpass object returned by _load_bandpass
+        @param use_midpoint: if set, return the filter-weighted average wavelength.
+                             Otherwise, return a tuple of the starting and end wavelength.
+        @return Returns a generator that iterates through sub-bands of a given bandpass.
+        """
         wave_start = bandpass.wavelen_min
         while np.ceil(wave_start) < bandpass.wavelen_max:
             wave_end = wave_start + bandpass.wavelen_step
@@ -296,6 +351,7 @@ class DcrModel:
         @param pixel_scale: plate scale in arcsec/pixel
         @param elevation: elevation angle of the center of the image, in decimal degrees.
         @param azimuth: azimuth angle of the observation, in decimal degrees.
+        @return Returns a generator that produces named tuples containing the x and y offsets, in pixels.
         """
         zenith_angle = 90.0 - elevation
         wavelength_midpoint = bandpass.calc_eff_wavelen()
@@ -325,9 +381,15 @@ class DcrModel:
                 yield dcr(dx=dx, dy=dy)
 
     @staticmethod
-    def _calc_offset_phase(exposure=None, dcr_gen=None, x_size=None, y_size=None,
-                           return_matrix=False, **kwargs):
-        """Return the 2D FFT of an offset generated by _dcr_generator in the form (dx, dy)."""
+    def _calc_offset_phase(exposure=None, dcr_gen=None, x_size=None, y_size=None, **kwargs):
+        """Calculate the covariance matrix for a simple shift with no psf."""
+        """
+        @param exposure: An LSST exposure object. Only needed if x_size or y_size is not specified.
+        @param dcr_gen: A dcr generator of offsets, returned by _dcr_generator.
+        @param x_size: Width in pixels of the region to perform the calculation over. Default is entire image
+        @param y_size: Height in pixels of the region to perform the calculation over. Default is entire image
+        @return Returns the covariance matrix of an offset generated by _dcr_generator in the form (dx, dy)
+        """
         phase_arr = []
         if y_size is None:
             y_size = exposure.getHeight()
@@ -337,42 +399,48 @@ class DcrModel:
             kernel_x = _kernel_1d(dx, x_size)
             kernel_y = _kernel_1d(dy, y_size)
             kernel = np.einsum('i,j->ij', kernel_y, kernel_x)
-            if return_matrix:
-                shift_mat = np.zeros((x_size*y_size, x_size*y_size))
-                for j in range(y_size):
-                    for i in range(x_size):
-                        ij = i + j*x_size
-                        shift_mat[ij, :] = np.ravel(scipy_shift(kernel, (j - y_size//2, i - x_size//2),
-                                                    mode='constant', cval=0.0))
-                phase_arr.append(shift_mat)
-            else:
-                phase_arr.append(np.ravel(kernel))
+            shift_mat = np.zeros((x_size*y_size, x_size*y_size))
+            for j in range(y_size):
+                for i in range(x_size):
+                    ij = i + j*x_size
+                    shift_mat[ij, :] = np.ravel(scipy_shift(kernel, (j - y_size//2, i - x_size//2),
+                                                mode='constant', cval=0.0))
+            phase_arr.append(shift_mat)
         phase_arr = np.vstack(phase_arr)
         return phase_arr
 
     @staticmethod
-    def _calc_psf_kernel(exposure=None, dcr_gen=None, x_size=None, y_size=None,
-                         return_matrix=False, psf_img=None, **kwargs):
-
+    def _calc_psf_kernel(exposure=None, dcr_gen=None, x_size=None, y_size=None, psf_img=None, **kwargs):
+        """Calculate the covariance matrix for a DCR-shifted average psf."""
+        """
+        @param exposure: An LSST exposure object. Only needed if x_size or y_size is not specified.
+        @param dcr_gen: A dcr generator of offsets, returned by _dcr_generator.
+        @param x_size: Width in pixels of the region to perform the calculation over. Default is entire image
+        @param y_size: Height in pixels of the region to perform the calculation over. Default is entire image
+        @param psf_img: A fiducial psf to use for the calculation.
+        @return Returns the covariance matrix of a fiducial psf shifted by an offset from _dcr_generator
+        """
         if y_size is None:
             y_size = exposure.getHeight()
         if x_size is None:
             x_size = exposure.getWidth()
         psf_kernel_arr = []
         for dcr in dcr_gen:
-            psf_y_size, psf_x_size = psf_img.shape
-            psf = np.zeros((y_size, x_size), dtype=psf_img.dtype)
-            if return_matrix:
-                psf_kernel_arr.append(_calc_psf_kernel_subroutine(psf_img, dcr))
-            else:
-                psf_kernel_arr.append(np.ravel(psf))
+            psf_kernel_arr.append(_calc_psf_kernel_subroutine(psf_img, dcr))
 
         psf_kernel_arr = np.vstack(psf_kernel_arr)
         return psf_kernel_arr
 
     @staticmethod
-    def _calc_psf_kernel_full(exposure=None, dcr_gen=None, x_size=None, y_size=None,
-                              return_matrix=False, **kwargs):
+    def _calc_psf_kernel_full(exposure=None, dcr_gen=None, x_size=None, y_size=None, **kwargs):
+        """Calculate the covariance matrix for a DCR-shifted psf that is measured for each exposure."""
+        """
+        @param exposure: An LSST exposure object. Always needed for its psf.
+        @param dcr_gen: A dcr generator of offsets, returned by _dcr_generator.
+        @param x_size: Width in pixels of the region to perform the calculation over. Default is entire image
+        @param y_size: Height in pixels of the region to perform the calculation over. Default is entire image
+        @return Returns the covariance matrix of a measured psf shifted by an offset from _dcr_generator
+        """
         if y_size is None:
             y_size = exposure.getHeight()
         if x_size is None:
@@ -380,12 +448,8 @@ class DcrModel:
         psf_kernel_arr = []
         psf_img = exposure.getPsf().computeKernelImage().getArray()
         for dcr in dcr_gen:
-            kernel_single = _calc_psf_kernel_subroutine(psf_img, dcr, x_size=x_size, y_size=y_size)
-            if return_matrix:
-                psf_kernel_arr.append(kernel_single)
-            else:
-                kernel_single = kernel_single[y_size*x_size//2, :]
-                psf_kernel_arr.append(kernel_single)
+            kernel_single = _calc_psf_kernel_subroutine(psf_img, dcr)
+            psf_kernel_arr.append(kernel_single)
 
         psf_kernel_arr = np.vstack(psf_kernel_arr)
         return psf_kernel_arr
@@ -687,12 +751,14 @@ class DcrCorrection(DcrModel):
             # Taken at zenith, since we're solving for the shift and don't want to introduce any extra.
             dcr_genZ = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                                elevation=90., azimuth=az)
-            psf_mat.append(DcrModel._calc_psf_kernel_full(exposure=exp, dcr_gen=dcr_genZ, return_matrix=False,
-                                                          x_size=self.psf_size, y_size=self.psf_size))
+            psf_zen = DcrModel._calc_psf_kernel_full(exposure=exp, dcr_gen=dcr_genZ,
+                                                     x_size=self.psf_size, y_size=self.psf_size)
+            psf_npix = self.psf_size * self.psf_size
+            psf_mat.append(psf_zen[psf_npix//2::psf_npix, :])
             # Calculate the expected shift (with no psf) due to DCR
             dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                               elevation=el, azimuth=az)
-            dcr_shift.append(DcrModel._calc_offset_phase(exposure=exp, dcr_gen=dcr_gen, return_matrix=True,
+            dcr_shift.append(DcrModel._calc_offset_phase(exposure=exp, dcr_gen=dcr_gen,
                                                          x_size=self.psf_size, y_size=self.psf_size))
         psf_mat = np.sum(np.hstack(psf_mat), axis=0)
         dcr_shift = np.hstack(dcr_shift)
@@ -756,7 +822,7 @@ class DcrCorrection(DcrModel):
             az = self.azimuth_arr[img]
             dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                               elevation=el, azimuth=az)
-            make_kernel_kwargs = dict(exposure=exp, dcr_gen=dcr_gen, return_matrix=True, psf_img=self.psf_avg,
+            make_kernel_kwargs = dict(exposure=exp, dcr_gen=dcr_gen, psf_img=self.psf_avg,
                                       x_size=self.kernel_size, y_size=self.kernel_size)
             if self.use_psf:
                 if use_full:

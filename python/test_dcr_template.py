@@ -365,8 +365,24 @@ class DcrModelTestCase(DcrModelTestBase):
                                                   weights=self.dcrModel.weights)
         dcr_kernel = DcrModel._calc_offset_phase(self.exposure, self.dcr_gen, return_matrix=True,
                                                  x_size=self.kernel_size, y_size=self.kernel_size)
-        dcr_vals = DcrModel._apply_dcr_kernel(dcr_kernel, model_vals, x_size=self.kernel_size,
-                                              y_size=self.kernel_size)
+        dcr_vals = DcrModel._apply_dcr_kernel(dcr_kernel, model_vals)
+        dcr_ref = np.load(data_file)
+        self.assertFloatsEqual(dcr_vals, dcr_ref)
+
+    @unittest.expectedFailure
+    def test_apply_even_kernel(self):
+        """Only odd kernel sizes are currently supported."""
+        data_file = "test_data/dcr_kernel_even_vals.npy"
+        kernel_size = 6
+        i_use = self.size//2
+        j_use = self.size//2
+        radius = kernel_size//2
+        model_vals = DcrModel._extract_model_vals(j_use, i_use, radius=radius, model=self.dcrModel.model,
+                                                  weights=self.dcrModel.weights)
+        dcr_kernel = DcrModel._calc_offset_phase(self.exposure, self.dcr_gen, return_matrix=True,
+                                                 x_size=kernel_size, y_size=kernel_size)
+        dcr_vals = DcrModel._apply_dcr_kernel(dcr_kernel, model_vals)
+        np.save(data_file, dcr_vals)
         dcr_ref = np.load(data_file)
         self.assertFloatsEqual(dcr_vals, dcr_ref)
 
