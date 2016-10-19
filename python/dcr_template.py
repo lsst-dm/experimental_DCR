@@ -520,9 +520,9 @@ class DcrModel:
             exposure.setFilter(afwImage.Filter(self.photoParams.bandpass))
             # Need to reset afwImage.Filter to prevent an error in future calls to daf_persistence.Butler
             afwImage.FilterProperty_reset()
-        calib = afwImage.Calib()
-        calib.setExptime(self.photoParams.exptime)
-        exposure.setCalib(calib)
+        # calib = afwImage.Calib()
+        # calib.setExptime(self.photoParams.exptime)
+        # exposure.setCalib(calib)
         exposure.setPsf(self.psf)
         exposure.getMaskedImage().getImage().getArray()[:, :] = array
         if variance is None:
@@ -602,7 +602,7 @@ class DcrModel:
         self.use_psf = meta.get("PSF_FLAG")
         self.y_size, self.x_size = dcrModel.getDimensions()
         self.pixel_scale = self.wcs.pixelScale().asArcseconds()
-        exposure_time = dcrModel.getInfo().getCalib().getExptime()
+        exposure_time = dcrModel.getInfo().getVisitInfo().getExposureTime()
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
                                                  bandpass=band_name)
         self.bbox = dcrModel.getBBox()
@@ -660,7 +660,7 @@ class DcrCorrection(DcrModel):
 
         self.y_size, self.x_size = self.exposures[0].getDimensions()
         self.pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
-        exposure_time = calexp.getInfo().getCalib().getExptime()
+        exposure_time = calexp.getInfo().getVisitInfo().getExposureTime()
         self.bbox = calexp.getBBox()
         self.wcs = calexp.getWcs()
         self.psf_size = calexp.getPsf().computeKernelImage().getArray().shape[0]

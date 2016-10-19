@@ -146,7 +146,8 @@ class _BasicDcrCorrection(DcrCorrection):
         self.n_images = len(exposures)
         self.y_size, self.x_size = exposures[0].getDimensions()
         self.pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
-        exposure_time = calexp.getInfo().getCalib().getExptime()
+        exposure_time = 30.
+        # exposure_time = calexp.getInfo().getVisitInfo().getExposureTime()
         self.bbox = calexp.getBBox()
         self.wcs = calexp.getWcs()
         psf = calexp.getPsf().computeKernelImage().getArray()
