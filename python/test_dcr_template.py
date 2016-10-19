@@ -371,7 +371,7 @@ class DcrModelTestCase(DcrModelTestBase):
 
     @unittest.expectedFailure
     def test_apply_even_kernel(self):
-        """Only odd kernel sizes are currently supported."""
+        """Only odd kernel sizes are currently supported, so this test is expected to fail for now."""
         data_file = "test_data/dcr_kernel_even_vals.npy"
         kernel_size = 6
         i_use = self.size//2

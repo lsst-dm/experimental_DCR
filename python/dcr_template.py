@@ -455,10 +455,20 @@ class DcrModel:
         return psf_kernel_arr
 
     def _edge_test(self, j, i):
+        """Check if a given pixel is near the edge of the image."""
+        """NOTE! I expect this function to go away in production code. It exists to simplify other code
+                 that I don't want cluttered with these tests.
+                 Also, this is where the debugging option is checked, which speeds up imaging during tests
+                 by skipping ALL pixels outside of a narrow range.
+        @return Returns True if the pixel is near the edge or outside the debugging region if debug_mode 
+                is turned on, returns False otherwise.
+        """
+        # Debugging parameters. Only pixels in the range [y0: y0 + dy, x0: x0 + dx] will be used.
         x0 = 150
         dx = 65
         y0 = 480
         dy = 70
+
         pix_radius = self.kernel_size//2
 
         # Deal with the edges later. Probably by padding the image with zeroes.
@@ -488,6 +498,16 @@ class DcrModel:
     # NOTE: This function was copied from StarFast.py
     def _create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0, **kwargs):
         """Convert a numpy array to an LSST exposure, and units of electron counts."""
+        """
+        @param array: numpy array to use as the data for the exposure
+        @param variance: optional numpy array to use as the variance plane of the exposure.
+                         If None, the absoulte value of 'array' is used for the variance plane.
+        @param elevation: Elevation angle of the observation, in degrees.
+        @param azimuth: Azimuth angle of the observation, in degrees.
+        @param snap: snap ID to add to the metadata of the exposure. Required to mimic Phosim output.
+        @param **kwargs: Any additional keyword arguments will be added to the metadata of the exposure.
+        @return Returns an LSST exposure.
+        """
         exposure = afwImage.ExposureD(self.bbox)
         exposure.setWcs(self.wcs)
         # We need the filter name in the exposure metadata, and it can't just be set directly
@@ -526,12 +546,16 @@ class DcrModel:
         meta.add("AIRMASS", 1.0/np.sin(np.radians(elevation)))
         meta.add("ZENITH", 90 - elevation)
         meta.add("AZIMUTH", azimuth)
+        # Add all additional keyword arguments to the metadata.
         for add_item in kwargs:
             meta.add(add_item, kwargs[add_item])
         return exposure
 
     def export_model(self, model_repository=None):
         """Persist a DcrModel with metadata to a repository."""
+        """
+        @param model_repository: full path to the directory of the repository to save the dcrModel in.
+        """
         if model_repository is None:
             butler = self.butler
         else:
@@ -547,6 +571,12 @@ class DcrModel:
 
     def load_model(self, model_repository=None, band_name='g', **kwargs):
         """Depersist a DcrModel from a repository and set up the metadata."""
+        """
+        @param model_repository: full path to the directory of the repository to load the dcrModel from.
+        @param band_name: Common name of the filter used. For LSST, use u, g, r, i, z, or y
+        @param **kwargs: Any additional keyword arguments to pass to _load_bandpass
+        @return No return value, but sets up all the needed quantities such as the psf and bandpass objects.
+        """
         if model_repository is None:
             butler = self.butler
         else:
@@ -587,6 +617,10 @@ class DcrModel:
 
     def view_model(self, index):
         """Display a slice of the DcrModel with the proper weighting applied."""
+        """
+        @param index: sub-band slice of the DcrModel to extract
+        @return Returns a 2D numpy array.
+        """
         model = self.model[index, :, :].copy()
         weights = self.weights[index, :, :]
         model[weights > 0] /= weights[weights > 0]
