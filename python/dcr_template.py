@@ -493,7 +493,7 @@ class DcrModel:
 
     # NOTE: This function was copied from StarFast.py
     def create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0,
-                        exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanAngle, **kwargs):
+                        exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanFloat, **kwargs):
         """Convert a numpy array to an LSST exposure, and units of electron counts.
 
         @param array  numpy array to use as the data for the exposure
