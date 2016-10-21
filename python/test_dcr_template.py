@@ -106,9 +106,10 @@ class _BasicDcrCorrection(DcrCorrection):
         self.azimuth_arr = []
         self.airmass_arr = []
         for calexp in exposures:
-            self.elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
-            self.azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
-            self.airmass_arr.append(calexp.getMetadata().get("AIRMASS"))
+            visitInfo = calexp.getInfo().getVisitInfo()
+            self.elevation_arr.append(visitInfo.getBoresightAzAlt().getLatitude().asDegrees())
+            self.azimuth_arr.append(visitInfo.getBoresightAzAlt().getLongitude().asDegrees())
+            self.airmass_arr.append(visitInfo.getBoresightAirmass())
         self.exposures = exposures
 
         bandpass_init = basicBandpass(band_name=band_name, wavelength_step=None)
@@ -118,8 +119,7 @@ class _BasicDcrCorrection(DcrCorrection):
         self.n_images = len(exposures)
         self.y_size, self.x_size = exposures[0].getDimensions()
         self.pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
-        exposure_time = 30.  # seconds
-        # exposure_time = calexp.getInfo().getVisitInfo().getExposureTime()
+        exposure_time = visitInfo.getExposureTime()
         self.bbox = calexp.getBBox()
         self.wcs = calexp.getWcs()
         psf = calexp.getPsf().computeKernelImage().getArray()
