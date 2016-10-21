@@ -29,7 +29,10 @@ from scipy import constants
 from scipy.ndimage.interpolation import shift as scipy_shift
 import scipy.optimize.nnls
 
+from lsst.daf.base import DateTime
 import lsst.daf.persistence as daf_persistence
+from lsst.afw.coord import Coord, IcrsCoord, Observatory
+from lsst.afw.geom import Angle
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
@@ -42,8 +45,11 @@ from .calc_refractive_index import diff_refraction
 
 __all__ = ["DcrModel", "DcrCorrection"]
 
-lsst_lat = -30.244639
-lsst_lon = -70.749417
+nanFloat = float("nan")
+nanAngle = Angle(nanFloat)
+lsst_lat = Angle(np.radians(-30.244639))
+lsst_lon = Angle(np.radians(-70.749417))
+lsst_alt = 2663.
 
 
 class DcrModel:
@@ -486,16 +492,18 @@ class DcrModel:
         return edge
 
     # NOTE: This function was copied from StarFast.py
-    def create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0, **kwargs):
-        """!Convert a numpy array to an LSST exposure, and units of electron counts.
+    def create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0,
+                        exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanAngle, **kwargs):
+        """Convert a numpy array to an LSST exposure, and units of electron counts.
 
         @param array  numpy array to use as the data for the exposure
         @param variance  optional numpy array to use as the variance plane of the exposure.
                          If None, the absoulte value of 'array' is used for the variance plane.
-        @param elevation  Elevation angle of the observation, in degrees.
-        @param azimuth  Azimuth angle of the observation, in degrees.
-        @param snap  snap ID to add to the metadata of the exposure. Required to mimic Phosim output.
-        @param **kwargs  Any additional keyword arguments will be added to the metadata of the exposure.
+        @param elevation: Elevation angle of the observation, in degrees.
+        @param azimuth: Azimuth angle of the observation, in degrees.
+        @param snap: snap ID to add to the metadata of the exposure. Required to mimic Phosim output.
+        @param exposureId: observation ID of the exposure, a long int.
+        @param **kwargs: Any additional keyword arguments will be added to the metadata of the exposure.
         @return Returns an LSST exposure.
         """
         exposure = afwImage.ExposureD(self.bbox)
@@ -510,19 +518,18 @@ class DcrModel:
             exposure.setFilter(afwImage.Filter(self.photoParams.bandpass))
             # Need to reset afwImage.Filter to prevent an error in future calls to daf_persistence.Butler
             afwImage.FilterProperty_reset()
-        # calib = afwImage.Calib()
-        # calib.setExptime(self.photoParams.exptime)
-        # exposure.setCalib(calib)
         exposure.setPsf(self.psf)
         exposure.getMaskedImage().getImage().getArray()[:, :] = array
         if variance is None:
             variance = np.abs(array)
         exposure.getMaskedImage().getVariance().getArray()[:, :] = variance
 
-        exposure.getMaskedImage().getMask().getArray()[:, :] = self.mask
+        if self.mask is not None:
+            exposure.getMaskedImage().getMask().getArray()[:, :] = self.mask
 
         hour_angle = (90.0 - elevation)*np.cos(np.radians(azimuth))/15.0
-        mjd = 59000.0 + (lsst_lat/15.0 - hour_angle)/24.0
+        mjd = 59000.0 + (lsst_lat.asDegrees()/15.0 - hour_angle)/24.0
+        airmass = 1.0/np.sin(np.radians(elevation))
         meta = exposure.getMetadata()
         meta.add("CHIPID", "R22_S11")
         # Required! Phosim output stores the snap ID in "OUTFILE" as the last three characters in a string.
@@ -533,12 +540,25 @@ class DcrModel:
 
         meta.add("EXTTYPE", "IMAGE")
         meta.add("EXPTIME", 30.0)
-        meta.add("AIRMASS", 1.0/np.sin(np.radians(elevation)))
+        meta.add("AIRMASS", airmass)
         meta.add("ZENITH", 90 - elevation)
         meta.add("AZIMUTH", azimuth)
         # Add all additional keyword arguments to the metadata.
         for add_item in kwargs:
             meta.add(add_item, kwargs[add_item])
+
+        visitInfo = afwImage.makeVisitInfo(
+            exposureId=int(exposureId),
+            exposureTime=30.0,
+            darkTime=30.0,
+            date=DateTime(mjd),
+            ut1=mjd,
+            boresightRaDec=IcrsCoord(ra, dec),
+            boresightAzAlt=Coord(Angle(np.radians(azimuth)), Angle(np.radians(elevation))),
+            boresightAirmass=airmass,
+            boresightRotAngle=Angle(np.radians(boresightRotAngle)),
+            observatory=Observatory(lsst_lon, lsst_lat, lsst_alt),)
+        exposure.getInfo().setVisitInfo(visitInfo)
         return exposure
 
     def export_model(self, model_repository=None):
