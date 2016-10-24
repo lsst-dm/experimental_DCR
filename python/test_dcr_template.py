@@ -24,6 +24,7 @@ import numpy as np
 
 import lsst.afw.coord as afwCoord
 import lsst.afw.geom as afwGeom
+from lsst.afw.geom import Angle
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
@@ -107,8 +108,8 @@ class _BasicDcrCorrection(DcrCorrection):
         self.airmass_arr = []
         for calexp in exposures:
             visitInfo = calexp.getInfo().getVisitInfo()
-            self.elevation_arr.append(visitInfo.getBoresightAzAlt().getLatitude().asDegrees())
-            self.azimuth_arr.append(visitInfo.getBoresightAzAlt().getLongitude().asDegrees())
+            self.elevation_arr.append(visitInfo.getBoresightAzAlt().getLatitude())
+            self.azimuth_arr.append(visitInfo.getBoresightAzAlt().getLongitude())
             self.airmass_arr.append(visitInfo.getBoresightAirmass())
         self.exposures = exposures
 
@@ -129,9 +130,10 @@ class _BasicDcrCorrection(DcrCorrection):
         self.kernel_size = kernel_size
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
                                                  bandpass=band_name)
-        elevation_min = np.min(self.elevation_arr) - 5.  # Calculate slightly worse DCR than maximum.
+        # Calculate slightly worse DCR than maximum.
+        elevation_min = np.min(self.elevation_arr) - Angle(np.radians(5.))
         dcr_test = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                          elevation=elevation_min, azimuth=0.)
+                                          elevation=elevation_min, azimuth=Angle(0.))
         self.dcr_max = int(np.ceil(np.max(dcr_test.next())) + 1)
         if kernel_size is None:
             self.kernel_size = 2*self.dcr_max + 1
@@ -155,8 +157,8 @@ class DCRTestCase(lsst.utils.tests.TestCase):
 
     def test_dcr_generator(self):
         """Check that _dcr_generator returns a generator with n_step iterations, and (0,0) at zenith."""
-        azimuth = 0.0
-        elevation = 90.0
+        azimuth = Angle(0.0)
+        elevation = Angle(np.pi/2)
         zenith_dcr = 0.
         bp = self.bandpass
         dcr_gen = DcrModel.dcr_generator(bp, pixel_scale=self.pixel_scale,
@@ -174,8 +176,8 @@ class DCRTestCase(lsst.utils.tests.TestCase):
 
     def test_dcr_values(self):
         """Check DCR against pre-computed values."""
-        azimuth = 0.0
-        elevation = 50.0
+        azimuth = Angle(0.)
+        elevation = Angle(np.radians(50.0))
         dcr_ref_vals = [(1.9847367904770623, 1.6467981843302726),
                         (1.6467981843302726, 1.3341803407311699),
                         (1.3341803407311699, 1.0443731947908652),
@@ -230,8 +232,8 @@ class DcrModelTestBase:
         self.array = np.random.random(size=(self.size, self.size))
         self.dcrModel = _BasicDcrModel(size=self.size, kernel_size=self.kernel_size, band_name=band_name,
                                        n_step=n_step, pixel_scale=pixel_scale)
-        azimuth = 0.0
-        elevation = 70.0
+        azimuth = Angle(np.radians(0.0))
+        elevation = Angle(np.radians(70.0))
         self.dcr_gen = DcrModel.dcr_generator(self.dcrModel.bandpass, pixel_scale=self.dcrModel.pixel_scale,
                                               elevation=elevation, azimuth=azimuth, use_midpoint=False)
         self.exposure = self.dcrModel.create_exposure(self.array, variance=None, elevation=elevation,
@@ -402,11 +404,11 @@ class PersistanceTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
     def test_generate_template(self):
         """Compare the result of generate_templates_from_model to previously computed values."""
         data_file = "test_data/template.npy"
-        elevation_arr = [50., 70., 85.]
-        az = 0.
+        elevation_arr = np.radians([50., 70., 85.])
+        az = Angle(0.)
         # Note that self.array is randomly generated each call. That's okay, because the template should
         # depend only on the metadata.
-        exposures = [self.dcrModel.create_exposure(self.array, variance=None, elevation=el, azimuth=az)
+        exposures = [self.dcrModel.create_exposure(self.array, variance=None, elevation=Angle(el), azimuth=az)
                      for el in elevation_arr]
         model_gen = self.dcrModel.generate_templates_from_model(exposures=exposures, kernel_size=5)
         model_test = [model for model in model_gen]
@@ -437,8 +439,8 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
             # NOTE that this array is randomly generated for each instance.
             array = np.random.random(size=(self.size, self.size))*1000.
             self.ref_vals.append(array)
-            el = np.random.random()*50. + 40.
-            az = np.random.random()*360.
+            el = Angle(np.radians(np.random.random()*50. + 40.))
+            az = Angle(np.random.random()*2*np.pi)
             exposures.append(dcrModel.create_exposure(array, variance=None, elevation=el, azimuth=az))
         self.dcrCorr = _BasicDcrCorrection(kernel_size=self.kernel_size, band_name=band_name,
                                            n_step=self.n_step, exposures=exposures, use_psf=use_psf)
