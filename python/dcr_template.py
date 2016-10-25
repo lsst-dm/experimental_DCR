@@ -109,17 +109,17 @@ class DcrModel:
             el = 90 - calexp.getMetadata().get("ZENITH")
             az = calexp.getMetadata().get("AZIMUTH")
             pix = self.photoParams.platescale
-            dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=pix, elevation=el, azimuth=az)
+            dcr_gen = self.dcr_generator(self.bandpass, pixel_scale=pix, elevation=el, azimuth=az)
 
             make_kernel_kwargs = dict(exposure=calexp, dcr_gen=dcr_gen,
                                       x_size=self.kernel_size, y_size=self.kernel_size)
             if self.use_psf:
                 if use_full:
-                    dcr_kernel = self._calc_psf_kernel_full(psf_img=self.psf_avg, **make_kernel_kwargs)
+                    dcr_kernel = self.calc_psf_kernel_full(psf_img=self.psf_avg, **make_kernel_kwargs)
                 else:
-                    dcr_kernel = self._calc_psf_kernel(psf_img=self.psf_avg, **make_kernel_kwargs)
+                    dcr_kernel = self.calc_psf_kernel(psf_img=self.psf_avg, **make_kernel_kwargs)
             else:
-                dcr_kernel = self._calc_offset_phase(**make_kernel_kwargs)
+                dcr_kernel = self.calc_offset_phase(**make_kernel_kwargs)
 
             template = np.zeros((self.y_size, self.x_size))
             weights = np.zeros((self.y_size, self.x_size))
@@ -142,8 +142,8 @@ class DcrModel:
                 template += rand_gen.normal(scale=np.sqrt(variance_level), size=template.shape)
 
             dataId_out = dataId_out_arr[exp_i]
-            exposure = self._create_exposure(template, variance=np.abs(template), snap=0,
-                                             elevation=el, azimuth=az, obsid=dataId_out['visit'])
+            exposure = self.create_exposure(template, variance=np.abs(template), snap=0,
+                                            elevation=el, azimuth=az, obsid=dataId_out['visit'])
             if output_repository is not None:
                 butler_out.put(exposure, "calexp", dataId=dataId_out)
             yield exposure
@@ -201,7 +201,7 @@ class DcrModel:
     def _apply_dcr_kernel(dcr_kernel, model_vals):
         """!Apply a DCR kernel to a matched region of model values to build template values in that region.
 
-        @param dcr_kernel  A DCR kernel created with DcrCorrection._build_dcr_kernel()
+        @param dcr_kernel  A DCR kernel created with DcrCorrection.build_dcr_kernel()
         @param model_vals  Model values returned by DcrModel._extract_model_vals()
         @return Returns DCR-matched template values for pixels within the kernel footprint.
         """
@@ -251,8 +251,8 @@ class DcrModel:
 
     # NOTE: This function was copied from StarFast.py
     @staticmethod
-    def _load_bandpass(band_name='g', wavelength_step=None, use_mirror=True, use_lens=True, use_atmos=True,
-                       use_filter=True, use_detector=True, **kwargs):
+    def load_bandpass(band_name='g', wavelength_step=None, use_mirror=True, use_lens=True, use_atmos=True,
+                      use_filter=True, use_detector=True, **kwargs):
         """!Load in Bandpass object from sims_photUtils.
 
         @param band_name  Common name of the filter used. For LSST, use u, g, r, i, z, or y
@@ -324,7 +324,7 @@ class DcrModel:
     def _wavelength_iterator(bandpass, use_midpoint=False):
         """!Define iterator to ensure that loops over wavelength are consistent.
 
-        @param bandpass  Bandpass object returned by _load_bandpass
+        @param bandpass  Bandpass object returned by load_bandpass
         @param use_midpoint  if set, return the filter-weighted average wavelength.
                              Otherwise, return a tuple of the starting and end wavelength.
         @return Returns a generator that iterates through sub-bands of a given bandpass.
@@ -342,7 +342,7 @@ class DcrModel:
 
     # NOTE: This function was modified from StarFast.py
     @staticmethod
-    def _dcr_generator(bandpass, pixel_scale=None, elevation=50.0, azimuth=0.0, **kwargs):
+    def dcr_generator(bandpass, pixel_scale=None, elevation=50.0, azimuth=0.0, **kwargs):
         """!Call the functions that compute Differential Chromatic Refraction (relative to mid-band).
 
         @param bandpass  bandpass object created with load_bandpass
@@ -370,14 +370,14 @@ class DcrModel:
             yield dcr(dx=dx, dy=dy)
 
     @staticmethod
-    def _calc_offset_phase(exposure=None, dcr_gen=None, x_size=None, y_size=None, **kwargs):
+    def calc_offset_phase(exposure=None, dcr_gen=None, x_size=None, y_size=None, **kwargs):
         """!Calculate the covariance matrix for a simple shift with no psf.
 
         @param exposure  An LSST exposure object. Only needed if x_size or y_size is not specified.
-        @param dcr_gen  A dcr generator of offsets, returned by _dcr_generator.
+        @param dcr_gen  A dcr generator of offsets, returned by dcr_generator.
         @param x_size  Width in pixels of the region to perform the calculation over. Default is entire image
         @param y_size  Height in pixels of the region to perform the calculation over. Default is entire image
-        @return Returns the covariance matrix of an offset generated by _dcr_generator in the form (dx, dy)
+        @return Returns the covariance matrix of an offset generated by dcr_generator in the form (dx, dy)
         """
         phase_arr = []
         if y_size is None:
@@ -399,15 +399,15 @@ class DcrModel:
         return phase_arr
 
     @staticmethod
-    def _calc_psf_kernel(exposure=None, dcr_gen=None, x_size=None, y_size=None, psf_img=None, **kwargs):
+    def calc_psf_kernel(exposure=None, dcr_gen=None, x_size=None, y_size=None, psf_img=None, **kwargs):
         """!Calculate the covariance matrix for a DCR-shifted average psf.
 
         @param exposure  An LSST exposure object. Only needed if x_size or y_size is not specified.
-        @param dcr_gen  A dcr generator of offsets, returned by _dcr_generator.
+        @param dcr_gen  A dcr generator of offsets, returned by dcr_generator.
         @param x_size  Width in pixels of the region to perform the calculation over. Default is entire image
         @param y_size  Height in pixels of the region to perform the calculation over. Default is entire image
         @param psf_img  A fiducial psf to use for the calculation.
-        @return Returns the covariance matrix of a fiducial psf shifted by an offset from _dcr_generator
+        @return Returns the covariance matrix of a fiducial psf shifted by an offset from dcr_generator
         """
         if y_size is None:
             y_size = exposure.getHeight()
@@ -421,14 +421,14 @@ class DcrModel:
         return psf_kernel_arr
 
     @staticmethod
-    def _calc_psf_kernel_full(exposure=None, dcr_gen=None, x_size=None, y_size=None, **kwargs):
+    def calc_psf_kernel_full(exposure=None, dcr_gen=None, x_size=None, y_size=None, **kwargs):
         """!Calculate the covariance matrix for a DCR-shifted psf that is measured for each exposure.
 
         @param exposure  An LSST exposure object. Always needed for its psf.
-        @param dcr_gen  A dcr generator of offsets, returned by _dcr_generator.
+        @param dcr_gen  A dcr generator of offsets, returned by dcr_generator.
         @param x_size  Width in pixels of the region to perform the calculation over. Default is entire image
         @param y_size  Height in pixels of the region to perform the calculation over. Default is entire image
-        @return Returns the covariance matrix of a measured psf shifted by an offset from _dcr_generator
+        @return Returns the covariance matrix of a measured psf shifted by an offset from dcr_generator
         """
         if y_size is None:
             y_size = exposure.getHeight()
@@ -486,7 +486,7 @@ class DcrModel:
         return edge
 
     # NOTE: This function was copied from StarFast.py
-    def _create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0, **kwargs):
+    def create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0, **kwargs):
         """!Convert a numpy array to an LSST exposure, and units of electron counts.
 
         @param array  numpy array to use as the data for the exposure
@@ -553,10 +553,10 @@ class DcrModel:
         wave_gen = DcrModel._wavelength_iterator(self.bandpass, use_midpoint=False)
         for f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
-            exp = self._create_exposure(self.model[f, :, :], variance=self.weights[f, :, :],
-                                        elevation=90., azimuth=0., ksupport=self.kernel_size,
-                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
-                                        wavestep=self.bandpass.wavelen_step, psf_flag=self.use_psf)
+            exp = self.create_exposure(self.model[f, :, :], variance=self.weights[f, :, :],
+                                       elevation=90., azimuth=0., ksupport=self.kernel_size,
+                                       subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
+                                       wavestep=self.bandpass.wavelen_step, psf_flag=self.use_psf)
             butler.put(exp, "dcrModel", dataId=self._build_model_dataId(self.photoParams.bandpass, f))
 
     def load_model(self, model_repository=None, band_name='g', **kwargs):
@@ -564,7 +564,7 @@ class DcrModel:
 
         @param model_repository  full path to the directory of the repository to load the dcrModel from.
         @param band_name  Common name of the filter used. For LSST, use u, g, r, i, z, or y
-        @param **kwargs  Any additional keyword arguments to pass to _load_bandpass
+        @param **kwargs  Any additional keyword arguments to pass to load_bandpass
         @return No return value, but sets up all the needed quantities such as the psf and bandpass objects.
         """
         if model_repository is None:
@@ -597,7 +597,7 @@ class DcrModel:
                                                  bandpass=band_name)
         self.bbox = dcrModel.getBBox()
         self.kernel_size = meta.get("KSUPPORT")
-        self.bandpass = DcrModel._load_bandpass(band_name=band_name, wavelength_step=wave_step, **kwargs)
+        self.bandpass = DcrModel.load_bandpass(band_name=band_name, wavelength_step=wave_step, **kwargs)
 
         self.psf = dcrModel.getPsf()
         self.psf_size = self.psf.computeKernelImage().getArray().shape[0]
@@ -671,16 +671,16 @@ class DcrCorrection(DcrModel):
         self.mask = None
         self._combine_masks()
 
-        bandpass = DcrModel._load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
+        bandpass = DcrModel.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
         if n_step is not None:
             wavelength_step = (bandpass.wavelen_max - bandpass.wavelen_min) / n_step
-            bandpass = DcrModel._load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
+            bandpass = DcrModel.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
         else:
             n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
         if n_step >= self.n_images:
             print("Warning! Under-constrained system. Reducing number of frequency planes.")
             wavelength_step *= n_step / self.n_images
-            bandpass = DcrModel._load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
+            bandpass = DcrModel.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
             n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
         self.n_step = n_step
         self.bandpass = bandpass
@@ -688,8 +688,8 @@ class DcrCorrection(DcrModel):
                                                  bandpass=band_name)
 
         elevation_min = np.min(self.elevation_arr) - 5.  # Calculate slightly worse DCR than maximum.
-        dcr_test = DcrModel._dcr_generator(bandpass, pixel_scale=self.pixel_scale,
-                                           elevation=elevation_min, azimuth=0.)
+        dcr_test = DcrModel.dcr_generator(bandpass, pixel_scale=self.pixel_scale,
+                                          elevation=elevation_min, azimuth=0.)
         self.dcr_max = int(np.ceil(np.max(dcr_test.next())) + 1)
         if kernel_size is None:
             kernel_size = 2*self.dcr_max + 1
@@ -698,13 +698,13 @@ class DcrCorrection(DcrModel):
         self.kernel_size = int(kernel_size)
         self.use_psf = bool(use_psf)
         self.debug = bool(debug_mode)
-        self.regularize = self._build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
-                                                     n_step=self.n_step, frequency_regularization=True)
-        self._calc_psf_model()
+        self.regularize = self.build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
+                                                    n_step=self.n_step, frequency_regularization=True)
+        self.calc_psf_model()
 
     @staticmethod
-    def _build_regularization(x_size=None, y_size=None, n_step=None, spatial_regularization=False,
-                              frequency_regularization=False, frequency_second_regularization=False):
+    def build_regularization(x_size=None, y_size=None, n_step=None, spatial_regularization=False,
+                             frequency_regularization=False, frequency_second_regularization=False):
         """!Regularization adapted from Nate Lust's DCR Demo iPython notebook.
 
         Calculate a difference matrix for regularization as if each wavelength were a pixel, then scale
@@ -798,7 +798,7 @@ class DcrCorrection(DcrModel):
             self.model[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += vals*psf_use
             self.weights[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += psf_use
 
-    def _calc_psf_model(self):
+    def calc_psf_model(self):
         """!Calculate the fiducial psf from a givedn set of exposures, accounting for DCR."""
         psf_mat = []
         dcr_shift = []
@@ -808,23 +808,23 @@ class DcrCorrection(DcrModel):
 
             # Use the measured PSF as the solution of the shifted PSFs.
             # Taken at zenith, since we're solving for the shift and don't want to introduce any extra.
-            dcr_genZ = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                               elevation=90., azimuth=az)
-            psf_zen = DcrModel._calc_psf_kernel_full(exposure=exp, dcr_gen=dcr_genZ,
-                                                     x_size=self.psf_size, y_size=self.psf_size)
-            # _calc_psf_kernel_full returns the full covariance matrix of the psf, but we only want
+            dcr_genZ = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
+                                              elevation=90., azimuth=az)
+            psf_zen = DcrModel.calc_psf_kernel_full(exposure=exp, dcr_gen=dcr_genZ,
+                                                    x_size=self.psf_size, y_size=self.psf_size)
+            # calc_psf_kernel_full returns the full covariance matrix of the psf, but we only want
             #   the covariance of the center pixel.
             psf_npix = self.psf_size * self.psf_size
             psf_mat.append(psf_zen[psf_npix//2::psf_npix, :])
             # Calculate the expected shift (with no psf) due to DCR
-            dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                              elevation=el, azimuth=az)
-            dcr_shift.append(DcrModel._calc_offset_phase(exposure=exp, dcr_gen=dcr_gen,
-                                                         x_size=self.psf_size, y_size=self.psf_size))
+            dcr_gen = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
+                                             elevation=el, azimuth=az)
+            dcr_shift.append(DcrModel.calc_offset_phase(exposure=exp, dcr_gen=dcr_gen,
+                                                        x_size=self.psf_size, y_size=self.psf_size))
         psf_mat = np.sum(np.hstack(psf_mat), axis=0)
         dcr_shift = np.hstack(dcr_shift)
-        regularize_psf = self._build_regularization(x_size=self.psf_size, y_size=self.psf_size,
-                                                    n_step=self.n_step, frequency_regularization=True)
+        regularize_psf = self.build_regularization(x_size=self.psf_size, y_size=self.psf_size,
+                                                   n_step=self.n_step, frequency_regularization=True)
         regularize_dim = regularize_psf.shape
         # Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images
         vals_use = np.append(psf_mat, np.zeros(regularize_dim[1]))
@@ -853,7 +853,7 @@ class DcrCorrection(DcrModel):
                                     of detected sources.
         @param verbose  Flag, set to True to print progress messages.
         """
-        dcr_kernel = self._build_dcr_kernel(use_full=use_full)
+        dcr_kernel = self.build_dcr_kernel(use_full=use_full)
         self.model = np.zeros((self.n_step, self.y_size, self.x_size))
         self.weights = np.zeros_like(self.model)
         pix_radius = self.kernel_size//2
@@ -884,12 +884,12 @@ class DcrCorrection(DcrModel):
                         continue
                 img_vals = self._extract_image_vals(j, i, radius=pix_radius)
 
-                model_vals = self._solve_model(dcr_kernel, img_vals, use_regularization=use_regularization)
+                model_vals = self.solve_model(dcr_kernel, img_vals, use_regularization=use_regularization)
                 self._insert_model_vals(j, i, model_vals, radius=pix_radius)
         if verbose:
             print("\nFinished building model.")
 
-    def _build_dcr_kernel(self, use_full=None):
+    def build_dcr_kernel(self, use_full=None):
         """!Calculate the DCR covariance matrix for a set of exposures.
 
         @param use_full  Flag, set to True to use measured PSF for each exposure,
@@ -899,17 +899,17 @@ class DcrCorrection(DcrModel):
         for img, exp in enumerate(self.exposures):
             el = self.elevation_arr[img]
             az = self.azimuth_arr[img]
-            dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                              elevation=el, azimuth=az)
+            dcr_gen = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
+                                             elevation=el, azimuth=az)
             make_kernel_kwargs = dict(exposure=exp, dcr_gen=dcr_gen, psf_img=self.psf_avg,
                                       x_size=self.kernel_size, y_size=self.kernel_size)
             if self.use_psf:
                 if use_full:
-                    dcr_kernel.append(DcrModel._calc_psf_kernel_full(**make_kernel_kwargs))
+                    dcr_kernel.append(DcrModel.calc_psf_kernel_full(**make_kernel_kwargs))
                 else:
-                    dcr_kernel.append(DcrModel._calc_psf_kernel(**make_kernel_kwargs))
+                    dcr_kernel.append(DcrModel.calc_psf_kernel(**make_kernel_kwargs))
             else:
-                dcr_kernel.append(DcrModel._calc_offset_phase(**make_kernel_kwargs))
+                dcr_kernel.append(DcrModel.calc_offset_phase(**make_kernel_kwargs))
         dcr_kernel = np.hstack(dcr_kernel)
         return dcr_kernel
 
@@ -924,7 +924,7 @@ class DcrCorrection(DcrModel):
             else:
                 self.mask = np.bitwise_or(self.mask, mask)
 
-    def _solve_model(self, dcr_kernel, img_vals, use_regularization=True):
+    def solve_model(self, dcr_kernel, img_vals, use_regularization=True):
         """!Wrapper to call a fitter using a given covariance matrix, image values, and any regularization.
 
         @param dcr_kernel  The covariance matrix describing the effect of DCR
@@ -988,7 +988,7 @@ def _kernel_1d(offset, size):
     """!Pre-compute the 1D sinc function values along each axis.
 
     @param offset  tuple of start/end pixel offsets of dft locations along single axis (either x or y)
-    @params size  dimension in pixels of the given axis
+    @params size dimension in pixels of the given axis
     """
     # Calculate the kernel as a simple numerical integration over the width of the offset with n_substep steps
     n_substep = 10
