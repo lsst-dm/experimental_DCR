@@ -32,6 +32,7 @@ import scipy.optimize.nnls
 from lsst.daf.base import DateTime
 import lsst.daf.persistence as daf_persistence
 from lsst.afw.coord import Coord, IcrsCoord, Observatory
+import lsst.afw.geom as afwGeom
 from lsst.afw.geom import Angle
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
@@ -112,12 +113,12 @@ class DcrModel:
         if kernel_size is not None:
             self.kernel_size = kernel_size
 
+        pixel_scale = self.photoParams.platescale
         for exp_i, calexp in enumerate(exposures):
             visitInfo = calexp.getInfo().getVisitInfo()
             el = visitInfo.getBoresightAzAlt().getLatitude()
             az = visitInfo.getBoresightAzAlt().getLongitude()
-            pix = self.photoParams.platescale
-            dcr_gen = self.dcr_generator(self.bandpass, pixel_scale=pix, elevation=el, azimuth=az)
+            dcr_gen = self.dcr_generator(self.bandpass, pixel_scale=pixel_scale, elevation=el, azimuth=az)
 
             make_kernel_kwargs = dict(exposure=calexp, dcr_gen=dcr_gen,
                                       x_size=self.kernel_size, y_size=self.kernel_size)
@@ -204,6 +205,17 @@ class DcrModel:
         else:
             dataId = {'filter': band, 'tract': 0, 'patch': '0', 'subfilter': subfilter}
         return(dataId)
+
+    @staticmethod
+    def create_wcs(bbox=None, pixel_scale=None, ra=nanAngle, dec=nanAngle, sky_rotation=nanAngle):
+        """Create a wcs (coordinate system)."""
+        crval = IcrsCoord(ra, dec)
+        crpix = afwGeom.Box2D(bbox).getCenter()
+        cd1_1 = (pixel_scale * afwGeom.arcseconds * np.cos(sky_rotation.asRadians())).asDegrees()
+        cd1_2 = (-pixel_scale * afwGeom.arcseconds * np.sin(sky_rotation.asRadians())).asDegrees()
+        cd2_1 = (pixel_scale * afwGeom.arcseconds * np.sin(sky_rotation.asRadians())).asDegrees()
+        cd2_2 = (pixel_scale * afwGeom.arcseconds * np.cos(sky_rotation.asRadians())).asDegrees()
+        return(afwImage.makeWcs(crval, crpix, cd1_1, cd1_2, cd2_1, cd2_2))
 
     @staticmethod
     def _apply_dcr_kernel(dcr_kernel, model_vals):

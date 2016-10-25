@@ -22,7 +22,6 @@
 from __future__ import print_function, division, absolute_import
 import numpy as np
 
-import lsst.afw.coord as afwCoord
 import lsst.afw.geom as afwGeom
 from lsst.afw.geom import Angle
 import lsst.afw.image as afwImage
@@ -41,17 +40,6 @@ def basicBandpass(band_name='g', wavelength_step=1):
                                       use_mirror=False, use_lens=False, use_atmos=False,
                                       use_filter=False, use_detector=False)
     return(bandpass)
-
-
-def _create_wcs(bbox=None, pixel_scale=None, ra=None, dec=None, sky_rotation=None):
-    """Create a wcs (coordinate system)."""
-    crval = afwCoord.IcrsCoord(ra * afwGeom.degrees, dec * afwGeom.degrees)
-    crpix = afwGeom.Box2D(bbox).getCenter()
-    cd1_1 = (pixel_scale * afwGeom.arcseconds * np.cos(np.radians(sky_rotation))).asDegrees()
-    cd1_2 = (-pixel_scale * afwGeom.arcseconds * np.sin(np.radians(sky_rotation))).asDegrees()
-    cd2_1 = (pixel_scale * afwGeom.arcseconds * np.sin(np.radians(sky_rotation))).asDegrees()
-    cd2_2 = (pixel_scale * afwGeom.arcseconds * np.cos(np.radians(sky_rotation))).asDegrees()
-    return(afwImage.makeWcs(crval, crpix, cd1_1, cd1_2, cd2_1, cd2_2))
 
 
 class _BasicDcrModel(DcrModel):
@@ -81,7 +69,8 @@ class _BasicDcrModel(DcrModel):
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=pixel_scale,
                                                  bandpass=band_name)
         self.bbox = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(size, size))
-        self.wcs = _create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=0., dec=0., sky_rotation=0.)
+        self.wcs = DcrModel.create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=Angle(0.),
+                                       dec=Angle(0.), sky_rotation=Angle(0.))
 
         psf_vals = np.zeros((kernel_size, kernel_size))
         psf_vals[kernel_size//2 - 1: kernel_size//2 + 1,
