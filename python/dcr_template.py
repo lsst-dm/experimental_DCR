@@ -351,7 +351,7 @@ class DcrModel:
     # NOTE: This function was modified from StarFast.py
     @staticmethod
     def dcr_generator(bandpass, pixel_scale=None, elevation=Angle(np.radians(50.0)),
-                    azimuth=Angle(np.radians(0.0)), use_midpoint=False, **kwargs):
+                      azimuth=Angle(np.radians(0.0)), use_midpoint=False, **kwargs):
         """!Call the functions that compute Differential Chromatic Refraction (relative to mid-band).
 
         @param bandpass  bandpass object created with load_bandpass
@@ -576,17 +576,10 @@ class DcrModel:
         wave_gen = DcrModel._wavelength_iterator(self.bandpass, use_midpoint=False)
         for f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
-<<<<<<< 8198e57dbec3be6c56b1335ea9e2f8762fd0a926
             exp = self.create_exposure(self.model[f, :, :], variance=self.weights[f, :, :],
-                                       elevation=90., azimuth=0., ksupport=self.kernel_size,
+                                       elevation=Angle(np.pi/2), azimuth=Angle(0), ksupport=self.kernel_size,
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
                                        wavestep=self.bandpass.wavelen_step, psf_flag=self.use_psf)
-=======
-            exp = self._create_exposure(self.model[f, :, :], variance=self.weights[f, :, :],
-                                        elevation=Angle(np.pi/2), azimuth=Angle(0), ksupport=self.kernel_size,
-                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
-                                        wavestep=self.bandpass.wavelen_step, psf_flag=self.use_psf)
->>>>>>> Pass elevation and azimuth as Angles with units, not just as floats.
             butler.put(exp, "dcrModel", dataId=self._build_model_dataId(self.photoParams.bandpass, f))
 
     def load_model(self, model_repository=None, band_name='g', **kwargs):
@@ -687,17 +680,11 @@ class DcrCorrection(DcrModel):
         self.azimuth_arr = np.zeros(self.n_images, dtype=np.float64)
         self.airmass_arr = np.zeros(self.n_images, dtype=np.float64)
         for i, calexp in enumerate(self.exposures):
-<<<<<<< 8198e57dbec3be6c56b1335ea9e2f8762fd0a926
-            self.elevation_arr[i] = 90 - calexp.getMetadata().get("ZENITH")
-            self.azimuth_arr[i] = calexp.getMetadata().get("AZIMUTH")
-            self.airmass_arr[i] = calexp.getMetadata().get("AIRMASS")
-            psf_size_arr[i] = calexp.getPsf().computeKernelImage().getArray().shape[0]
-=======
             visitInfo = calexp.getInfo().getVisitInfo()
             self.elevation_arr[i] = visitInfo.getBoresightAzAlt().getLatitude().asDegrees()
             self.azimuth_arr[i] = visitInfo.getBoresightAzAlt().getLongitude().asDegrees()
             self.airmass_arr[i] = visitInfo.getBoresightAirmass()
->>>>>>> Pass elevation and azimuth as Angles with units, not just as floats.
+            psf_size_arr[i] = calexp.getPsf().computeKernelImage().getArray().shape[0]
 
         self.y_size, self.x_size = self.exposures[0].getDimensions()
         self.pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
@@ -845,19 +832,12 @@ class DcrCorrection(DcrModel):
 
             # Use the measured PSF as the solution of the shifted PSFs.
             # Taken at zenith, since we're solving for the shift and don't want to introduce any extra.
-<<<<<<< 8198e57dbec3be6c56b1335ea9e2f8762fd0a926
             dcr_genZ = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                              elevation=90., azimuth=az)
+                                              elevation=Angle(np.pi/2), azimuth=az)
             psf_zen = DcrModel.calc_psf_kernel_full(exposure=exp, dcr_gen=dcr_genZ,
                                                     x_size=self.psf_size, y_size=self.psf_size)
             # calc_psf_kernel_full returns the full covariance matrix of the psf, but we only want
             #   the covariance of the center pixel.
-=======
-            dcr_genZ = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                               elevation=Angle(np.pi/2), azimuth=az)
-            psf_zen = DcrModel._calc_psf_kernel_full(exposure=exp, dcr_gen=dcr_genZ,
-                                                     x_size=self.psf_size, y_size=self.psf_size)
->>>>>>> Pass elevation and azimuth as Angles with units, not just as floats.
             psf_npix = self.psf_size * self.psf_size
             psf_mat.append(psf_zen[psf_npix//2::psf_npix, :])
             # Calculate the expected shift (with no psf) due to DCR
