@@ -688,13 +688,13 @@ class DcrCorrection(DcrModel):
 
         self.n_images = len(self.exposures)
         psf_size_arr = np.zeros(self.n_images)
-        self.elevation_arr = np.zeros(self.n_images, dtype=np.float64)
-        self.azimuth_arr = np.zeros(self.n_images, dtype=np.float64)
         self.airmass_arr = np.zeros(self.n_images, dtype=np.float64)
+        self.elevation_arr = []
+        self.azimuth_arr = []
         for i, calexp in enumerate(self.exposures):
             visitInfo = calexp.getInfo().getVisitInfo()
-            self.elevation_arr[i] = visitInfo.getBoresightAzAlt().getLatitude().asDegrees()
-            self.azimuth_arr[i] = visitInfo.getBoresightAzAlt().getLongitude().asDegrees()
+            self.elevation_arr.append(visitInfo.getBoresightAzAlt().getLatitude())
+            self.azimuth_arr.append(visitInfo.getBoresightAzAlt().getLongitude())
             self.airmass_arr[i] = visitInfo.getBoresightAirmass()
             psf_size_arr[i] = calexp.getPsf().computeKernelImage().getArray().shape[0]
 
@@ -723,10 +723,11 @@ class DcrCorrection(DcrModel):
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
                                                  bandpass=band_name)
 
-        elevation_min = np.min(self.elevation_arr) - 5.  # Calculate slightly worse DCR than maximum.
+        # Calculate slightly worse DCR than maximum.
+        elevation_min = np.min(self.elevation_arr) - Angle(np.radians(5.))
         dcr_test = DcrModel.dcr_generator(bandpass, pixel_scale=self.pixel_scale,
-                                          elevation=elevation_min, azimuth=0.)
-        self.dcr_max = int(np.ceil(np.max(dcr_test.next())) + 1)
+                                          elevation=elevation_min, azimuth=Angle(0.))
+        self.dcr_max = int(np.ceil(np.max([dcr.dy for dcr in dcr_test])) + 1)
         if kernel_size is None:
             kernel_size = 2*self.dcr_max + 1
         else:
