@@ -50,11 +50,12 @@ class DcrModel:
     """Lightweight object that contains only the minimum needed to generate DCR-matched template exposures."""
 
     def __init__(self, model_repository=None, band_name='g', debug_mode=False, **kwargs):
-        """Only run when restoring a model or for testing; otherwise superceded by DcrCorrection __init__.
+        """Restore a persisted DcrModel.
 
+        Only run when restoring a model or for testing; otherwise superceded by DcrCorrection __init__.
         @param model_repository: path to the repository where the previously-generated DCR model is stored.
         @param band_name: name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-        @param debug_mode: if set, only use a subset of the data for speed (used in _edge_test)
+        @param debug_mode: if set to True, only use a subset of the data for speed (used in _edge_test)
         """
         self.debug = debug_mode
         self.butler = None
@@ -68,7 +69,8 @@ class DcrModel:
                             templates for. Ignored if exposures are supplied directly.
         @param exposures: optional, list of exposure objects that will have matched templates created.
         @param add_noise: If set to true, add Poisson noise to the template based on the variance.
-        @param use_full: debugging keyword. Set to use the full psf kernel instead of the average.
+        @param use_full: Flag, set to True to use measured PSF for each exposure,
+                         or False to use the fiducial psf for each.
         @param repository: path to the repository where the exposure data to be matched are stored.
                            Ignored if exposures are supplied directly.
         @param output_repository: path to repository directory where templates will be saved.
@@ -83,8 +85,10 @@ class DcrModel:
                 butler = daf_persistence.Butler(repository)
                 if self.butler is None:
                     self.butler = butler
-            else:
+            elif self.butler is not None:
                 butler = self.butler
+            else:
+                raise ValueError("Either repository or exposures must be set.")
             exposures = []
             if obsid_range is not None:
                 dataId_gen = self._build_dataId(obsid_range, self.photoParams.bandpass)
@@ -95,7 +99,8 @@ class DcrModel:
                 raise ValueError("One of obsid_range or exposures must be set.")
         else:
             if obsid_range is None:
-                obsid_range = [self._fetch_metadata(calexp, "OBSID", default_value=0) for calexp in exposures]
+                obsid_range = [self._fetch_metadata(calexp.getMetadata(), "OBSID", default_value=0)
+                               for calexp in exposures]
         dataId_out_arr = self._build_dataId(obsid_range, self.photoParams.bandpass)
 
         if kernel_size is not None:
@@ -128,6 +133,7 @@ class DcrModel:
                     template_vals = self._apply_dcr_kernel(dcr_kernel, model_vals)
                     self._insert_template_vals(j, i, template_vals, template=template, weights=weights,
                                                radius=pix_radius, kernel=self.psf_avg)
+            # Weights may be different for each exposure
             template[weights > 0] /= weights[weights > 0]
             template[weights == 0] = 0.0
             if add_noise:
@@ -143,44 +149,35 @@ class DcrModel:
             yield exposure
 
     @staticmethod
-    def _fetch_metadata(exposure, property_name, default_value=None):
+    def _fetch_metadata(metadata, property_name, default_value=None):
         """Simple wrapper to extract metadata from an exposure, with some error handling.
 
-        @param exposure: An LSST exposure object
+        @param metadata: An LSST exposure metadata object
         @param property_name: String, name of the property to be extracted
         @param default_value: Value to be returned if the property is not found in the exposure metadata.
         @return Returns the value of property_name from the metadata of exposure.
         """
         try:
-            value = exposure.getMetadata().get(property_name)
+            value = metadata.get(property_name)
         except lsst.pex.exceptions.wrappers.NotFoundError as e:
             if default_value is not None:
                 print("WARNING: " + str(e) + ". Using default value: %s" % repr(default_value))
                 return default_value
             else:
-                raise e
+                return None
         return value
 
     @staticmethod
     def _build_dataId(obsid_range, band):
         """Construct a dataId dictionary for the butler to find a calexp.
 
-        @param obsid_range: A single, list, or range of obsids. Interpreted as a range if two elements long,
-                            and as a list if more than two elements long.
+        @param obsid_range: A single obsid or list of obsids.
         @param band: name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-        @return Return a dataId for the butler to use to load a calexp from a repository
+        @return Return a list of dataIds for the butler to use to load a calexp from a repository
         """
         if hasattr(obsid_range, '__iter__'):
-            if len(obsid_range) > 2:
-                if obsid_range[2] < obsid_range[0]:
-                    dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                              for obsid in np.arange(obsid_range[0], obsid_range[1], obsid_range[2])]
-                else:
-                    dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                              for obsid in obsid_range]
-            else:
-                dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                          for obsid in np.arange(obsid_range[0], obsid_range[1])]
+            dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
+                      for obsid in obsid_range]
         else:
             dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
                       for obsid in [obsid_range]]
@@ -259,7 +256,7 @@ class DcrModel:
         """Load in Bandpass object from sims_photUtils.
 
         @param band_name: Common name of the filter used. For LSST, use u, g, r, i, z, or y
-        @param wavelength_step: Wavelength resolution, also the wavelength range of each sub-band plane
+        @param wavelength_step: Wavelength resolution in nm, also the wavelength range of each sub-band plane
         @param use_mirror: Flag, include mirror in filter throughput calculation?
         @param use_lens: Flag, use LSST lens in filter throughput calculation?
         @param use_atmos: Flag, use standard atmosphere transmission in filter throughput calculation?
@@ -345,7 +342,7 @@ class DcrModel:
 
     # NOTE: This function was modified from StarFast.py
     @staticmethod
-    def _dcr_generator(bandpass, pixel_scale=None, elevation=50.0, azimuth=0.0, use_midpoint=False, **kwargs):
+    def _dcr_generator(bandpass, pixel_scale=None, elevation=50.0, azimuth=0.0, **kwargs):
         """Call the functions that compute Differential Chromatic Refraction (relative to mid-band).
 
         @param bandpass: bandpass object created with load_bandpass
@@ -360,26 +357,17 @@ class DcrModel:
         dcr = namedtuple("dcr", ["dx", "dy"])
         for wl_start, wl_end in DcrModel._wavelength_iterator(bandpass, use_midpoint=False):
             # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
-            if use_midpoint:
-                wl_mid = bandpass.calc_eff_wavelen(wavelength_min=wl_start, wavelength_max=wl_end)
-                refract_mid = diff_refraction(wavelength=wl_mid, wavelength_ref=wavelength_midpoint,
-                                              zenith_angle=zenith_angle, **kwargs)
-                refract_mid *= 3600.0 / pixel_scale
-                dx_mid = refract_mid * np.sin(np.radians(azimuth))
-                dy_mid = refract_mid * np.cos(np.radians(azimuth))
-                yield dcr(dx=dx_mid, dy=dy_mid)
-            else:
-                refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
-                                                zenith_angle=zenith_angle, **kwargs)
-                refract_end = diff_refraction(wavelength=wl_end, wavelength_ref=wavelength_midpoint,
-                                              zenith_angle=zenith_angle, **kwargs)
-                refract_start *= 3600.0 / pixel_scale  # Refraction initially in degrees, convert to pixels.
-                refract_end *= 3600.0 / pixel_scale
-                dx = delta(start=refract_start*np.sin(np.radians(azimuth)),
-                           end=refract_end*np.sin(np.radians(azimuth)))
-                dy = delta(start=refract_start*np.cos(np.radians(azimuth)),
-                           end=refract_end*np.cos(np.radians(azimuth)))
-                yield dcr(dx=dx, dy=dy)
+            refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
+                                            zenith_angle=zenith_angle, **kwargs)
+            refract_end = diff_refraction(wavelength=wl_end, wavelength_ref=wavelength_midpoint,
+                                          zenith_angle=zenith_angle, **kwargs)
+            refract_start *= 3600.0 / pixel_scale  # Refraction initially in degrees, convert to pixels.
+            refract_end *= 3600.0 / pixel_scale
+            dx = delta(start=refract_start*np.sin(np.radians(azimuth)),
+                       end=refract_end*np.sin(np.radians(azimuth)))
+            dy = delta(start=refract_start*np.cos(np.radians(azimuth)),
+                       end=refract_end*np.cos(np.radians(azimuth)))
+            yield dcr(dx=dx, dy=dy)
 
     @staticmethod
     def _calc_offset_phase(exposure=None, dcr_gen=None, x_size=None, y_size=None, **kwargs):
@@ -458,10 +446,10 @@ class DcrModel:
     def _edge_test(self, j, i):
         """Check if a given pixel is near the edge of the image.
 
-            NOTE! I expect this function to go away in production code. It exists to simplify other code
-                 that I don't want cluttered with these tests.
-                 Also, this is where the debugging option is checked, which speeds up imaging during tests
-                 by skipping ALL pixels outside of a narrow range.
+            @todo I expect this function to go away in production code. It exists to simplify other code
+                  that I don't want cluttered with these tests.
+                  Also, this is where the debugging option is checked, which speeds up imaging during tests
+                  by skipping ALL pixels outside of a narrow range.
         @return Returns True if the pixel is near the edge or outside the debugging region if debug_mode
                 is turned on, returns False otherwise.
         """
@@ -613,6 +601,7 @@ class DcrModel:
 
         self.psf = dcrModel.getPsf()
         self.psf_size = self.psf.computeKernelImage().getArray().shape[0]
+        # Store the central part of the image of the psf for use as a kernel later.
         p0 = self.psf_size//2 - self.kernel_size//2
         p1 = p0 + self.kernel_size
         self.psf_avg = self.psf.computeKernelImage().getArray()[p0: p1, p0: p1]
@@ -725,6 +714,7 @@ class DcrCorrection(DcrModel):
         @param frequency_regularization: Flag, set to True to regularize using frequency smoothness
         @param frequency_second_regularization: Flag, set to True to regularize using smoothness of the
                derivative of the frequency.
+        @return Returns a regularization matrix, or None if all regularization options are set to False.
         """
         reg_pix = None
         reg_lambda = None
@@ -810,8 +800,6 @@ class DcrCorrection(DcrModel):
         """Calculate the fiducial psf from a givedn set of exposures, accounting for DCR."""
         psf_mat = []
         dcr_shift = []
-        p0 = self.psf_size//2 - self.kernel_size//2
-        p1 = p0 + self.kernel_size
         for img, exp in enumerate(self.exposures):
             el = self.elevation_arr[img]
             az = self.azimuth_arr[img]
@@ -834,12 +822,16 @@ class DcrCorrection(DcrModel):
         regularize_psf = self._build_regularization(x_size=self.psf_size, y_size=self.psf_size,
                                                     n_step=self.n_step, frequency_regularization=True)
         regularize_dim = regularize_psf.shape
+        # Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images
         vals_use = np.append(psf_mat, np.zeros(regularize_dim[1]))
         kernel_use = np.append(dcr_shift.T, regularize_psf.T, axis=0)
         psf_soln = scipy.optimize.nnls(kernel_use, vals_use)
-        psf_model = np.reshape(psf_soln[0], (self.n_step, self.psf_size, self.psf_size))
-        self.psf_model = psf_model[:, p0: p1, p0: p1]
-        psf_vals = np.sum(psf_model, axis=0)/self.n_step
+        psf_model_large = np.reshape(psf_soln[0], (self.n_step, self.psf_size, self.psf_size))
+        p0 = self.psf_size//2 - self.kernel_size//2
+        p1 = p0 + self.kernel_size
+        # After solving for the (potentially) large psf, store only the central portion of size kernel_size.
+        self.psf_model = psf_model_large[:, p0: p1, p0: p1]
+        psf_vals = np.sum(psf_model_large, axis=0)/self.n_step
         self.psf_avg = psf_vals[p0: p1, p0: p1]
         psf_image = afwImage.ImageD(self.psf_size, self.psf_size)
         psf_image.getArray()[:, :] = psf_vals
