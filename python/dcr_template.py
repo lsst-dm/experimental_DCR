@@ -47,15 +47,15 @@ lsst_lon = -70.749417
 
 
 class DcrModel:
-    """Lightweight object that contains only the minimum needed to generate DCR-matched template exposures."""
+    """!Lightweight object with only the minimum needed to generate DCR-matched template exposures."""
 
     def __init__(self, model_repository=None, band_name='g', debug_mode=False, **kwargs):
-        """Restore a persisted DcrModel.
+        """!Restore a persisted DcrModel.
 
         Only run when restoring a model or for testing; otherwise superceded by DcrCorrection __init__.
-        @param model_repository: path to the repository where the previously-generated DCR model is stored.
-        @param band_name: name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-        @param debug_mode: if set to True, only use a subset of the data for speed (used in _edge_test)
+        @param model_repository  path to the repository where the previously-generated DCR model is stored.
+        @param band_name  name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
+        @param debug_mode  if set to True, only use a subset of the data for speed (used in _edge_test)
         """
         self.debug = debug_mode
         self.butler = None
@@ -63,18 +63,18 @@ class DcrModel:
 
     def generate_templates_from_model(self, obsid_range=None, exposures=None, add_noise=False, use_full=True,
                                       repository=None, output_repository=None, kernel_size=None, **kwargs):
-        """Use the previously generated model and construct a dcr template image.
+        """!Use the previously generated model and construct a dcr template image.
 
-        @param obsid_range: single, range, or list of observation IDs in repository to create matched
+        @param obsid_range  single, range, or list of observation IDs in repository to create matched
                             templates for. Ignored if exposures are supplied directly.
-        @param exposures: optional, list of exposure objects that will have matched templates created.
-        @param add_noise: If set to true, add Poisson noise to the template based on the variance.
-        @param use_full: Flag, set to True to use measured PSF for each exposure,
+        @param exposures  optional, list of exposure objects that will have matched templates created.
+        @param add_noise  If set to true, add Poisson noise to the template based on the variance.
+        @param use_full  Flag, set to True to use measured PSF for each exposure,
                          or False to use the fiducial psf for each.
-        @param repository: path to the repository where the exposure data to be matched are stored.
+        @param repository  path to the repository where the exposure data to be matched are stored.
                            Ignored if exposures are supplied directly.
-        @param output_repository: path to repository directory where templates will be saved.
-        @param kernel_size: [optional] size, in pixels, of the region surrounding each image pixel that DCR
+        @param output_repository  path to repository directory where templates will be saved.
+        @param kernel_size  [optional] size, in pixels, of the region surrounding each image pixel that DCR
                             shifts are calculated. Default is to use the same value the model was created with
         @return Returns a generator that builds DCR-matched templates for each exposure.
         """
@@ -150,11 +150,11 @@ class DcrModel:
 
     @staticmethod
     def _fetch_metadata(metadata, property_name, default_value=None):
-        """Simple wrapper to extract metadata from an exposure, with some error handling.
+        """!Simple wrapper to extract metadata from an exposure, with some error handling.
 
-        @param metadata: An LSST exposure metadata object
-        @param property_name: String, name of the property to be extracted
-        @param default_value: Value to be returned if the property is not found in the exposure metadata.
+        @param metadata  An LSST exposure metadata object
+        @param property_name  String, name of the property to be extracted
+        @param default_value  Value to be returned if the property is not found in the exposure metadata.
         @return Returns the value of property_name from the metadata of exposure.
         """
         try:
@@ -169,10 +169,10 @@ class DcrModel:
 
     @staticmethod
     def _build_dataId(obsid_range, band):
-        """Construct a dataId dictionary for the butler to find a calexp.
+        """!Construct a dataId dictionary for the butler to find a calexp.
 
-        @param obsid_range: A single obsid or list of obsids.
-        @param band: name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
+        @param obsid_range  A single obsid or list of obsids.
+        @param band  name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
         @return Return a list of dataIds for the butler to use to load a calexp from a repository
         """
         if hasattr(obsid_range, '__iter__'):
@@ -185,10 +185,10 @@ class DcrModel:
 
     @staticmethod
     def _build_model_dataId(band, subfilter=None):
-        """Construct a dataId dictionary for the butler to find a dcrModel.
+        """!Construct a dataId dictionary for the butler to find a dcrModel.
 
-        @param band: name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-        @param subfilter: DCR model index within the band.
+        @param band  name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
+        @param subfilter  DCR model index within the band.
         @return Return a dataId for the butler to use to load a dcrModel from a repository
         """
         if subfilter is None:
@@ -199,10 +199,10 @@ class DcrModel:
 
     @staticmethod
     def _apply_dcr_kernel(dcr_kernel, model_vals):
-        """Apply a DCR kernel to a matched region of model values to build template values in that region.
+        """!Apply a DCR kernel to a matched region of model values to build template values in that region.
 
-        @param dcr_kernel: A DCR kernel created with DcrCorrection._build_dcr_kernel()
-        @param model_vals: Model values returned by DcrModel._extract_model_vals()
+        @param dcr_kernel  A DCR kernel created with DcrCorrection._build_dcr_kernel()
+        @param model_vals  Model values returned by DcrModel._extract_model_vals()
         @return Returns DCR-matched template values for pixels within the kernel footprint.
         """
         template_vals = np.dot(dcr_kernel.T, model_vals)
@@ -211,12 +211,12 @@ class DcrModel:
 
     @staticmethod
     def _extract_model_vals(j, i, radius=None, model=None, weights=None):
-        """Return all pixles within a radius of a given point as a 1D vector for each dcr plane model.
+        """!Return all pixles within a radius of a given point as a 1D vector for each dcr plane model.
 
-        @param j: Vertical pixel index
-        @param i: Horizontal pixel index
-        @param radius: radius, in pixels, of the box surrounding (j, i) to be extracted.
-        @param model: dcrModel read in with DcrModel._load_model or DcrCorrection
+        @param j  Vertical pixel index
+        @param i  Horizontal pixel index
+        @param radius  radius, in pixels, of the box surrounding (j, i) to be extracted.
+        @param model  dcrModel read in with DcrModel._load_model or DcrCorrection
         @return Returns the weighted model values within the range of pixels, formatted for _apply_dcr_kernel
         """
         model_arr = []
@@ -232,15 +232,15 @@ class DcrModel:
 
     @staticmethod
     def _insert_template_vals(j, i, vals, template=None, weights=None, radius=None, kernel=None):
-        """Update a template image in place.
+        """!Update a template image in place.
 
-        @param j: Vertical pixel index
-        @param i: Horizontal pixel index
-        @param vals: DCR-corrected template values, from _apply_dcr_kernel
-        @param template: The existing template image, which will be modified in place.
-        @param weights: An array of weights, to be modified in place.
-        @param radius: radius, in pixels, of the box surrounding (j, i) to be updated.
-        @param kernel: [optional] Weight inserted template values with this kernel.
+        @param j  Vertical pixel index
+        @param i  Horizontal pixel index
+        @param vals  DCR-corrected template values, from _apply_dcr_kernel
+        @param template  The existing template image, which will be modified in place.
+        @param weights  An array of weights, to be modified in place.
+        @param radius  radius, in pixels, of the box surrounding (j, i) to be updated.
+        @param kernel  [optional] Weight inserted template values with this kernel.
         """
         if kernel is None:
             kernel_use = 1.0
@@ -253,15 +253,15 @@ class DcrModel:
     @staticmethod
     def _load_bandpass(band_name='g', wavelength_step=None, use_mirror=True, use_lens=True, use_atmos=True,
                        use_filter=True, use_detector=True, **kwargs):
-        """Load in Bandpass object from sims_photUtils.
+        """!Load in Bandpass object from sims_photUtils.
 
-        @param band_name: Common name of the filter used. For LSST, use u, g, r, i, z, or y
-        @param wavelength_step: Wavelength resolution in nm, also the wavelength range of each sub-band plane
-        @param use_mirror: Flag, include mirror in filter throughput calculation?
-        @param use_lens: Flag, use LSST lens in filter throughput calculation?
-        @param use_atmos: Flag, use standard atmosphere transmission in filter throughput calculation?
-        @param use_filter: Flag, use LSST filters in filter throughput calculation?
-        @param use_detector: Flag, use LSST detector efficiency in filter throughput calculation?
+        @param band_name  Common name of the filter used. For LSST, use u, g, r, i, z, or y
+        @param wavelength_step  Wavelength resolution in nm, also the wavelength range of each sub-band plane
+        @param use_mirror  Flag, include mirror in filter throughput calculation?
+        @param use_lens  Flag, use LSST lens in filter throughput calculation?
+        @param use_atmos  Flag, use standard atmosphere transmission in filter throughput calculation?
+        @param use_filter  Flag, use LSST filters in filter throughput calculation?
+        @param use_detector  Flag, use LSST detector efficiency in filter throughput calculation?
         @return Returns a bandpass object.
         """
         class BandpassMod(Bandpass):
@@ -322,10 +322,10 @@ class DcrModel:
     # NOTE: This function was copied from StarFast.py
     @staticmethod
     def _wavelength_iterator(bandpass, use_midpoint=False):
-        """Define iterator to ensure that loops over wavelength are consistent.
+        """!Define iterator to ensure that loops over wavelength are consistent.
 
-        @param bandpass: Bandpass object returned by _load_bandpass
-        @param use_midpoint: if set, return the filter-weighted average wavelength.
+        @param bandpass  Bandpass object returned by _load_bandpass
+        @param use_midpoint  if set, return the filter-weighted average wavelength.
                              Otherwise, return a tuple of the starting and end wavelength.
         @return Returns a generator that iterates through sub-bands of a given bandpass.
         """
@@ -343,12 +343,12 @@ class DcrModel:
     # NOTE: This function was modified from StarFast.py
     @staticmethod
     def _dcr_generator(bandpass, pixel_scale=None, elevation=50.0, azimuth=0.0, **kwargs):
-        """Call the functions that compute Differential Chromatic Refraction (relative to mid-band).
+        """!Call the functions that compute Differential Chromatic Refraction (relative to mid-band).
 
-        @param bandpass: bandpass object created with load_bandpass
-        @param pixel_scale: plate scale in arcsec/pixel
-        @param elevation: elevation angle of the center of the image, in decimal degrees.
-        @param azimuth: azimuth angle of the observation, in decimal degrees.
+        @param bandpass  bandpass object created with load_bandpass
+        @param pixel_scale  plate scale in arcsec/pixel
+        @param elevation  elevation angle of the center of the image, in decimal degrees.
+        @param azimuth  azimuth angle of the observation, in decimal degrees.
         @return Returns a generator that produces named tuples containing the x and y offsets, in pixels.
         """
         zenith_angle = 90.0 - elevation
@@ -371,12 +371,12 @@ class DcrModel:
 
     @staticmethod
     def _calc_offset_phase(exposure=None, dcr_gen=None, x_size=None, y_size=None, **kwargs):
-        """Calculate the covariance matrix for a simple shift with no psf.
+        """!Calculate the covariance matrix for a simple shift with no psf.
 
-        @param exposure: An LSST exposure object. Only needed if x_size or y_size is not specified.
-        @param dcr_gen: A dcr generator of offsets, returned by _dcr_generator.
-        @param x_size: Width in pixels of the region to perform the calculation over. Default is entire image
-        @param y_size: Height in pixels of the region to perform the calculation over. Default is entire image
+        @param exposure  An LSST exposure object. Only needed if x_size or y_size is not specified.
+        @param dcr_gen  A dcr generator of offsets, returned by _dcr_generator.
+        @param x_size  Width in pixels of the region to perform the calculation over. Default is entire image
+        @param y_size  Height in pixels of the region to perform the calculation over. Default is entire image
         @return Returns the covariance matrix of an offset generated by _dcr_generator in the form (dx, dy)
         """
         phase_arr = []
@@ -400,13 +400,13 @@ class DcrModel:
 
     @staticmethod
     def _calc_psf_kernel(exposure=None, dcr_gen=None, x_size=None, y_size=None, psf_img=None, **kwargs):
-        """Calculate the covariance matrix for a DCR-shifted average psf.
+        """!Calculate the covariance matrix for a DCR-shifted average psf.
 
-        @param exposure: An LSST exposure object. Only needed if x_size or y_size is not specified.
-        @param dcr_gen: A dcr generator of offsets, returned by _dcr_generator.
-        @param x_size: Width in pixels of the region to perform the calculation over. Default is entire image
-        @param y_size: Height in pixels of the region to perform the calculation over. Default is entire image
-        @param psf_img: A fiducial psf to use for the calculation.
+        @param exposure  An LSST exposure object. Only needed if x_size or y_size is not specified.
+        @param dcr_gen  A dcr generator of offsets, returned by _dcr_generator.
+        @param x_size  Width in pixels of the region to perform the calculation over. Default is entire image
+        @param y_size  Height in pixels of the region to perform the calculation over. Default is entire image
+        @param psf_img  A fiducial psf to use for the calculation.
         @return Returns the covariance matrix of a fiducial psf shifted by an offset from _dcr_generator
         """
         if y_size is None:
@@ -422,12 +422,12 @@ class DcrModel:
 
     @staticmethod
     def _calc_psf_kernel_full(exposure=None, dcr_gen=None, x_size=None, y_size=None, **kwargs):
-        """Calculate the covariance matrix for a DCR-shifted psf that is measured for each exposure.
+        """!Calculate the covariance matrix for a DCR-shifted psf that is measured for each exposure.
 
-        @param exposure: An LSST exposure object. Always needed for its psf.
-        @param dcr_gen: A dcr generator of offsets, returned by _dcr_generator.
-        @param x_size: Width in pixels of the region to perform the calculation over. Default is entire image
-        @param y_size: Height in pixels of the region to perform the calculation over. Default is entire image
+        @param exposure  An LSST exposure object. Always needed for its psf.
+        @param dcr_gen  A dcr generator of offsets, returned by _dcr_generator.
+        @param x_size  Width in pixels of the region to perform the calculation over. Default is entire image
+        @param y_size  Height in pixels of the region to perform the calculation over. Default is entire image
         @return Returns the covariance matrix of a measured psf shifted by an offset from _dcr_generator
         """
         if y_size is None:
@@ -444,7 +444,7 @@ class DcrModel:
         return psf_kernel_arr
 
     def _edge_test(self, j, i):
-        """Check if a given pixel is near the edge of the image.
+        """!Check if a given pixel is near the edge of the image.
 
             @todo I expect this function to go away in production code. It exists to simplify other code
                   that I don't want cluttered with these tests.
@@ -487,15 +487,15 @@ class DcrModel:
 
     # NOTE: This function was copied from StarFast.py
     def _create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0, **kwargs):
-        """Convert a numpy array to an LSST exposure, and units of electron counts.
+        """!Convert a numpy array to an LSST exposure, and units of electron counts.
 
-        @param array: numpy array to use as the data for the exposure
-        @param variance: optional numpy array to use as the variance plane of the exposure.
+        @param array  numpy array to use as the data for the exposure
+        @param variance  optional numpy array to use as the variance plane of the exposure.
                          If None, the absoulte value of 'array' is used for the variance plane.
-        @param elevation: Elevation angle of the observation, in degrees.
-        @param azimuth: Azimuth angle of the observation, in degrees.
-        @param snap: snap ID to add to the metadata of the exposure. Required to mimic Phosim output.
-        @param **kwargs: Any additional keyword arguments will be added to the metadata of the exposure.
+        @param elevation  Elevation angle of the observation, in degrees.
+        @param azimuth  Azimuth angle of the observation, in degrees.
+        @param snap  snap ID to add to the metadata of the exposure. Required to mimic Phosim output.
+        @param **kwargs  Any additional keyword arguments will be added to the metadata of the exposure.
         @return Returns an LSST exposure.
         """
         exposure = afwImage.ExposureD(self.bbox)
@@ -542,9 +542,9 @@ class DcrModel:
         return exposure
 
     def export_model(self, model_repository=None):
-        """Persist a DcrModel with metadata to a repository.
+        """!Persist a DcrModel with metadata to a repository.
 
-        @param model_repository: full path to the directory of the repository to save the dcrModel in.
+        @param model_repository  full path to the directory of the repository to save the dcrModel in.
         """
         if model_repository is None:
             butler = self.butler
@@ -560,11 +560,11 @@ class DcrModel:
             butler.put(exp, "dcrModel", dataId=self._build_model_dataId(self.photoParams.bandpass, f))
 
     def load_model(self, model_repository=None, band_name='g', **kwargs):
-        """Depersist a DcrModel from a repository and set up the metadata.
+        """!Depersist a DcrModel from a repository and set up the metadata.
 
-        @param model_repository: full path to the directory of the repository to load the dcrModel from.
-        @param band_name: Common name of the filter used. For LSST, use u, g, r, i, z, or y
-        @param **kwargs: Any additional keyword arguments to pass to _load_bandpass
+        @param model_repository  full path to the directory of the repository to load the dcrModel from.
+        @param band_name  Common name of the filter used. For LSST, use u, g, r, i, z, or y
+        @param **kwargs  Any additional keyword arguments to pass to _load_bandpass
         @return No return value, but sets up all the needed quantities such as the psf and bandpass objects.
         """
         if model_repository is None:
@@ -607,9 +607,9 @@ class DcrModel:
         self.psf_avg = self.psf.computeKernelImage().getArray()[p0: p1, p0: p1]
 
     def view_model(self, index):
-        """Display a slice of the DcrModel with the proper weighting applied.
+        """!Display a slice of the DcrModel with the proper weighting applied.
 
-        @param index: sub-band slice of the DcrModel to extract
+        @param index  sub-band slice of the DcrModel to extract
         @return Returns a 2D numpy array.
         """
         model = self.model[index, :, :].copy()
@@ -620,25 +620,25 @@ class DcrModel:
 
 
 class DcrCorrection(DcrModel):
-    """Class that loads LSST calibrated exposures and produces airmass-matched template images."""
+    """!Class that loads LSST calibrated exposures and produces airmass-matched template images."""
 
     def __init__(self, repository=".", obsid_range=None, band_name='g', wavelength_step=10,
                  n_step=None, use_psf=True, debug_mode=False,
                  kernel_size=None, exposures=None, **kwargs):
-        """Load images from the repository and set up parameters.
+        """!Load images from the repository and set up parameters.
 
-        @param repository: path to repository with the data. String, defaults to working directory
-        @param obsid_range: obsid or range of obsids to process.
-        @param band_name: Common name of the filter used. For LSST, use u, g, r, i, z, or y
-        @param wavelength_step: Overridden by n_step. Sub-filter width, in nm.
-        @param n_step: Number of sub-filter wavelength planes to model. Optional if wavelength_step supplied.
-        @param use_psf: Flag. Set to True to include the psf when calculating the DCR covariance matrix.
+        @param repository  path to repository with the data. String, defaults to working directory
+        @param obsid_range  obsid or range of obsids to process.
+        @param band_name  Common name of the filter used. For LSST, use u, g, r, i, z, or y
+        @param wavelength_step  Overridden by n_step. Sub-filter width, in nm.
+        @param n_step  Number of sub-filter wavelength planes to model. Optional if wavelength_step supplied.
+        @param use_psf  Flag. Set to True to include the psf when calculating the DCR covariance matrix.
                               Set to False to use only a simple shift.
-        @param debug_mode: Flag. Set to True to run in debug mode, which may have unpredictable behavior.
-        @param kernel_size: Size of the kernel to use for calculating the covariance matrix, in pixels.
+        @param debug_mode  Flag. Set to True to run in debug mode, which may have unpredictable behavior.
+        @param kernel_size  Size of the kernel to use for calculating the covariance matrix, in pixels.
                             Note that kernel_size must be odd, so even values will be increased by one.
                             Optional. If missing, will be calculated from the maximum shift predicted from DCR
-        @param exposures: A list of LSST exposures to use as input to the DCR calculation.
+        @param exposures  A list of LSST exposures to use as input to the DCR calculation.
                           Optional. If missing, exposures will be loaded from the specified repository.
         """
         if exposures is None:
@@ -705,16 +705,16 @@ class DcrCorrection(DcrModel):
     @staticmethod
     def _build_regularization(x_size=None, y_size=None, n_step=None, spatial_regularization=False,
                               frequency_regularization=False, frequency_second_regularization=False):
-        """Regularization adapted from Nate Lust's DCR Demo iPython notebook.
+        """!Regularization adapted from Nate Lust's DCR Demo iPython notebook.
 
         Calculate a difference matrix for regularization as if each wavelength were a pixel, then scale
         the difference matrix to the size of the number of pixels times number of wavelengths
-        @param x_size: width of the kernel, in pixels.
-        @param y_size: height of the kernel, in pixels.
-        @param n_step: Number of sub-filter wavelength planes.
-        @param spatial_regularization: Flag, set to True to include spatial regularization (not recommended)
-        @param frequency_regularization: Flag, set to True to regularize using frequency smoothness
-        @param frequency_second_regularization: Flag, set to True to regularize using smoothness of the
+        @param x_size  width of the kernel, in pixels.
+        @param y_size  height of the kernel, in pixels.
+        @param n_step  Number of sub-filter wavelength planes.
+        @param spatial_regularization  Flag, set to True to include spatial regularization (not recommended)
+        @param frequency_regularization  Flag, set to True to regularize using frequency smoothness
+        @param frequency_second_regularization  Flag, set to True to regularize using smoothness of the
                derivative of the frequency.
         @return Returns a regularization matrix, or None if all regularization options are set to False.
         """
@@ -768,11 +768,11 @@ class DcrCorrection(DcrModel):
             return np.append(reg_pix, reg_lambda, axis=1)
 
     def _extract_image_vals(self, j, i, radius=None):
-        """Return all pixels within a radius of a given point as a 1D vector for each exposure.
+        """!Return all pixels within a radius of a given point as a 1D vector for each exposure.
 
-        @param j: Vertical index of the center pixel
-        @param i: Horizontal index of the center pixel
-        @param radius: Number of pixels to either side of (j, i) to extract from each image.
+        @param j  Vertical index of the center pixel
+        @param i  Horizontal index of the center pixel
+        @param radius  Number of pixels to either side of (j, i) to extract from each image.
         @return Returns a numpy array of size (number of exposures, 2*(2*radius + 1))
         """
         img_arr = []
@@ -783,11 +783,11 @@ class DcrCorrection(DcrModel):
         return np.hstack(img_arr)
 
     def _insert_model_vals(self, j, i, vals, radius=None):
-        """Insert the given values into the model and update the weights.
+        """!Insert the given values into the model and update the weights.
 
-        @param j: Vertical index of the center pixel
-        @param i: Horizontal index of the center pixel
-        @param vals: Numpy array of values to be inserted, with size (n_step, 2*radius + 1, 2*radius + 1)
+        @param j  Vertical index of the center pixel
+        @param i  Horizontal index of the center pixel
+        @param vals  Numpy array of values to be inserted, with size (n_step, 2*radius + 1, 2*radius + 1)
         """
         if self.use_psf:
             psf_use = self.psf_avg
@@ -799,7 +799,7 @@ class DcrCorrection(DcrModel):
             self.weights[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += psf_use
 
     def _calc_psf_model(self):
-        """Calculate the fiducial psf from a givedn set of exposures, accounting for DCR."""
+        """!Calculate the fiducial psf from a givedn set of exposures, accounting for DCR."""
         psf_mat = []
         dcr_shift = []
         for img, exp in enumerate(self.exposures):
@@ -843,15 +843,15 @@ class DcrCorrection(DcrModel):
         self.psf = measAlg.KernelPsf(psfK)
 
     def build_model(self, use_full=True, use_regularization=True, use_only_detected=False, verbose=True):
-        """Calculate a model of the true sky using the known DCR offset for each freq plane.
+        """!Calculate a model of the true sky using the known DCR offset for each freq plane.
 
-        @param use_full: Flag, set to True to use measured PSF for each exposure,
+        @param use_full  Flag, set to True to use measured PSF for each exposure,
                             or False to use the fiducial psf for each.
-        @param use_regularization: Flag, set to True to use regularization. The type of regularization is set
+        @param use_regularization  Flag, set to True to use regularization. The type of regularization is set
                                     previously with build_regularization.
-        @param use_only_detected: Flag, set to True to only calculate the DCR model for the footprint
+        @param use_only_detected  Flag, set to True to only calculate the DCR model for the footprint
                                     of detected sources.
-        @param verbose: Flag, set to True to print progress messages.
+        @param verbose  Flag, set to True to print progress messages.
         """
         dcr_kernel = self._build_dcr_kernel(use_full=use_full)
         self.model = np.zeros((self.n_step, self.y_size, self.x_size))
@@ -890,9 +890,9 @@ class DcrCorrection(DcrModel):
             print("\nFinished building model.")
 
     def _build_dcr_kernel(self, use_full=None):
-        """Calculate the DCR covariance matrix for a set of exposures.
+        """!Calculate the DCR covariance matrix for a set of exposures.
 
-        @param use_full: Flag, set to True to use measured PSF for each exposure,
+        @param use_full  Flag, set to True to use measured PSF for each exposure,
                             or False to use the fiducial psf for each.
         """
         dcr_kernel = []
@@ -914,7 +914,7 @@ class DcrCorrection(DcrModel):
         return dcr_kernel
 
     def _combine_masks(self):
-        """Compute the bitwise OR of the input masks."""
+        """!Compute the bitwise OR of the input masks."""
         mask_arr = (exp.getMaskedImage().getMask().getArray() for exp in self.exposures)
 
         # Flags a pixel if ANY image is flagged there.
@@ -925,11 +925,11 @@ class DcrCorrection(DcrModel):
                 self.mask = np.bitwise_or(self.mask, mask)
 
     def _solve_model(self, dcr_kernel, img_vals, use_regularization=True):
-        """Wrapper to call a fitter using a given covariance matrix, image values, and any regularization.
+        """!Wrapper to call a fitter using a given covariance matrix, image values, and any regularization.
 
-        @param dcr_kernel: The covariance matrix describing the effect of DCR
-        @param img_vals: Image data values for the pixels being used for the calculation
-        @param use_regularization: Flag, set to True to use regularization. The type of regularization is set
+        @param dcr_kernel  The covariance matrix describing the effect of DCR
+        @param img_vals  Image data values for the pixels being used for the calculation
+        @param use_regularization  Flag, set to True to use regularization. The type of regularization is set
                                     previously with build_regularization.
         """
         x_size = self.kernel_size
@@ -947,12 +947,12 @@ class DcrCorrection(DcrModel):
 
 
 def _calc_psf_kernel_subroutine(psf_img, dcr, x_size=None, y_size=None):
-    """Subroutine to build a covariance matrix from an image of a PSF.
+    """!Subroutine to build a covariance matrix from an image of a PSF.
 
-    @param psf_img: Numpy array, containing an image of the PSF.
-    @param dcr: Named tuple containing the x and y pixel offsets at the sub-filter start and end wavelength.
-    @param x_size: Width, in pixels, of the region of the image to include in the covariance matrix
-    @param y_size: Height, in pixels, of the region of the image to include in the covariance matrix
+    @param psf_img  Numpy array, containing an image of the PSF.
+    @param dcr  Named tuple containing the x and y pixel offsets at the sub-filter start and end wavelength.
+    @param x_size  Width, in pixels, of the region of the image to include in the covariance matrix
+    @param y_size  Height, in pixels, of the region of the image to include in the covariance matrix
     """
     if (x_size is None) | (y_size is None):
         y_size, x_size = psf_img.shape
@@ -985,10 +985,10 @@ def _calc_psf_kernel_subroutine(psf_img, dcr, x_size=None, y_size=None):
 
 
 def _kernel_1d(offset, size):
-    """Pre-compute the 1D sinc function values along each axis.
+    """!Pre-compute the 1D sinc function values along each axis.
 
-    @param offset: tuple of start/end pixel offsets of dft locations along single axis (either x or y)
-    @params size: dimension in pixels of the given axis
+    @param offset  tuple of start/end pixel offsets of dft locations along single axis (either x or y)
+    @params size  dimension in pixels of the given axis
     """
     # Calculate the kernel as a simple numerical integration over the width of the offset with n_substep steps
     n_substep = 10
