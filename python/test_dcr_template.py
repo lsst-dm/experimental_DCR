@@ -430,10 +430,9 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
             el = Angle(np.radians(np.random.random()*50. + 40.))
             az = Angle(np.random.random()*2*np.pi)
             exposures.append(dcrModel.create_exposure(array, variance=None, elevation=el, azimuth=az))
-        self.dcrCorr = _BasicDcrCorrection(kernel_size=self.kernel_size, band_name=band_name,
-                                           n_step=self.n_step, exposures=exposures, use_psf=use_psf)
-        self.dcrCorr.psf = dcrModel.psf
-        self.dcrCorr.psf_avg = dcrModel.psf_avg
+        # Call the actual DcrCorrection class here, not just _BasicDcrCorrection
+        self.dcrCorr = DcrCorrection(kernel_size=self.kernel_size, band_name=band_name,
+                                     n_step=self.n_step, exposures=exposures, use_psf=use_psf)
 
     def tearDown(self):
         del self.dcrCorr
@@ -466,9 +465,8 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         self.assertFloatsAlmostEqual(weights_ref, self.dcrCorr.weights)
 
     def test_calculate_psf(self):
-        """Compare the result of _calc_psf_model to previously computed values."""
+        """Compare the result of _calc_psf_model (run in setUp) to previously computed values."""
         data_file = "test_data/calculate_psf.npy"
-        self.dcrCorr.calc_psf_model()
         psf_size = self.dcrCorr.psf.computeKernelImage().getArray().shape[0]
         p0 = psf_size//2 - self.kernel_size//2
         p1 = p0 + self.kernel_size
@@ -531,6 +529,7 @@ class SolverTestCast(lsst.utils.tests.TestCase):
     def setUp(self):
         data_file = "test_data/exposures.npy"
         exposures = np.load(data_file)
+        # Use _BasicDcrCorrection here to save execution time.
         self.dcrCorr = _BasicDcrCorrection(band_name='g', n_step=3, kernel_size=5, exposures=exposures)
 
     def tearDown(self):
