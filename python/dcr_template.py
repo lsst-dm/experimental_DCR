@@ -415,7 +415,7 @@ class DcrModel:
             x_size = exposure.getWidth()
         psf_kernel_arr = []
         for dcr in dcr_gen:
-            psf_kernel_arr.append(_calc_psf_kernel_subroutine(psf_img, dcr))
+            psf_kernel_arr.append(_calc_psf_kernel_subroutine(psf_img, dcr, x_size=x_size, y_size=y_size))
 
         psf_kernel_arr = np.vstack(psf_kernel_arr)
         return psf_kernel_arr
@@ -437,7 +437,7 @@ class DcrModel:
         psf_kernel_arr = []
         psf_img = exposure.getPsf().computeKernelImage().getArray()
         for dcr in dcr_gen:
-            kernel_single = _calc_psf_kernel_subroutine(psf_img, dcr)
+            kernel_single = _calc_psf_kernel_subroutine(psf_img, dcr, x_size=x_size, y_size=y_size)
             psf_kernel_arr.append(kernel_single)
 
         psf_kernel_arr = np.vstack(psf_kernel_arr)
@@ -652,6 +652,7 @@ class DcrCorrection(DcrModel):
             self.exposures = exposures
 
         self.n_images = len(self.exposures)
+        psf_size_arr = np.zeros(self.n_images)
         self.elevation_arr = np.zeros(self.n_images, dtype=np.float64)
         self.azimuth_arr = np.zeros(self.n_images, dtype=np.float64)
         self.airmass_arr = np.zeros(self.n_images, dtype=np.float64)
@@ -659,13 +660,14 @@ class DcrCorrection(DcrModel):
             self.elevation_arr[i] = 90 - calexp.getMetadata().get("ZENITH")
             self.azimuth_arr[i] = calexp.getMetadata().get("AZIMUTH")
             self.airmass_arr[i] = calexp.getMetadata().get("AIRMASS")
+            psf_size_arr[i] = calexp.getPsf().computeKernelImage().getArray().shape[0]
 
         self.y_size, self.x_size = self.exposures[0].getDimensions()
         self.pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
         exposure_time = calexp.getInfo().getVisitInfo().getExposureTime()
         self.bbox = calexp.getBBox()
         self.wcs = calexp.getWcs()
-        self.psf_size = calexp.getPsf().computeKernelImage().getArray().shape[0]
+        self.psf_size = int(np.min(psf_size_arr))
         self.mask = None
         self._combine_masks()
 
@@ -810,6 +812,8 @@ class DcrCorrection(DcrModel):
                                                elevation=90., azimuth=az)
             psf_zen = DcrModel._calc_psf_kernel_full(exposure=exp, dcr_gen=dcr_genZ,
                                                      x_size=self.psf_size, y_size=self.psf_size)
+            # _calc_psf_kernel_full returns the full covariance matrix of the psf, but we only want
+            #   the covariance of the center pixel.
             psf_npix = self.psf_size * self.psf_size
             psf_mat.append(psf_zen[psf_npix//2::psf_npix, :])
             # Calculate the expected shift (with no psf) due to DCR
