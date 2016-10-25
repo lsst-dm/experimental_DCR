@@ -178,29 +178,29 @@ class DCRTestCase(lsst.utils.tests.TestCase):
         """Check DCR against pre-computed values."""
         azimuth = Angle(0.)
         elevation = Angle(np.radians(50.0))
-        dcr_ref_vals = [(1.9847367904770623, 1.6467981843302726),
-                        (1.6467981843302726, 1.3341803407311699),
-                        (1.3341803407311699, 1.0443731947908652),
-                        (1.0443731947908652, 0.77517513542339489),
-                        (0.77517513542339489, 0.52464791969238367),
-                        (0.52464791969238367, 0.29107920440002155),
-                        (0.29107920440002155, 0.072951238300825172),
-                        (0.072951238300825172, -0.13108543143740825),
-                        (-0.13108543143740825, -0.3222341473268886),
-                        (-0.3222341473268886, -0.50157094957602733),
-                        (-0.50157094957602733, -0.6700605866796161),
-                        (-0.6700605866796161, -0.8285701993878597),
-                        (-0.8285701993878597, -0.97788106062563773),
-                        (-0.97788106062563773, -1.1186986838806061),
-                        (-1.1186986838806061, -1.2125619138571659)]
+        dcr_ref_vals = [(1.92315562164, 1.58521701549),
+                        (1.58521701549, 1.27259917189),
+                        (1.27259917189, 0.98279202595),
+                        (0.98279202595, 0.713593966582),
+                        (0.713593966582, 0.463066750851),
+                        (0.463066750851, 0.229498035559),
+                        (0.229498035559, 0.0113700694595),
+                        (0.0113700694595, -0.192666600279),
+                        (-0.192666600279, -0.383815316168),
+                        (-0.383815316168, -0.563152118417),
+                        (-0.563152118417, -0.731641755521),
+                        (-0.731641755521, -0.890151368229),
+                        (-0.890151368229, -1.03946222947),
+                        (-1.03946222947, -1.18027985272),
+                        (-1.18027985272, -1.2741430827)]
         bp = self.bandpass
         dcr_gen = DcrModel.dcr_generator(bp, pixel_scale=self.pixel_scale, elevation=elevation,
                                          azimuth=azimuth)
         n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
         for f in range(n_step):
             dcr = next(dcr_gen)
-            self.assertFloatsAlmostEqual(dcr.dy.start, dcr_ref_vals[f][0])
-            self.assertFloatsAlmostEqual(dcr.dy.end, dcr_ref_vals[f][1])
+            self.assertFloatsAlmostEqual(dcr.dy.start, dcr_ref_vals[f][0], rtol=1e-10)
+            self.assertFloatsAlmostEqual(dcr.dy.end, dcr_ref_vals[f][1], rtol=1e-10)
 
 
 class BandpassTestCase(lsst.utils.tests.TestCase):
@@ -361,7 +361,6 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         dcr_kernel = DcrModel.calc_offset_phase(self.exposure, self.dcr_gen, return_matrix=True,
                                                 x_size=kernel_size, y_size=kernel_size)
         dcr_vals = DcrModel._apply_dcr_kernel(dcr_kernel, model_vals)
-        np.save(data_file, dcr_vals)
         dcr_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(dcr_vals, dcr_ref)
 
