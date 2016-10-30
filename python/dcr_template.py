@@ -29,7 +29,11 @@ from scipy import constants
 from scipy.ndimage.interpolation import shift as scipy_shift
 import scipy.optimize.nnls
 
+from lsst.daf.base import DateTime
 import lsst.daf.persistence as daf_persistence
+from lsst.afw.coord import Coord, IcrsCoord, Observatory
+import lsst.afw.geom as afwGeom
+from lsst.afw.geom import Angle
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
@@ -42,8 +46,11 @@ from .calc_refractive_index import diff_refraction
 
 __all__ = ["DcrModel", "DcrCorrection"]
 
-lsst_lat = -30.244639
-lsst_lon = -70.749417
+nanFloat = float("nan")
+nanAngle = Angle(nanFloat)
+lsst_lat = Angle(np.radians(-30.244639))
+lsst_lon = Angle(np.radians(-70.749417))
+lsst_alt = 2663.
 
 
 class DcrModel:
@@ -105,11 +112,13 @@ class DcrModel:
 
         if kernel_size is not None:
             self.kernel_size = kernel_size
+
+        pixel_scale = self.photoParams.platescale
         for exp_i, calexp in enumerate(exposures):
-            el = 90 - calexp.getMetadata().get("ZENITH")
-            az = calexp.getMetadata().get("AZIMUTH")
-            pix = self.photoParams.platescale
-            dcr_gen = self.dcr_generator(self.bandpass, pixel_scale=pix, elevation=el, azimuth=az)
+            visitInfo = calexp.getInfo().getVisitInfo()
+            el = visitInfo.getBoresightAzAlt().getLatitude()
+            az = visitInfo.getBoresightAzAlt().getLongitude()
+            dcr_gen = self.dcr_generator(self.bandpass, pixel_scale=pixel_scale, elevation=el, azimuth=az)
 
             make_kernel_kwargs = dict(exposure=calexp, dcr_gen=dcr_gen,
                                       x_size=self.kernel_size, y_size=self.kernel_size)
@@ -196,6 +205,17 @@ class DcrModel:
         else:
             dataId = {'filter': band, 'tract': 0, 'patch': '0', 'subfilter': subfilter}
         return(dataId)
+
+    @staticmethod
+    def create_wcs(bbox=None, pixel_scale=None, ra=nanAngle, dec=nanAngle, sky_rotation=nanAngle):
+        """Create a wcs (coordinate system)."""
+        crval = IcrsCoord(ra, dec)
+        crpix = afwGeom.Box2D(bbox).getCenter()
+        cd1_1 = (pixel_scale * afwGeom.arcseconds * np.cos(sky_rotation.asRadians())).asDegrees()
+        cd1_2 = (-pixel_scale * afwGeom.arcseconds * np.sin(sky_rotation.asRadians())).asDegrees()
+        cd2_1 = (pixel_scale * afwGeom.arcseconds * np.sin(sky_rotation.asRadians())).asDegrees()
+        cd2_2 = (pixel_scale * afwGeom.arcseconds * np.cos(sky_rotation.asRadians())).asDegrees()
+        return(afwImage.makeWcs(crval, crpix, cd1_1, cd1_2, cd2_1, cd2_2))
 
     @staticmethod
     def _apply_dcr_kernel(dcr_kernel, model_vals):
@@ -342,31 +362,32 @@ class DcrModel:
 
     # NOTE: This function was modified from StarFast.py
     @staticmethod
-    def dcr_generator(bandpass, pixel_scale=None, elevation=50.0, azimuth=0.0, **kwargs):
+    def dcr_generator(bandpass, pixel_scale=None, elevation=Angle(np.radians(50.0)),
+                      azimuth=Angle(np.radians(0.0)), use_midpoint=False, **kwargs):
         """!Call the functions that compute Differential Chromatic Refraction (relative to mid-band).
 
         @param bandpass  bandpass object created with load_bandpass
         @param pixel_scale  plate scale in arcsec/pixel
-        @param elevation  elevation angle of the center of the image, in decimal degrees.
-        @param azimuth  azimuth angle of the observation, in decimal degrees.
+        @param elevation: elevation angle of the center of the image, as a lsst.afw.geom Angle.
+        @param azimuth: azimuth angle of the observation, as a lsst.afw.geom Angle.
         @return Returns a generator that produces named tuples containing the x and y offsets, in pixels.
         """
-        zenith_angle = 90.0 - elevation
+        zenith_angle = Angle(np.pi/2) - elevation
         wavelength_midpoint = bandpass.calc_eff_wavelen()
         delta = namedtuple("delta", ["start", "end"])
         dcr = namedtuple("dcr", ["dx", "dy"])
         for wl_start, wl_end in DcrModel._wavelength_iterator(bandpass, use_midpoint=False):
             # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
             refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
-                                            zenith_angle=zenith_angle, **kwargs)
+                                            zenith_angle=zenith_angle.asDegrees(), **kwargs)
             refract_end = diff_refraction(wavelength=wl_end, wavelength_ref=wavelength_midpoint,
-                                          zenith_angle=zenith_angle, **kwargs)
+                                          zenith_angle=zenith_angle.asDegrees(), **kwargs)
             refract_start *= 3600.0 / pixel_scale  # Refraction initially in degrees, convert to pixels.
             refract_end *= 3600.0 / pixel_scale
-            dx = delta(start=refract_start*np.sin(np.radians(azimuth)),
-                       end=refract_end*np.sin(np.radians(azimuth)))
-            dy = delta(start=refract_start*np.cos(np.radians(azimuth)),
-                       end=refract_end*np.cos(np.radians(azimuth)))
+            dx = delta(start=refract_start*np.sin(azimuth.asRadians()),
+                       end=refract_end*np.sin(azimuth.asRadians()))
+            dy = delta(start=refract_start*np.cos(azimuth.asRadians()),
+                       end=refract_end*np.cos(azimuth.asRadians()))
             yield dcr(dx=dx, dy=dy)
 
     @staticmethod
@@ -486,16 +507,18 @@ class DcrModel:
         return edge
 
     # NOTE: This function was copied from StarFast.py
-    def create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0, **kwargs):
-        """!Convert a numpy array to an LSST exposure, and units of electron counts.
+    def create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0,
+                        exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanFloat, **kwargs):
+        """Convert a numpy array to an LSST exposure, and units of electron counts.
 
         @param array  numpy array to use as the data for the exposure
         @param variance  optional numpy array to use as the variance plane of the exposure.
                          If None, the absoulte value of 'array' is used for the variance plane.
-        @param elevation  Elevation angle of the observation, in degrees.
-        @param azimuth  Azimuth angle of the observation, in degrees.
-        @param snap  snap ID to add to the metadata of the exposure. Required to mimic Phosim output.
-        @param **kwargs  Any additional keyword arguments will be added to the metadata of the exposure.
+        @param elevation: Elevation angle of the observation, as a lsst.afw.geom Angle.
+        @param azimuth: Azimuth angle of the observation, as a lsst.afw.geom Angle.
+        @param snap: snap ID to add to the metadata of the exposure. Required to mimic Phosim output.
+        @param exposureId: observation ID of the exposure, a long int.
+        @param **kwargs: Any additional keyword arguments will be added to the metadata of the exposure.
         @return Returns an LSST exposure.
         """
         exposure = afwImage.ExposureD(self.bbox)
@@ -510,19 +533,18 @@ class DcrModel:
             exposure.setFilter(afwImage.Filter(self.photoParams.bandpass))
             # Need to reset afwImage.Filter to prevent an error in future calls to daf_persistence.Butler
             afwImage.FilterProperty_reset()
-        # calib = afwImage.Calib()
-        # calib.setExptime(self.photoParams.exptime)
-        # exposure.setCalib(calib)
         exposure.setPsf(self.psf)
         exposure.getMaskedImage().getImage().getArray()[:, :] = array
         if variance is None:
             variance = np.abs(array)
         exposure.getMaskedImage().getVariance().getArray()[:, :] = variance
 
-        exposure.getMaskedImage().getMask().getArray()[:, :] = self.mask
+        if self.mask is not None:
+            exposure.getMaskedImage().getMask().getArray()[:, :] = self.mask
 
-        hour_angle = (90.0 - elevation)*np.cos(np.radians(azimuth))/15.0
-        mjd = 59000.0 + (lsst_lat/15.0 - hour_angle)/24.0
+        hour_angle = (90.0 - elevation.asDegrees())*np.cos(azimuth.asRadians())/15.0
+        mjd = 59000.0 + (lsst_lat.asDegrees()/15.0 - hour_angle)/24.0
+        airmass = 1.0/np.sin(elevation.asRadians())
         meta = exposure.getMetadata()
         meta.add("CHIPID", "R22_S11")
         # Required! Phosim output stores the snap ID in "OUTFILE" as the last three characters in a string.
@@ -533,12 +555,25 @@ class DcrModel:
 
         meta.add("EXTTYPE", "IMAGE")
         meta.add("EXPTIME", 30.0)
-        meta.add("AIRMASS", 1.0/np.sin(np.radians(elevation)))
-        meta.add("ZENITH", 90 - elevation)
-        meta.add("AZIMUTH", azimuth)
+        meta.add("AIRMASS", airmass)
+        meta.add("ZENITH", 90. - elevation.asDegrees())
+        meta.add("AZIMUTH", azimuth.asDegrees())
         # Add all additional keyword arguments to the metadata.
         for add_item in kwargs:
             meta.add(add_item, kwargs[add_item])
+
+        visitInfo = afwImage.makeVisitInfo(
+            exposureId=int(exposureId),
+            exposureTime=30.0,
+            darkTime=30.0,
+            date=DateTime(mjd),
+            ut1=mjd,
+            boresightRaDec=IcrsCoord(ra, dec),
+            boresightAzAlt=Coord(azimuth, elevation),
+            boresightAirmass=airmass,
+            boresightRotAngle=Angle(np.radians(boresightRotAngle)),
+            observatory=Observatory(lsst_lon, lsst_lat, lsst_alt),)
+        exposure.getInfo().setVisitInfo(visitInfo)
         return exposure
 
     def export_model(self, model_repository=None):
@@ -554,7 +589,7 @@ class DcrModel:
         for f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
             exp = self.create_exposure(self.model[f, :, :], variance=self.weights[f, :, :],
-                                       elevation=90., azimuth=0., ksupport=self.kernel_size,
+                                       elevation=Angle(np.pi/2), azimuth=Angle(0), ksupport=self.kernel_size,
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
                                        wavestep=self.bandpass.wavelen_step, psf_flag=self.use_psf)
             butler.put(exp, "dcrModel", dataId=self._build_model_dataId(self.photoParams.bandpass, f))
@@ -653,13 +688,14 @@ class DcrCorrection(DcrModel):
 
         self.n_images = len(self.exposures)
         psf_size_arr = np.zeros(self.n_images)
-        self.elevation_arr = np.zeros(self.n_images, dtype=np.float64)
-        self.azimuth_arr = np.zeros(self.n_images, dtype=np.float64)
         self.airmass_arr = np.zeros(self.n_images, dtype=np.float64)
+        self.elevation_arr = []
+        self.azimuth_arr = []
         for i, calexp in enumerate(self.exposures):
-            self.elevation_arr[i] = 90 - calexp.getMetadata().get("ZENITH")
-            self.azimuth_arr[i] = calexp.getMetadata().get("AZIMUTH")
-            self.airmass_arr[i] = calexp.getMetadata().get("AIRMASS")
+            visitInfo = calexp.getInfo().getVisitInfo()
+            self.elevation_arr.append(visitInfo.getBoresightAzAlt().getLatitude())
+            self.azimuth_arr.append(visitInfo.getBoresightAzAlt().getLongitude())
+            self.airmass_arr[i] = visitInfo.getBoresightAirmass()
             psf_size_arr[i] = calexp.getPsf().computeKernelImage().getArray().shape[0]
 
         self.y_size, self.x_size = self.exposures[0].getDimensions()
@@ -687,10 +723,11 @@ class DcrCorrection(DcrModel):
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
                                                  bandpass=band_name)
 
-        elevation_min = np.min(self.elevation_arr) - 5.  # Calculate slightly worse DCR than maximum.
+        # Calculate slightly worse DCR than maximum.
+        elevation_min = np.min(self.elevation_arr) - Angle(np.radians(5.))
         dcr_test = DcrModel.dcr_generator(bandpass, pixel_scale=self.pixel_scale,
-                                          elevation=elevation_min, azimuth=0.)
-        self.dcr_max = int(np.ceil(np.max(dcr_test.next())) + 1)
+                                          elevation=elevation_min, azimuth=Angle(0.))
+        self.dcr_max = int(np.ceil(np.max([dcr.dy for dcr in dcr_test])) + 1)
         if kernel_size is None:
             kernel_size = 2*self.dcr_max + 1
         else:
@@ -809,7 +846,7 @@ class DcrCorrection(DcrModel):
             # Use the measured PSF as the solution of the shifted PSFs.
             # Taken at zenith, since we're solving for the shift and don't want to introduce any extra.
             dcr_genZ = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                              elevation=90., azimuth=az)
+                                              elevation=Angle(np.pi/2), azimuth=az)
             psf_zen = DcrModel.calc_psf_kernel_full(exposure=exp, dcr_gen=dcr_genZ,
                                                     x_size=self.psf_size, y_size=self.psf_size)
             # calc_psf_kernel_full returns the full covariance matrix of the psf, but we only want

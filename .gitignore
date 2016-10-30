@@ -1,2 +1,5 @@
 dmtn-012
 *.pyc
+test_data/calexp/
+.ipynb_checkpoints/
+*.cache/

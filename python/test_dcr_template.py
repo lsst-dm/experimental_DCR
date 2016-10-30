@@ -22,8 +22,8 @@
 from __future__ import print_function, division, absolute_import
 import numpy as np
 
-import lsst.afw.coord as afwCoord
 import lsst.afw.geom as afwGeom
+from lsst.afw.geom import Angle
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
@@ -40,17 +40,6 @@ def basicBandpass(band_name='g', wavelength_step=1):
                                       use_mirror=False, use_lens=False, use_atmos=False,
                                       use_filter=False, use_detector=False)
     return(bandpass)
-
-
-def _create_wcs(bbox=None, pixel_scale=None, ra=None, dec=None, sky_rotation=None):
-    """Create a wcs (coordinate system)."""
-    crval = afwCoord.IcrsCoord(ra * afwGeom.degrees, dec * afwGeom.degrees)
-    crpix = afwGeom.Box2D(bbox).getCenter()
-    cd1_1 = (pixel_scale * afwGeom.arcseconds * np.cos(np.radians(sky_rotation))).asDegrees()
-    cd1_2 = (-pixel_scale * afwGeom.arcseconds * np.sin(np.radians(sky_rotation))).asDegrees()
-    cd2_1 = (pixel_scale * afwGeom.arcseconds * np.sin(np.radians(sky_rotation))).asDegrees()
-    cd2_2 = (pixel_scale * afwGeom.arcseconds * np.cos(np.radians(sky_rotation))).asDegrees()
-    return(afwImage.makeWcs(crval, crpix, cd1_1, cd1_2, cd2_1, cd2_2))
 
 
 class _BasicDcrModel(DcrModel):
@@ -80,7 +69,8 @@ class _BasicDcrModel(DcrModel):
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=pixel_scale,
                                                  bandpass=band_name)
         self.bbox = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(size, size))
-        self.wcs = _create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=0., dec=0., sky_rotation=0.)
+        self.wcs = DcrModel.create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=Angle(0.),
+                                       dec=Angle(0.), sky_rotation=Angle(0.))
 
         psf_vals = np.zeros((kernel_size, kernel_size))
         psf_vals[kernel_size//2 - 1: kernel_size//2 + 1,
@@ -106,9 +96,10 @@ class _BasicDcrCorrection(DcrCorrection):
         self.azimuth_arr = []
         self.airmass_arr = []
         for calexp in exposures:
-            self.elevation_arr.append(90 - calexp.getMetadata().get("ZENITH"))
-            self.azimuth_arr.append(calexp.getMetadata().get("AZIMUTH"))
-            self.airmass_arr.append(calexp.getMetadata().get("AIRMASS"))
+            visitInfo = calexp.getInfo().getVisitInfo()
+            self.elevation_arr.append(visitInfo.getBoresightAzAlt().getLatitude())
+            self.azimuth_arr.append(visitInfo.getBoresightAzAlt().getLongitude())
+            self.airmass_arr.append(visitInfo.getBoresightAirmass())
         self.exposures = exposures
 
         bandpass_init = basicBandpass(band_name=band_name, wavelength_step=None)
@@ -118,8 +109,7 @@ class _BasicDcrCorrection(DcrCorrection):
         self.n_images = len(exposures)
         self.y_size, self.x_size = exposures[0].getDimensions()
         self.pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
-        exposure_time = 30.  # seconds
-        # exposure_time = calexp.getInfo().getVisitInfo().getExposureTime()
+        exposure_time = visitInfo.getExposureTime()
         self.bbox = calexp.getBBox()
         self.wcs = calexp.getWcs()
         psf = calexp.getPsf().computeKernelImage().getArray()
@@ -129,9 +119,10 @@ class _BasicDcrCorrection(DcrCorrection):
         self.kernel_size = kernel_size
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
                                                  bandpass=band_name)
-        elevation_min = np.min(self.elevation_arr) - 5.  # Calculate slightly worse DCR than maximum.
+        # Calculate slightly worse DCR than maximum.
+        elevation_min = np.min(self.elevation_arr) - Angle(np.radians(5.))
         dcr_test = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                          elevation=elevation_min, azimuth=0.)
+                                          elevation=elevation_min, azimuth=Angle(0.))
         self.dcr_max = int(np.ceil(np.max(dcr_test.next())) + 1)
         if kernel_size is None:
             self.kernel_size = 2*self.dcr_max + 1
@@ -155,8 +146,8 @@ class DCRTestCase(lsst.utils.tests.TestCase):
 
     def test_dcr_generator(self):
         """Check that _dcr_generator returns a generator with n_step iterations, and (0,0) at zenith."""
-        azimuth = 0.0
-        elevation = 90.0
+        azimuth = Angle(0.0)
+        elevation = Angle(np.pi/2)
         zenith_dcr = 0.
         bp = self.bandpass
         dcr_gen = DcrModel.dcr_generator(bp, pixel_scale=self.pixel_scale,
@@ -174,31 +165,31 @@ class DCRTestCase(lsst.utils.tests.TestCase):
 
     def test_dcr_values(self):
         """Check DCR against pre-computed values."""
-        azimuth = 0.0
-        elevation = 50.0
-        dcr_ref_vals = [(1.9847367904770623, 1.6467981843302726),
-                        (1.6467981843302726, 1.3341803407311699),
-                        (1.3341803407311699, 1.0443731947908652),
-                        (1.0443731947908652, 0.77517513542339489),
-                        (0.77517513542339489, 0.52464791969238367),
-                        (0.52464791969238367, 0.29107920440002155),
-                        (0.29107920440002155, 0.072951238300825172),
-                        (0.072951238300825172, -0.13108543143740825),
-                        (-0.13108543143740825, -0.3222341473268886),
-                        (-0.3222341473268886, -0.50157094957602733),
-                        (-0.50157094957602733, -0.6700605866796161),
-                        (-0.6700605866796161, -0.8285701993878597),
-                        (-0.8285701993878597, -0.97788106062563773),
-                        (-0.97788106062563773, -1.1186986838806061),
-                        (-1.1186986838806061, -1.2125619138571659)]
+        azimuth = Angle(0.)
+        elevation = Angle(np.radians(50.0))
+        dcr_ref_vals = [(1.92315562164, 1.58521701549),
+                        (1.58521701549, 1.27259917189),
+                        (1.27259917189, 0.98279202595),
+                        (0.98279202595, 0.713593966582),
+                        (0.713593966582, 0.463066750851),
+                        (0.463066750851, 0.229498035559),
+                        (0.229498035559, 0.0113700694595),
+                        (0.0113700694595, -0.192666600279),
+                        (-0.192666600279, -0.383815316168),
+                        (-0.383815316168, -0.563152118417),
+                        (-0.563152118417, -0.731641755521),
+                        (-0.731641755521, -0.890151368229),
+                        (-0.890151368229, -1.03946222947),
+                        (-1.03946222947, -1.18027985272),
+                        (-1.18027985272, -1.2741430827)]
         bp = self.bandpass
         dcr_gen = DcrModel.dcr_generator(bp, pixel_scale=self.pixel_scale, elevation=elevation,
                                          azimuth=azimuth)
         n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
         for f in range(n_step):
             dcr = next(dcr_gen)
-            self.assertFloatsAlmostEqual(dcr.dy.start, dcr_ref_vals[f][0])
-            self.assertFloatsAlmostEqual(dcr.dy.end, dcr_ref_vals[f][1])
+            self.assertFloatsAlmostEqual(dcr.dy.start, dcr_ref_vals[f][0], rtol=1e-10)
+            self.assertFloatsAlmostEqual(dcr.dy.end, dcr_ref_vals[f][1], rtol=1e-10)
 
 
 class BandpassTestCase(lsst.utils.tests.TestCase):
@@ -230,8 +221,8 @@ class DcrModelTestBase:
         self.array = np.random.random(size=(self.size, self.size))
         self.dcrModel = _BasicDcrModel(size=self.size, kernel_size=self.kernel_size, band_name=band_name,
                                        n_step=n_step, pixel_scale=pixel_scale)
-        azimuth = 0.0
-        elevation = 70.0
+        azimuth = Angle(np.radians(0.0))
+        elevation = Angle(np.radians(70.0))
         self.dcr_gen = DcrModel.dcr_generator(self.dcrModel.bandpass, pixel_scale=self.dcrModel.pixel_scale,
                                               elevation=elevation, azimuth=azimuth, use_midpoint=False)
         self.exposure = self.dcrModel.create_exposure(self.array, variance=None, elevation=elevation,
@@ -359,7 +350,6 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         dcr_kernel = DcrModel.calc_offset_phase(self.exposure, self.dcr_gen, return_matrix=True,
                                                 x_size=kernel_size, y_size=kernel_size)
         dcr_vals = DcrModel._apply_dcr_kernel(dcr_kernel, model_vals)
-        np.save(data_file, dcr_vals)
         dcr_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(dcr_vals, dcr_ref)
 
@@ -402,11 +392,11 @@ class PersistanceTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
     def test_generate_template(self):
         """Compare the result of generate_templates_from_model to previously computed values."""
         data_file = "test_data/template.npy"
-        elevation_arr = [50., 70., 85.]
-        az = 0.
+        elevation_arr = np.radians([50., 70., 85.])
+        az = Angle(0.)
         # Note that self.array is randomly generated each call. That's okay, because the template should
         # depend only on the metadata.
-        exposures = [self.dcrModel.create_exposure(self.array, variance=None, elevation=el, azimuth=az)
+        exposures = [self.dcrModel.create_exposure(self.array, variance=None, elevation=Angle(el), azimuth=az)
                      for el in elevation_arr]
         model_gen = self.dcrModel.generate_templates_from_model(exposures=exposures, kernel_size=5)
         model_test = [model for model in model_gen]
@@ -437,13 +427,12 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
             # NOTE that this array is randomly generated for each instance.
             array = np.random.random(size=(self.size, self.size))*1000.
             self.ref_vals.append(array)
-            el = np.random.random()*50. + 40.
-            az = np.random.random()*360.
+            el = Angle(np.radians(np.random.random()*50. + 40.))
+            az = Angle(np.random.random()*2*np.pi)
             exposures.append(dcrModel.create_exposure(array, variance=None, elevation=el, azimuth=az))
-        self.dcrCorr = _BasicDcrCorrection(kernel_size=self.kernel_size, band_name=band_name,
-                                           n_step=self.n_step, exposures=exposures, use_psf=use_psf)
-        self.dcrCorr.psf = dcrModel.psf
-        self.dcrCorr.psf_avg = dcrModel.psf_avg
+        # Call the actual DcrCorrection class here, not just _BasicDcrCorrection
+        self.dcrCorr = DcrCorrection(kernel_size=self.kernel_size, band_name=band_name,
+                                     n_step=self.n_step, exposures=exposures, use_psf=use_psf)
 
     def tearDown(self):
         del self.dcrCorr
@@ -476,9 +465,8 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         self.assertFloatsAlmostEqual(weights_ref, self.dcrCorr.weights)
 
     def test_calculate_psf(self):
-        """Compare the result of _calc_psf_model to previously computed values."""
+        """Compare the result of _calc_psf_model (run in setUp) to previously computed values."""
         data_file = "test_data/calculate_psf.npy"
-        self.dcrCorr.calc_psf_model()
         psf_size = self.dcrCorr.psf.computeKernelImage().getArray().shape[0]
         p0 = psf_size//2 - self.kernel_size//2
         p1 = p0 + self.kernel_size
@@ -541,6 +529,7 @@ class SolverTestCast(lsst.utils.tests.TestCase):
     def setUp(self):
         data_file = "test_data/exposures.npy"
         exposures = np.load(data_file)
+        # Use _BasicDcrCorrection here to save execution time.
         self.dcrCorr = _BasicDcrCorrection(band_name='g', n_step=3, kernel_size=5, exposures=exposures)
 
     def tearDown(self):
