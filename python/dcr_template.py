@@ -735,13 +735,14 @@ class DcrCorrection(DcrModel):
         self.kernel_size = int(kernel_size)
         self.use_psf = bool(use_psf)
         self.debug = bool(debug_mode)
-        self.regularize = self.build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
-                                                    n_step=self.n_step, frequency_regularization=True)
+        self.regularize = None
         self.calc_psf_model()
 
     @staticmethod
-    def build_regularization(x_size=None, y_size=None, n_step=None, spatial_regularization=False,
-                             frequency_regularization=False, frequency_second_regularization=False):
+    def build_regularization(x_size=None, y_size=None, n_step=None, weight=1.,
+                             spatial_regularization=False,
+                             frequency_regularization=False, frequency_second_regularization=False,
+                             positive_regularization=False, test_solution=None):
         """!Regularization adapted from Nate Lust's DCR Demo iPython notebook.
 
         Calculate a difference matrix for regularization as if each wavelength were a pixel, then scale
@@ -749,15 +750,22 @@ class DcrCorrection(DcrModel):
         @param x_size  width of the kernel, in pixels.
         @param y_size  height of the kernel, in pixels.
         @param n_step  Number of sub-filter wavelength planes.
+        @param weight  Scale factor for the regularization kernel.
+                       Weight equal to the mean of the covariance matrix is recommended.
         @param spatial_regularization  Flag, set to True to include spatial regularization (not recommended)
         @param frequency_regularization  Flag, set to True to regularize using frequency smoothness
         @param frequency_second_regularization  Flag, set to True to regularize using smoothness of the
                derivative of the frequency.
+        @param positive_regularization  Flag, set to true to use an initial test solution
+               to down-weight negative solutions
+        @param test_solution  Numpy array of length x_size*y_size.
+               The initial test solution to use for positive_regularization.
         @return Returns a regularization matrix, or None if all regularization options are set to False.
         """
         reg_pix = None
         reg_lambda = None
         reg_lambda2 = None
+        reg_positive = None
 
         if spatial_regularization:
             reg_pix_x = np.zeros((n_step*x_size*y_size,
@@ -780,8 +788,8 @@ class DcrCorrection(DcrModel):
             reg_lambda = np.zeros((n_step*x_size*y_size, (n_step - 1)*x_size*y_size))
             for f in range(n_step - 1):
                 for ij in range(x_size*y_size):
-                    reg_lambda[f*x_size*y_size + ij, f*x_size*y_size + ij] = 1
-                    reg_lambda[(f + 1)*x_size*y_size + ij, f*x_size*y_size + ij] = -1
+                    reg_lambda[f*x_size*y_size + ij, f*x_size*y_size + ij] = weight
+                    reg_lambda[(f + 1)*x_size*y_size + ij, f*x_size*y_size + ij] = -weight
             reg_lambda = np.append(reg_lambda, -reg_lambda, axis=1)
 
         if frequency_second_regularization:
@@ -789,9 +797,28 @@ class DcrCorrection(DcrModel):
             reg_lambda2 = np.zeros((n_step*x_size*y_size, (n_step - 2)*x_size*y_size))
             for f in range(n_step - 2):
                 for ij in range(x_size*y_size):
-                    reg_lambda2[f*x_size*y_size + ij, f*x_size*y_size + ij] = -1
-                    reg_lambda2[(f + 1)*x_size*y_size + ij, f*x_size*y_size + ij] = 2
-                    reg_lambda2[(f + 2)*x_size*y_size + ij, f*x_size*y_size + ij] = -1
+                    reg_lambda2[f*x_size*y_size + ij, f*x_size*y_size + ij] = -weight
+                    reg_lambda2[(f + 1)*x_size*y_size + ij, f*x_size*y_size + ij] = 2.*weight
+                    reg_lambda2[(f + 2)*x_size*y_size + ij, f*x_size*y_size + ij] = -weight
+
+        if positive_regularization:
+            #regularization that down-weights negative elements in a trail solution.
+            if test_solution is None:
+                n_zero = 0
+            else:
+                test_solution_use = np.reshape(test_solution, (n_step, x_size*y_size))
+                n_zero = len(test_solution_use <= 0)
+            if n_zero > 0:
+                reg_positive = np.zeros((n_step*x_size*y_size, x_size*y_size))
+                zero_fill = np.zeros((n_step, x_size*y_size))
+                zero_fill[test_solution_use <= 0] = weight
+                reg_positive[0:: x_size*y_size, :] = zero_fill
+
+        if reg_lambda is None:
+            reg_lambda = reg_positive
+        elif reg_positive is not None:
+            reg_lambda = np.append(reg_positive, reg_lambda, axis=1)
+
         if reg_lambda is None:
             reg_lambda = reg_lambda2
         elif reg_lambda2 is not None:
@@ -810,7 +837,7 @@ class DcrCorrection(DcrModel):
         @param j  Vertical index of the center pixel
         @param i  Horizontal index of the center pixel
         @param radius  Number of pixels to either side of (j, i) to extract from each image.
-        @return Returns a numpy array of size (number of exposures, 2*(2*radius + 1))
+        @return Returns a numpy array of size (number of exposures, (2*radius + 1)**2)
         """
         img_arr = []
         for exp in self.exposures:
@@ -860,14 +887,25 @@ class DcrCorrection(DcrModel):
                                                         x_size=self.psf_size, y_size=self.psf_size))
         psf_mat = np.sum(np.hstack(psf_mat), axis=0)
         dcr_shift = np.hstack(dcr_shift)
+
+        test_values = np.ones(self.n_images*self.psf_size**2)
+        test_solution = self.solve_model(self.psf_size, self.n_step, dcr_shift, test_values,
+                                         use_linear=True, use_regularization=False)
         regularize_psf = self.build_regularization(x_size=self.psf_size, y_size=self.psf_size,
-                                                   n_step=self.n_step, frequency_regularization=True)
-        regularize_dim = regularize_psf.shape
+                                                   n_step=self.n_step, weight=np.mean(dcr_shift),
+                                                   frequency_regularization=False,
+                                                   positive_regularization=True,
+                                                   test_solution=test_solution)
         # Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images
-        vals_use = np.append(psf_mat, np.zeros(regularize_dim[1]))
-        kernel_use = np.append(dcr_shift.T, regularize_psf.T, axis=0)
-        psf_soln = scipy.optimize.nnls(kernel_use, vals_use)
-        psf_model_large = np.reshape(psf_soln[0], (self.n_step, self.psf_size, self.psf_size))
+        psf_model_large = DcrCorrection.solve_model(self.psf_size, self.n_step, dcr_shift, psf_mat,
+                                                    use_linear=True, regularization=regularize_psf,
+                                                    use_regularization=True)
+        # regularize_dim = regularize_psf.shape
+        # vals_use = np.append(psf_mat, np.zeros(regularize_dim[1]))
+        # kernel_use = np.append(dcr_shift.T, regularize_psf.T, axis=0)
+        # psf_soln = scipy.optimize.nnls(kernel_use, vals_use)
+        # psf_model_large = np.reshape(psf_soln[0], (self.n_step, self.psf_size, self.psf_size))
+
         p0 = self.psf_size//2 - self.kernel_size//2
         p1 = p0 + self.kernel_size
         # After solving for the (potentially) large psf, store only the central portion of size kernel_size.
@@ -879,7 +917,8 @@ class DcrCorrection(DcrModel):
         psfK = afwMath.FixedKernel(psf_image)
         self.psf = measAlg.KernelPsf(psfK)
 
-    def build_model(self, use_full=True, use_regularization=True, use_only_detected=False, verbose=True):
+    def build_model(self, use_full=True, use_regularization=True, use_only_detected=False, verbose=True,
+                    use_linear=True, positive_regularization=False, frequency_regularization=True):
         """!Calculate a model of the true sky using the known DCR offset for each freq plane.
 
         @param use_full  Flag, set to True to use measured PSF for each exposure,
@@ -891,6 +930,17 @@ class DcrCorrection(DcrModel):
         @param verbose  Flag, set to True to print progress messages.
         """
         dcr_kernel = self.build_dcr_kernel(use_full=use_full)
+        if use_regularization:
+            test_values = np.ones(self.n_images*self.kernel_size**2)
+            test_solution = self.solve_model(self.kernel_size, self.n_step, dcr_kernel, test_values,
+                                             use_linear=use_linear, use_regularization=False)
+            self.regularize = self.build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
+                                                        n_step=self.n_step, weight=np.mean(dcr_kernel),
+                                                        frequency_regularization=frequency_regularization,
+                                                        positive_regularization=positive_regularization,
+                                                        test_solution=test_solution)
+        lstsq_kernel = self.build_lstsq_kernel(dcr_kernel, regularization=self.regularize,
+                                               use_regularization=use_regularization)
         self.model = np.zeros((self.n_step, self.y_size, self.x_size))
         self.weights = np.zeros_like(self.model)
         pix_radius = self.kernel_size//2
@@ -921,10 +971,32 @@ class DcrCorrection(DcrModel):
                         continue
                 img_vals = self._extract_image_vals(j, i, radius=pix_radius)
 
-                model_vals = self.solve_model(dcr_kernel, img_vals, use_regularization=use_regularization)
+                model_vals = self.solve_model(self.kernel_size, self.n_step, dcr_kernel, img_vals,
+                                              lstsq_kernel, use_linear=use_linear,
+                                              use_regularization=use_regularization)
                 self._insert_model_vals(j, i, model_vals, radius=pix_radius)
         if verbose:
             print("\nFinished building model.")
+
+    @staticmethod
+    def build_lstsq_kernel(dcr_kernel, regularization=None, use_regularization=True):
+        """!Build the matrix of the form (A^T A)^-1 A^T for a linear least squares solution.
+
+        @param dcr_kernel  The covariance matrix describing the effect of DCR
+        @param regularization  Regularization matrix created with build_regularization
+        @param use_regularization  Flag, set to True to use regularization. The type of regularization is set
+                                    previously with build_regularization.
+        """
+        if regularization is None:
+            use_regularization = False
+        if use_regularization:
+            kernel_use = np.append(dcr_kernel.T, regularization.T, axis=0)
+        else:
+            kernel_use = dcr_kernel.T
+        gram_matrix = np.einsum('ij, ik->jk', kernel_use, kernel_use)  # compute A^T A
+        kernel_inv = np.linalg.pinv(gram_matrix)
+        lstsq_kernel = np.einsum('ij, ik->jk', kernel_inv, dcr_kernel)
+        return lstsq_kernel
 
     def build_dcr_kernel(self, use_full=None):
         """!Calculate the DCR covariance matrix for a set of exposures.
@@ -961,26 +1033,34 @@ class DcrCorrection(DcrModel):
             else:
                 self.mask = np.bitwise_or(self.mask, mask)
 
-    def solve_model(self, dcr_kernel, img_vals, use_regularization=True):
+    @staticmethod
+    def solve_model(kernel_size, n_step, dcr_kernel, img_vals, lstsq_kernel=None, use_linear=True,
+                    regularization=None, use_regularization=True):
         """!Wrapper to call a fitter using a given covariance matrix, image values, and any regularization.
 
         @param dcr_kernel  The covariance matrix describing the effect of DCR
-        @param img_vals  Image data values for the pixels being used for the calculation
+        @param img_vals  Image data values for the pixels being used for the calculation, as a 1D vector.
         @param use_regularization  Flag, set to True to use regularization. The type of regularization is set
                                     previously with build_regularization.
         """
-        x_size = self.kernel_size
-        y_size = self.kernel_size
-        if use_regularization:
-            regularize_dim = self.regularize.shape
-            vals_use = np.append(img_vals, np.zeros(regularize_dim[1]))
-            kernel_use = np.append(dcr_kernel.T, self.regularize.T, axis=0)
+        x_size = kernel_size
+        y_size = kernel_size
+        if use_linear:
+            if lstsq_kernel is None:
+                lstsq_kernel = DcrCorrection.build_lstsq_kernel(dcr_kernel, regularization=regularization,
+                                                                use_regularization=use_regularization)
+            model_vals = np.einsum('ij,j->i', lstsq_kernel, img_vals)
         else:
-            vals_use = img_vals
-            kernel_use = dcr_kernel.T
-        model_solution = scipy.optimize.nnls(kernel_use, vals_use)
-        model_vals = model_solution[0]
-        return np.reshape(model_vals, (self.n_step, y_size, x_size))
+            if use_regularization:
+                regularize_dim = regularization.shape
+                vals_use = np.append(img_vals, np.zeros(regularize_dim[1]))
+                kernel_use = np.append(dcr_kernel.T, regularization.T, axis=0)
+            else:
+                vals_use = img_vals
+                kernel_use = dcr_kernel.T
+            model_solution = scipy.optimize.nnls(kernel_use, vals_use)
+            model_vals = model_solution[0]
+        return np.reshape(model_vals, (n_step, y_size, x_size))
 
 
 def _calc_psf_kernel_subroutine(psf_img, dcr, x_size=None, y_size=None):
