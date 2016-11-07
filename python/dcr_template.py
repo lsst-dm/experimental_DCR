@@ -113,23 +113,28 @@ class DcrModel:
         if kernel_size is not None:
             self.kernel_size = kernel_size
 
-        pixel_scale = self.photoParams.platescale
+        # pixel_scale = self.photoParams.platescale
         for exp_i, calexp in enumerate(exposures):
             visitInfo = calexp.getInfo().getVisitInfo()
             el = visitInfo.getBoresightAzAlt().getLatitude()
             az = visitInfo.getBoresightAzAlt().getLongitude()
-            dcr_gen = self.dcr_generator(self.bandpass, pixel_scale=pixel_scale, elevation=el, azimuth=az)
-
-            make_kernel_kwargs = dict(exposure=calexp, dcr_gen=dcr_gen,
-                                      x_size=self.kernel_size, y_size=self.kernel_size)
-            if self.use_psf:
-                if use_full:
-                    dcr_kernel = self.calc_psf_kernel_full(psf_img=self.psf_avg, **make_kernel_kwargs)
-                else:
-                    dcr_kernel = self.calc_psf_kernel(psf_img=self.psf_avg, **make_kernel_kwargs)
-            else:
-                dcr_kernel = self.calc_offset_phase(**make_kernel_kwargs)
-
+            # dcr_gen = self.dcr_generator(self.bandpass, pixel_scale=pixel_scale, elevation=el, azimuth=az)
+            #
+            # make_kernel_kwargs = dict(exposure=calexp, dcr_gen=dcr_gen,
+            #                           x_size=self.kernel_size, y_size=self.kernel_size)
+            # if self.use_psf:
+            #     if use_full:
+            #         dcr_kernel = self.calc_psf_kernel_full(psf_img=self.psf_avg, **make_kernel_kwargs)
+            #     else:
+            #         dcr_kernel = self.calc_psf_kernel(psf_img=self.psf_avg, **make_kernel_kwargs)
+            # else:
+            #     dcr_kernel = self.calc_offset_phase(**make_kernel_kwargs)
+            #HACK!
+            self.use_psf = False
+            kernel_base = self.build_dcr_kernel(use_full=False, exposures=[calexp])
+            self.use_psf = True
+            kernel_weight = divide_kernels(self.build_dcr_kernel(use_full=True, exposures=[calexp]),
+                                           self.build_dcr_kernel(use_full=False, exposures=[calexp]))
             template = np.zeros((self.y_size, self.x_size))
             weights = np.zeros((self.y_size, self.x_size))
             pix_radius = self.kernel_size//2
@@ -139,7 +144,7 @@ class DcrModel:
                         continue
                     model_vals = self._extract_model_vals(j, i, radius=pix_radius,
                                                           model=self.model, weights=self.weights)
-                    template_vals = self._apply_dcr_kernel(dcr_kernel, model_vals)
+                    template_vals = self._apply_dcr_kernel(kernel_base*kernel_weight, model_vals)
                     self._insert_template_vals(j, i, template_vals, template=template, weights=weights,
                                                radius=pix_radius, kernel=self.psf_avg)
             # Weights may be different for each exposure
@@ -653,6 +658,33 @@ class DcrModel:
         model[weights <= 0] = 0.0
         return model
 
+    def build_dcr_kernel(self, exposures=None, use_full=None):
+        """!Calculate the DCR covariance matrix for a set of exposures.
+
+        @param use_full  Flag, set to True to use measured PSF for each exposure,
+                            or False to use the fiducial psf for each.
+        """
+        if exposures is None:
+            exposures = self.exposures
+        dcr_kernel = []
+        for img, exp in enumerate(exposures):
+            visitInfo = exp.getInfo().getVisitInfo()
+            el = visitInfo.getBoresightAzAlt().getLatitude()
+            az = visitInfo.getBoresightAzAlt().getLongitude()
+            dcr_gen = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
+                                             elevation=el, azimuth=az)
+            make_kernel_kwargs = dict(exposure=exp, dcr_gen=dcr_gen, psf_img=self.psf_avg,
+                                      x_size=self.kernel_size, y_size=self.kernel_size)
+            if self.use_psf:
+                if use_full:
+                    dcr_kernel.append(DcrModel.calc_psf_kernel_full(**make_kernel_kwargs))
+                else:
+                    dcr_kernel.append(DcrModel.calc_psf_kernel(**make_kernel_kwargs))
+            else:
+                dcr_kernel.append(DcrModel.calc_offset_phase(**make_kernel_kwargs))
+        dcr_kernel = np.hstack(dcr_kernel)
+        return dcr_kernel
+
 
 class DcrCorrection(DcrModel):
     """!Class that loads LSST calibrated exposures and produces airmass-matched template images."""
@@ -736,7 +768,7 @@ class DcrCorrection(DcrModel):
         self.use_psf = bool(use_psf)
         self.debug = bool(debug_mode)
         self.regularize = None
-        self.calc_psf_model()
+        # self.calc_psf_model()
 
     @staticmethod
     def build_regularization(x_size=None, y_size=None, n_step=None, weight=1.,
@@ -806,13 +838,15 @@ class DcrCorrection(DcrModel):
             if test_solution is None:
                 n_zero = 0
             else:
-                test_solution_use = np.reshape(test_solution, (n_step, x_size*y_size))
-                n_zero = len(test_solution_use <= 0)
+                test_solution_use = np.reshape(test_solution, (n_step*x_size*y_size))
+                sigma = np.std(test_solution_use)
+                print(sigma)
+                zero_inds = np.where(np.ravel(test_solution_use) < 0)[0]
+                n_zero = len(zero_inds)
             if n_zero > 0:
-                reg_positive = np.zeros((n_step*x_size*y_size, x_size*y_size))
-                zero_fill = np.zeros((n_step, x_size*y_size))
-                zero_fill[test_solution_use <= 0] = weight
-                reg_positive[0:: x_size*y_size, :] = zero_fill
+                reg_positive = np.zeros((n_step*x_size*y_size, n_zero))
+                for zi in range(n_zero):
+                    reg_positive[zero_inds[zi], zi] = weight*test_solution_use[zero_inds[zi]]
 
         if reg_lambda is None:
             reg_lambda = reg_positive
@@ -888,17 +922,12 @@ class DcrCorrection(DcrModel):
         psf_mat = np.sum(np.hstack(psf_mat), axis=0)
         dcr_shift = np.hstack(dcr_shift)
 
-        test_values = np.ones(self.n_images*self.psf_size**2)
-        test_solution = self.solve_model(self.psf_size, self.n_step, dcr_shift, test_values,
-                                         use_linear=True, use_regularization=False)
         regularize_psf = self.build_regularization(x_size=self.psf_size, y_size=self.psf_size,
-                                                   n_step=self.n_step, weight=np.mean(dcr_shift),
-                                                   frequency_regularization=False,
-                                                   positive_regularization=True,
-                                                   test_solution=test_solution)
+                                                   n_step=self.n_step, weight=1.,
+                                                   frequency_regularization=True)
         # Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images
         psf_model_large = DcrCorrection.solve_model(self.psf_size, self.n_step, dcr_shift, psf_mat,
-                                                    use_linear=True, regularization=regularize_psf,
+                                                    use_linear=False, regularization=regularize_psf,
                                                     use_regularization=True)
         # regularize_dim = regularize_psf.shape
         # vals_use = np.append(psf_mat, np.zeros(regularize_dim[1]))
@@ -929,18 +958,33 @@ class DcrCorrection(DcrModel):
                                     of detected sources.
         @param verbose  Flag, set to True to print progress messages.
         """
-        dcr_kernel = self.build_dcr_kernel(use_full=use_full)
+        #HACK!!!
+        self.use_psf = False
+        kernel_base = self.build_dcr_kernel(use_full=False)
+        self.use_psf = True
+        kernel_restore = None #self.build_dcr_kernel(use_full=False)
+        kernel_weight = divide_kernels(self.build_dcr_kernel(use_full=True),
+                                       self.build_dcr_kernel(use_full=False))
+        # dcr_kernel = self.build_dcr_kernel(use_full=use_full)
         if use_regularization:
+            if kernel_weight is None:
+                regularize_scale = np.max(kernel_base)
+            else:
+                regularize_scale = np.sqrt(np.max(kernel_base)*np.max(kernel_weight))
             test_values = np.ones(self.n_images*self.kernel_size**2)
-            test_solution = self.solve_model(self.kernel_size, self.n_step, dcr_kernel, test_values,
-                                             use_linear=use_linear, use_regularization=False)
+            test_solution = self.solve_model(self.kernel_size, self.n_step, kernel_base, test_values,
+                                             use_linear=use_linear, use_regularization=False,
+                                             kernel_restore=kernel_restore, kernel_weight=kernel_weight)
             self.regularize = self.build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
-                                                        n_step=self.n_step, weight=np.mean(dcr_kernel),
+                                                        n_step=self.n_step, weight=regularize_scale,
                                                         frequency_regularization=frequency_regularization,
                                                         positive_regularization=positive_regularization,
                                                         test_solution=test_solution)
-        lstsq_kernel = self.build_lstsq_kernel(dcr_kernel, regularization=self.regularize,
-                                               use_regularization=use_regularization)
+        else:
+            self.regularize = None
+        lstsq_kernel = self.build_lstsq_kernel(kernel_base, regularization=self.regularize,
+                                               use_regularization=use_regularization,
+                                               kernel_restore=kernel_restore, kernel_weight=kernel_weight)
         self.model = np.zeros((self.n_step, self.y_size, self.x_size))
         self.weights = np.zeros_like(self.model)
         pix_radius = self.kernel_size//2
@@ -971,15 +1015,17 @@ class DcrCorrection(DcrModel):
                         continue
                 img_vals = self._extract_image_vals(j, i, radius=pix_radius)
 
-                model_vals = self.solve_model(self.kernel_size, self.n_step, dcr_kernel, img_vals,
+                model_vals = self.solve_model(self.kernel_size, self.n_step, kernel_base, img_vals,
                                               lstsq_kernel, use_linear=use_linear,
-                                              use_regularization=use_regularization)
+                                              use_regularization=use_regularization,
+                                              regularization=self.regularize)
                 self._insert_model_vals(j, i, model_vals, radius=pix_radius)
         if verbose:
             print("\nFinished building model.")
 
     @staticmethod
-    def build_lstsq_kernel(dcr_kernel, regularization=None, use_regularization=True):
+    def build_lstsq_kernel(dcr_kernel, regularization=None, use_regularization=True,
+                           kernel_weight=None, kernel_restore=None):
         """!Build the matrix of the form (A^T A)^-1 A^T for a linear least squares solution.
 
         @param dcr_kernel  The covariance matrix describing the effect of DCR
@@ -991,36 +1037,22 @@ class DcrCorrection(DcrModel):
             use_regularization = False
         if use_regularization:
             kernel_use = np.append(dcr_kernel.T, regularization.T, axis=0)
+            if kernel_weight is None:
+                kernel_weighted_use = kernel_use
+            else:
+                kernel_weighted_use = np.append((dcr_kernel*kernel_weight).T, regularization.T, axis=0)
         else:
             kernel_use = dcr_kernel.T
-        gram_matrix = np.einsum('ij, ik->jk', kernel_use, kernel_use)  # compute A^T A
+            if kernel_weight is None:
+                kernel_weighted_use = kernel_use
+        if kernel_restore is None:
+            kernel_restore_use = dcr_kernel
+        else:
+            kernel_restore_use = kernel_restore
+        gram_matrix = np.einsum('ij, ik->jk', kernel_weighted_use, kernel_use)  # compute A^T A
         kernel_inv = np.linalg.pinv(gram_matrix)
-        lstsq_kernel = np.einsum('ij, ik->jk', kernel_inv, dcr_kernel)
+        lstsq_kernel = np.einsum('ij, ik->jk', kernel_inv, kernel_restore_use)
         return lstsq_kernel
-
-    def build_dcr_kernel(self, use_full=None):
-        """!Calculate the DCR covariance matrix for a set of exposures.
-
-        @param use_full  Flag, set to True to use measured PSF for each exposure,
-                            or False to use the fiducial psf for each.
-        """
-        dcr_kernel = []
-        for img, exp in enumerate(self.exposures):
-            el = self.elevation_arr[img]
-            az = self.azimuth_arr[img]
-            dcr_gen = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                             elevation=el, azimuth=az)
-            make_kernel_kwargs = dict(exposure=exp, dcr_gen=dcr_gen, psf_img=self.psf_avg,
-                                      x_size=self.kernel_size, y_size=self.kernel_size)
-            if self.use_psf:
-                if use_full:
-                    dcr_kernel.append(DcrModel.calc_psf_kernel_full(**make_kernel_kwargs))
-                else:
-                    dcr_kernel.append(DcrModel.calc_psf_kernel(**make_kernel_kwargs))
-            else:
-                dcr_kernel.append(DcrModel.calc_offset_phase(**make_kernel_kwargs))
-        dcr_kernel = np.hstack(dcr_kernel)
-        return dcr_kernel
 
     def _combine_masks(self):
         """!Compute the bitwise OR of the input masks."""
@@ -1035,7 +1067,8 @@ class DcrCorrection(DcrModel):
 
     @staticmethod
     def solve_model(kernel_size, n_step, dcr_kernel, img_vals, lstsq_kernel=None, use_linear=True,
-                    regularization=None, use_regularization=True):
+                    regularization=None, use_regularization=True,
+                    kernel_weight=None, kernel_restore=None):
         """!Wrapper to call a fitter using a given covariance matrix, image values, and any regularization.
 
         @param dcr_kernel  The covariance matrix describing the effect of DCR
@@ -1048,10 +1081,11 @@ class DcrCorrection(DcrModel):
         if use_linear:
             if lstsq_kernel is None:
                 lstsq_kernel = DcrCorrection.build_lstsq_kernel(dcr_kernel, regularization=regularization,
-                                                                use_regularization=use_regularization)
+                                                                use_regularization=use_regularization,
+                                                                kernel_weight=None, kernel_restore=None)
             model_vals = np.einsum('ij,j->i', lstsq_kernel, img_vals)
         else:
-            if use_regularization:
+            if use_regularization & (regularization is not None):
                 regularize_dim = regularization.shape
                 vals_use = np.append(img_vals, np.zeros(regularize_dim[1]))
                 kernel_use = np.append(dcr_kernel.T, regularization.T, axis=0)
@@ -1120,6 +1154,13 @@ def _kernel_1d(offset, size):
         else:
             kernel += np.sin(pi*(pix - loc))/(pi*(pix - loc))
     return kernel/n_substep
+
+
+def divide_kernels(kernel_numerator, kernel_denominator, threshold=1e-3):
+    kernel_return = np.zeros_like(kernel_numerator)
+    inds_use = kernel_denominator/np.max(kernel_denominator) >= threshold
+    kernel_return[inds_use] = kernel_numerator[inds_use]/kernel_denominator[inds_use]
+    return kernel_return
 
 
 class NonnegLstsqIterFit():

@@ -433,6 +433,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         # Call the actual DcrCorrection class here, not just _BasicDcrCorrection
         self.dcrCorr = DcrCorrection(kernel_size=self.kernel_size, band_name=band_name,
                                      n_step=self.n_step, exposures=exposures, use_psf=use_psf)
+        self.dcrCorr.calc_psf_model()
 
     def tearDown(self):
         del self.dcrCorr
@@ -553,9 +554,9 @@ class SolverTestCast(lsst.utils.tests.TestCase):
         """Call build_model with as many options as possible turned off."""
         """Compare the result of build_model to previously computed values."""
         data_file = "test_data/build_model_vals.npy"
-        self.dcrCorr.psf_avg = 1.
+        self.dcrCorr.calc_psf_model()
         self.dcrCorr.build_model(use_full=False, use_regularization=False,
-                                 use_only_detected=False, verbose=False)
+                                 use_only_detected=False, verbose=False, use_linear=True)
         model_vals = self.dcrCorr.model
         model_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(model_vals, model_ref)
@@ -564,13 +565,16 @@ class SolverTestCast(lsst.utils.tests.TestCase):
         """Compare the result of _solve_model to previously computed values."""
         data_file = "test_data/solve_model_vals.npy"
         y_size, x_size = self.dcrCorr.exposures[0].getDimensions()
-        pix_radius = self.dcrCorr.kernel_size//2
+        kernel_size = self.dcrCorr.kernel_size
+        n_step = self.dcrCorr.n_step
+        pix_radius = kernel_size//2
         # Make j and i different slightly so we can tell if the indices get swapped
         i = x_size//2 + 1
         j = y_size//2 - 1
         image_vals = self.dcrCorr._extract_image_vals(j, i, radius=pix_radius)
         dcr_kernel = self.dcrCorr.build_dcr_kernel(use_full=False)
-        model_vals = self.dcrCorr.solve_model(dcr_kernel, image_vals, use_regularization=False)
+        model_vals = self.dcrCorr.solve_model(kernel_size, n_step, dcr_kernel, image_vals,
+                                              use_regularization=False)
         model_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(model_vals, model_ref)
 
@@ -588,7 +592,8 @@ class SolverTestCast(lsst.utils.tests.TestCase):
         self.dcrCorr.regularize = DcrCorrection.build_regularization(x_size=kernel_size, y_size=kernel_size,
                                                                      n_step=n_step,
                                                                      frequency_regularization=True)
-        model_vals = self.dcrCorr.solve_model(dcr_kernel, image_vals, use_regularization=True)
+        model_vals = self.dcrCorr.solve_model(kernel_size, n_step, dcr_kernel, image_vals,
+                                              use_regularization=True)
         model_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(model_vals, model_ref)
 
