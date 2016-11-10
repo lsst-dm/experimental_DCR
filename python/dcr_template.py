@@ -820,9 +820,9 @@ class DcrCorrection(DcrModel):
             reg_lambda = np.zeros((n_step*x_size*y_size, (n_step - 1)*x_size*y_size))
             for f in range(n_step - 1):
                 for ij in range(x_size*y_size):
-                    reg_lambda[f*x_size*y_size + ij, f*x_size*y_size + ij] = weight
-                    reg_lambda[(f + 1)*x_size*y_size + ij, f*x_size*y_size + ij] = -weight
-            reg_lambda = np.append(reg_lambda, -reg_lambda, axis=1)
+                    reg_lambda[f*x_size*y_size + ij, f*x_size*y_size + ij] = 2*weight
+                    reg_lambda[(f + 1)*x_size*y_size + ij, f*x_size*y_size + ij] = -2*weight
+            # Use 2*weight above instead of extending with np.append(reg_lambda, -reg_lambda, axis=1)
 
         if frequency_second_regularization:
             # regularization that forces the derivative of the SED to be smooth

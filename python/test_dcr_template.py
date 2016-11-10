@@ -526,7 +526,7 @@ class RegularizationTestCase(lsst.utils.tests.TestCase):
         self.assertFloatsAlmostEqual(reg, test_reg)
 
 
-class SolverTestCast(lsst.utils.tests.TestCase):
+class SolverTestCase(lsst.utils.tests.TestCase):
     def setUp(self):
         data_file = "test_data/exposures.npy"
         exposures = np.load(data_file)
