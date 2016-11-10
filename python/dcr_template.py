@@ -1045,6 +1045,8 @@ class DcrCorrection(DcrModel):
             kernel_use = dcr_kernel.T
             if kernel_weight is None:
                 kernel_weighted_use = kernel_use
+            else:
+                kernel_weighted_use = kernel_weight.T
         if kernel_restore is None:
             kernel_restore_use = dcr_kernel
         else:
