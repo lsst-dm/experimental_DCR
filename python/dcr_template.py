@@ -447,13 +447,15 @@ class DcrModel:
         return psf_kernel_arr
 
     @staticmethod
-    def calc_psf_kernel_full(exposure=None, dcr_gen=None, x_size=None, y_size=None, **kwargs):
+    def calc_psf_kernel_full(exposure=None, dcr_gen=None, x_size=None, y_size=None,
+                             center_only=False, **kwargs):
         """!Calculate the covariance matrix for a DCR-shifted psf that is measured for each exposure.
 
         @param exposure  An LSST exposure object. Always needed for its psf.
         @param dcr_gen  A dcr generator of offsets, returned by dcr_generator.
         @param x_size  Width in pixels of the region to perform the calculation over. Default is entire image
         @param y_size  Height in pixels of the region to perform the calculation over. Default is entire image
+        @param center_only  Flag, set to True to calculate the covariance for only the center pixel.
         @return Returns the covariance matrix of a measured psf shifted by an offset from dcr_generator
         """
         if y_size is None:
@@ -463,7 +465,8 @@ class DcrModel:
         psf_kernel_arr = []
         psf_img = exposure.getPsf().computeKernelImage().getArray()
         for dcr in dcr_gen:
-            kernel_single = _calc_psf_kernel_subroutine(psf_img, dcr, x_size=x_size, y_size=y_size)
+            kernel_single = _calc_psf_kernel_subroutine(psf_img, dcr, x_size=x_size, y_size=y_size,
+                                                        center_only=center_only)
             psf_kernel_arr.append(kernel_single)
 
         psf_kernel_arr = np.vstack(psf_kernel_arr)
@@ -908,12 +911,11 @@ class DcrCorrection(DcrModel):
             # Taken at zenith, since we're solving for the shift and don't want to introduce any extra.
             dcr_genZ = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                               elevation=Angle(np.pi/2), azimuth=az)
-            psf_zen = DcrModel.calc_psf_kernel_full(exposure=exp, dcr_gen=dcr_genZ,
+            psf_zen = DcrModel.calc_psf_kernel_full(exposure=exp, dcr_gen=dcr_genZ, center_only=True,
                                                     x_size=self.psf_size, y_size=self.psf_size)
             # calc_psf_kernel_full returns the full covariance matrix of the psf, but we only want
             #   the covariance of the center pixel.
-            psf_npix = self.psf_size * self.psf_size
-            psf_mat.append(psf_zen[psf_npix//2::psf_npix, :])
+            psf_mat.append(psf_zen)
             # Calculate the expected shift (with no psf) due to DCR
             dcr_gen = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                              elevation=el, azimuth=az)
@@ -1099,13 +1101,14 @@ class DcrCorrection(DcrModel):
         return np.reshape(model_vals, (n_step, y_size, x_size))
 
 
-def _calc_psf_kernel_subroutine(psf_img, dcr, x_size=None, y_size=None):
+def _calc_psf_kernel_subroutine(psf_img, dcr, x_size=None, y_size=None, center_only=False):
     """!Subroutine to build a covariance matrix from an image of a PSF.
 
     @param psf_img  Numpy array, containing an image of the PSF.
     @param dcr  Named tuple containing the x and y pixel offsets at the sub-filter start and end wavelength.
     @param x_size  Width, in pixels, of the region of the image to include in the covariance matrix
     @param y_size  Height, in pixels, of the region of the image to include in the covariance matrix
+    @param center_only  Flag, set to True to calculate the covariance for only the center pixel.
     """
     if (x_size is None) | (y_size is None):
         y_size, x_size = psf_img.shape
@@ -1126,7 +1129,13 @@ def _calc_psf_kernel_subroutine(psf_img, dcr, x_size=None, y_size=None):
     n_substep = 10
     psf_mat = np.zeros((x_size * y_size, x_size * y_size))
     for j in range(y_size):
+        if center_only:
+            if j != y_size//2:
+                continue
         for i in range(x_size):
+            if center_only:
+                if i != x_size//2:
+                    continue
             ij = i + j * x_size
             sub_image = np.zeros_like(psf_img)
             for n in range(n_substep):
