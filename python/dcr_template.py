@@ -900,7 +900,7 @@ class DcrCorrection(DcrModel):
             self.weights[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += psf_use
 
     def calc_psf_model(self):
-        """!Calculate the fiducial psf from a givedn set of exposures, accounting for DCR."""
+        """!Calculate the fiducial psf from a given set of exposures, accounting for DCR."""
         psf_mat = []
         dcr_shift = []
         for img, exp in enumerate(self.exposures):
@@ -1028,12 +1028,15 @@ class DcrCorrection(DcrModel):
     @staticmethod
     def build_lstsq_kernel(dcr_kernel, regularization=None, use_regularization=True,
                            kernel_weight=None, kernel_restore=None):
-        """!Build the matrix of the form (A^T A)^-1 A^T for a linear least squares solution.
+        """!Build the matrix of the form M = (A^T A)^-1 A^T for a linear least squares solution.
 
         @param dcr_kernel  The covariance matrix describing the effect of DCR
         @param regularization  Regularization matrix created with build_regularization
         @param use_regularization  Flag, set to True to use regularization. The type of regularization is set
                                     previously with build_regularization.
+        @param kernel_weight
+        @param kernel_restore
+        @return  Returns the matrix M for the linear least squares solution
         """
         if regularization is None:
             use_regularization = False
@@ -1168,6 +1171,14 @@ def _kernel_1d(offset, size):
 
 
 def divide_kernels(kernel_numerator, kernel_denominator, threshold=1e-3):
+    """Safely divide two kernels, avoiding zeroes and denominator values below threshold.
+
+    @param kernel_numerator  Array numerator A, of A/B = result.
+    @param kernel_denominator  Array denominator B, of A/B = result.
+    @param threshold  Relative threshold of kernel_denominator values to use, relative to the maximum value.
+    @return  Returns an array of the same type and shape as kernel_numerator, with values of A/B where
+             B is greater than max(B)*threshold, and values of 0 everywhere else.
+    """
     kernel_return = np.zeros_like(kernel_numerator)
     inds_use = kernel_denominator/np.max(kernel_denominator) >= threshold
     kernel_return[inds_use] = kernel_numerator[inds_use]/kernel_denominator[inds_use]
