@@ -554,7 +554,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         data_file = "test_data/build_model_vals.npy"
         self.dcrCorr.calc_psf_model()
         self.dcrCorr.build_model(use_full=False, use_regularization=False,
-                                 use_only_detected=False, verbose=False, use_linear=True)
+                                 use_only_detected=False, verbose=False, use_nonnegative=False)
         model_vals = self.dcrCorr.model
         model_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(model_vals, model_ref)

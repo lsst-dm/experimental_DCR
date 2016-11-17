@@ -919,7 +919,7 @@ class DcrCorrection(DcrModel):
                                                    frequency_regularization=True)
         # Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images
         psf_model_large = DcrCorrection.solve_model(self.psf_size, self.n_step, dcr_shift, psf_mat,
-                                                    use_linear=False, regularization=regularize_psf,
+                                                    use_nonnegative=True, regularization=regularize_psf,
                                                     use_regularization=True)
         # regularize_dim = regularize_psf.shape
         # vals_use = np.append(psf_mat, np.zeros(regularize_dim[1]))
@@ -961,8 +961,8 @@ class DcrCorrection(DcrModel):
                 regularize_scale = np.sqrt(np.max(kernel_base)*np.max(kernel_weight))
             test_values = np.ones(self.n_images*self.kernel_size**2)
             test_solution = self.solve_model(self.kernel_size, self.n_step, kernel_base, test_values,
-                                             use_linear=use_linear, use_regularization=False,
                                              kernel_restore=kernel_restore, kernel_weight=kernel_weight)
+                                             use_nonnegative=use_nonnegative, use_regularization=False,
             self.regularize = self.build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
                                                         n_step=self.n_step, weight=regularize_scale,
                                                         frequency_regularization=frequency_regularization,
@@ -1004,7 +1004,7 @@ class DcrCorrection(DcrModel):
                 img_vals = self._extract_image_vals(j, i, radius=pix_radius)
 
                 model_vals = self.solve_model(self.kernel_size, self.n_step, kernel_base, img_vals,
-                                              lstsq_kernel, use_linear=use_linear,
+                                              lstsq_kernel, use_nonnegative=use_nonnegative,
                                               use_regularization=use_regularization,
                                               regularization=self.regularize)
                 self._insert_model_vals(j, i, model_vals, radius=pix_radius)
@@ -1059,7 +1059,7 @@ class DcrCorrection(DcrModel):
                 self.mask = np.bitwise_or(self.mask, mask)
 
     @staticmethod
-    def solve_model(kernel_size, n_step, dcr_kernel, img_vals, lstsq_kernel=None, use_linear=True,
+    def solve_model(kernel_size, n_step, dcr_kernel, img_vals, lstsq_kernel=None, use_nonnegative=False,
                     regularization=None, use_regularization=True,
                     kernel_weight=None, kernel_restore=None):
         """!Wrapper to call a fitter using a given covariance matrix, image values, and any regularization.
@@ -1071,13 +1071,13 @@ class DcrCorrection(DcrModel):
         """
         x_size = kernel_size
         y_size = kernel_size
-        if use_linear:
             if lstsq_kernel is None:
                 lstsq_kernel = DcrCorrection.build_lstsq_kernel(dcr_kernel, regularization=regularization,
                                                                 use_regularization=use_regularization,
                                                                 kernel_weight=None, kernel_restore=None)
             model_vals = np.einsum('ij,j->i', lstsq_kernel, img_vals)
         else:
+        if use_nonnegative:
             if use_regularization & (regularization is not None):
                 regularize_dim = regularization.shape
                 vals_use = np.append(img_vals, np.zeros(regularize_dim[1]))
