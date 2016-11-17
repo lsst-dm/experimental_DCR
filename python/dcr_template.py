@@ -874,10 +874,35 @@ class DcrCorrection(DcrModel):
         self.model[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += vals*psf_use
         self.weights[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += psf_use
 
+    @staticmethod
+    def fit_psf_size(exposures, minimum_psf_size=5, threshold=1e-2):
+        """!Fit for the size of the psf to use from a set of exposures.
+
+        @param exposures  List of LSST exposures.
+        @param minimum_psf_size  Force the fit psf size to be at least this size, in pixels
+        @param threshold  Fraction of total PSF power to cut from edge of PSF.
+        """
+        psf_size_arr = np.zeros(len(exposures))
+        for exp_i, exp in enumerate(exposures):
+            psf_img = exp.getPsf().computeKernelImage().getArray()
+            psf_dim = psf_img.shape[0]
+            if psf_dim <= minimum_psf_size:
+                psf_size_arr[exp_i] = psf_dim
+                continue
+            psf_sum = np.sum(psf_img)
+            psf_sum_arr = np.zeros(psf_dim//2)
+            for i in range(0, psf_dim//2 - minimum_psf_size//2):
+                psf_sum_arr[i] = np.sum(psf_img[i: psf_dim - i, i: psf_dim - i])
+            psf_rel_diff = np.abs(psf_sum_arr - psf_sum)/psf_sum
+            psf_size_arr[exp_i] = 2*(psf_dim//2 - np.max(np.where(psf_rel_diff < threshold))) + 1
+        return(int(np.min(psf_size_arr)))
+
+    # @profile
     def calc_psf_model(self):
         """!Calculate the fiducial psf from a given set of exposures, accounting for DCR."""
         psf_mat = []
         dcr_shift = []
+        self.psf_size = self.fit_psf_size(self.exposures, minimum_psf_size=self.kernel_size, threshold=5e-2)
         for img, exp in enumerate(self.exposures):
             el = self.elevation_arr[img]
             az = self.azimuth_arr[img]
