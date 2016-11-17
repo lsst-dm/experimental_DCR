@@ -939,7 +939,7 @@ class DcrCorrection(DcrModel):
         self.psf = measAlg.KernelPsf(psfK)
 
     def build_model(self, use_full=True, use_regularization=True, use_only_detected=False, verbose=True,
-                    use_linear=True, positive_regularization=False, frequency_regularization=True):
+                    use_nonnegative=False, positive_regularization=False, frequency_regularization=True):
         """!Calculate a model of the true sky using the known DCR offset for each freq plane.
 
         @param use_full  Flag, set to True to use measured PSF for each exposure,
@@ -961,8 +961,8 @@ class DcrCorrection(DcrModel):
                 regularize_scale = np.sqrt(np.max(kernel_base)*np.max(kernel_weight))
             test_values = np.ones(self.n_images*self.kernel_size**2)
             test_solution = self.solve_model(self.kernel_size, self.n_step, kernel_base, test_values,
-                                             kernel_restore=kernel_restore, kernel_weight=kernel_weight)
                                              use_nonnegative=use_nonnegative, use_regularization=False,
+                                             kernel_weight=kernel_weight)
             self.regularize = self.build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
                                                         n_step=self.n_step, weight=regularize_scale,
                                                         frequency_regularization=frequency_regularization,
@@ -972,7 +972,7 @@ class DcrCorrection(DcrModel):
             self.regularize = None
         lstsq_kernel = self.build_lstsq_kernel(kernel_base, regularization=self.regularize,
                                                use_regularization=use_regularization,
-                                               kernel_restore=kernel_restore, kernel_weight=kernel_weight)
+                                               kernel_weight=kernel_weight)
         self.model = np.zeros((self.n_step, self.y_size, self.x_size))
         self.weights = np.zeros_like(self.model)
         pix_radius = self.kernel_size//2
@@ -1012,39 +1012,32 @@ class DcrCorrection(DcrModel):
             print("\nFinished building model.")
 
     @staticmethod
-    def build_lstsq_kernel(dcr_kernel, regularization=None, use_regularization=True,
-                           kernel_weight=None, kernel_restore=None):
+    def build_lstsq_kernel(dcr_kernel, regularization=None, use_regularization=True, kernel_weight=None):
         """!Build the matrix of the form M = (A^T A)^-1 A^T for a linear least squares solution.
 
         @param dcr_kernel  The covariance matrix describing the effect of DCR
         @param regularization  Regularization matrix created with build_regularization
         @param use_regularization  Flag, set to True to use regularization. The type of regularization is set
                                     previously with build_regularization.
-        @param kernel_weight
-        @param kernel_restore
+        @param kernel_weight  [optional] Numpy array, of the same shape as dcr_kernel.
+                                         Additional weighting to include when computing the matrix inverse.
         @return  Returns the matrix M for the linear least squares solution
         """
+        if kernel_weight is None:
+            kernel_weighted_use = dcr_kernel
+        else:
+            kernel_weighted_use = dcr_kernel*kernel_weight
+        kernel_use = dcr_kernel.T
+
         if regularization is None:
             use_regularization = False
         if use_regularization:
-            kernel_use = np.append(dcr_kernel.T, regularization.T, axis=0)
-            if kernel_weight is None:
-                kernel_weighted_use = kernel_use
-            else:
-                kernel_weighted_use = np.append((dcr_kernel*kernel_weight).T, regularization.T, axis=0)
-        else:
-            kernel_use = dcr_kernel.T
-            if kernel_weight is None:
-                kernel_weighted_use = kernel_use
-            else:
-                kernel_weighted_use = (dcr_kernel*kernel_weight).T
-        if kernel_restore is None:
-            kernel_restore_use = dcr_kernel
-        else:
-            kernel_restore_use = kernel_restore
-        gram_matrix = np.einsum('ij, ik->jk', kernel_weighted_use, kernel_use)  # compute A^T A
+            kernel_use = np.append(kernel_use, regularization.T, axis=0)
+            kernel_weighted_use = np.append(kernel_weighted_use, regularization, axis=1)
+
+        gram_matrix = kernel_weighted_use.dot(kernel_use)  # compute A^T A
         kernel_inv = np.linalg.pinv(gram_matrix)
-        lstsq_kernel = np.einsum('ij, ik->jk', kernel_inv, kernel_restore_use)
+        lstsq_kernel = kernel_inv.T.dot(dcr_kernel)
         return lstsq_kernel
 
     def _combine_masks(self):
@@ -1071,12 +1064,6 @@ class DcrCorrection(DcrModel):
         """
         x_size = kernel_size
         y_size = kernel_size
-            if lstsq_kernel is None:
-                lstsq_kernel = DcrCorrection.build_lstsq_kernel(dcr_kernel, regularization=regularization,
-                                                                use_regularization=use_regularization,
-                                                                kernel_weight=None, kernel_restore=None)
-            model_vals = np.einsum('ij,j->i', lstsq_kernel, img_vals)
-        else:
         if use_nonnegative:
             if use_regularization & (regularization is not None):
                 regularize_dim = regularization.shape
@@ -1087,6 +1074,13 @@ class DcrCorrection(DcrModel):
                 kernel_use = dcr_kernel.T
             model_solution = scipy.optimize.nnls(kernel_use, vals_use)
             model_vals = model_solution[0]
+        else:
+            if lstsq_kernel is None:
+                lstsq_kernel = DcrCorrection.build_lstsq_kernel(dcr_kernel, regularization=regularization,
+                                                                use_regularization=use_regularization,
+                                                                kernel_weight=None)
+            # model_vals = np.einsum('ij,j->i', lstsq_kernel, img_vals)
+            model_vals = lstsq_kernel.dot(img_vals)
         return np.reshape(model_vals, (n_step, y_size, x_size))
 
 
