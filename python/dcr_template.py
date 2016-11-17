@@ -129,12 +129,9 @@ class DcrModel:
             #         dcr_kernel = self.calc_psf_kernel(psf_img=self.psf_avg, **make_kernel_kwargs)
             # else:
             #     dcr_kernel = self.calc_offset_phase(**make_kernel_kwargs)
-            #HACK!
-            self.use_psf = False
-            kernel_base = self.build_dcr_kernel(use_full=False, exposures=[calexp])
-            self.use_psf = True
-            kernel_weight = divide_kernels(self.build_dcr_kernel(use_full=True, exposures=[calexp]),
-                                           self.build_dcr_kernel(use_full=False, exposures=[calexp]))
+            kernel_base = self.build_dcr_kernel([calexp], use_full=False, use_psf=False)
+            kernel_weight = divide_kernels(self.build_dcr_kernel([calexp], use_full=True, use_psf=True),
+                                           self.build_dcr_kernel([calexp], use_full=False, use_psf=True))
             template = np.zeros((self.y_size, self.x_size))
             weights = np.zeros((self.y_size, self.x_size))
             pix_radius = self.kernel_size//2
@@ -599,7 +596,7 @@ class DcrModel:
             exp = self.create_exposure(self.model[f, :, :], variance=self.weights[f, :, :],
                                        elevation=Angle(np.pi/2), azimuth=Angle(0), ksupport=self.kernel_size,
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
-                                       wavestep=self.bandpass.wavelen_step, psf_flag=self.use_psf)
+                                       wavestep=self.bandpass.wavelen_step)
             butler.put(exp, "dcrModel", dataId=self._build_model_dataId(self.photoParams.bandpass, f))
 
     def load_model(self, model_repository=None, band_name='g', **kwargs):
@@ -632,7 +629,6 @@ class DcrModel:
         self.wcs = dcrModel.getWcs()
         self.n_step = len(model_arr)
         wave_step = meta.get("WAVESTEP")
-        self.use_psf = meta.get("PSF_FLAG")
         self.y_size, self.x_size = dcrModel.getDimensions()
         self.pixel_scale = self.wcs.pixelScale().asArcseconds()
         exposure_time = dcrModel.getInfo().getVisitInfo().getExposureTime()
@@ -661,16 +657,17 @@ class DcrModel:
         model[weights <= 0] = 0.0
         return model
 
-    def build_dcr_kernel(self, exposures=None, use_full=None):
+    def build_dcr_kernel(self, exposures, use_full=None, use_psf=False):
         """!Calculate the DCR covariance matrix for a set of exposures.
 
+        @param exposures  List of LSST exposures.
         @param use_full  Flag, set to True to use measured PSF for each exposure,
                             or False to use the fiducial psf for each.
+        @param use_psf  Flag, set to True to use the PSF for calculating the covariance matrix.
+                            If set to False, then use_full is ignored.
         """
-        if exposures is None:
-            exposures = self.exposures
         dcr_kernel = []
-        for img, exp in enumerate(exposures):
+        for exp in exposures:
             visitInfo = exp.getInfo().getVisitInfo()
             el = visitInfo.getBoresightAzAlt().getLatitude()
             az = visitInfo.getBoresightAzAlt().getLongitude()
@@ -678,7 +675,7 @@ class DcrModel:
                                              elevation=el, azimuth=az)
             make_kernel_kwargs = dict(exposure=exp, dcr_gen=dcr_gen, psf_img=self.psf_avg,
                                       x_size=self.kernel_size, y_size=self.kernel_size)
-            if self.use_psf:
+            if use_psf:
                 if use_full:
                     dcr_kernel.append(DcrModel.calc_psf_kernel_full(**make_kernel_kwargs))
                 else:
@@ -693,8 +690,7 @@ class DcrCorrection(DcrModel):
     """!Class that loads LSST calibrated exposures and produces airmass-matched template images."""
 
     def __init__(self, repository=".", obsid_range=None, band_name='g', wavelength_step=10,
-                 n_step=None, use_psf=True, debug_mode=False,
-                 kernel_size=None, exposures=None, **kwargs):
+                 n_step=None, debug_mode=False, kernel_size=None, exposures=None, **kwargs):
         """!Load images from the repository and set up parameters.
 
         @param repository  path to repository with the data. String, defaults to working directory
@@ -702,8 +698,8 @@ class DcrCorrection(DcrModel):
         @param band_name  Common name of the filter used. For LSST, use u, g, r, i, z, or y
         @param wavelength_step  Overridden by n_step. Sub-filter width, in nm.
         @param n_step  Number of sub-filter wavelength planes to model. Optional if wavelength_step supplied.
-        @param use_psf  Flag. Set to True to include the psf when calculating the DCR covariance matrix.
-                              Set to False to use only a simple shift.
+        # @param use_psf  Flag. Set to True to include the psf when calculating the DCR covariance matrix.
+        #                       Set to False to use only a simple shift.
         @param debug_mode  Flag. Set to True to run in debug mode, which may have unpredictable behavior.
         @param kernel_size  Size of the kernel to use for calculating the covariance matrix, in pixels.
                             Note that kernel_size must be odd, so even values will be increased by one.
@@ -768,7 +764,6 @@ class DcrCorrection(DcrModel):
         else:
             kernel_size = 2*(kernel_size//2) + 1  # Ensure kernel is odd
         self.kernel_size = int(kernel_size)
-        self.use_psf = bool(use_psf)
         self.debug = bool(debug_mode)
         self.regularize = None
         # self.calc_psf_model()
@@ -890,14 +885,9 @@ class DcrCorrection(DcrModel):
         @param i  Horizontal index of the center pixel
         @param vals  Numpy array of values to be inserted, with size (n_step, 2*radius + 1, 2*radius + 1)
         """
-        if self.use_psf:
-            psf_use = self.psf_avg
-            self.model[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += vals*psf_use
-            self.weights[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += psf_use
-        else:
-            psf_use = self.psf_avg
-            self.model[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += vals*psf_use
-            self.weights[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += psf_use
+        psf_use = self.psf_avg
+        self.model[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += vals*psf_use
+        self.weights[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += psf_use
 
     def calc_psf_model(self):
         """!Calculate the fiducial psf from a given set of exposures, accounting for DCR."""
@@ -960,13 +950,9 @@ class DcrCorrection(DcrModel):
                                     of detected sources.
         @param verbose  Flag, set to True to print progress messages.
         """
-        #HACK!!!
-        self.use_psf = False
-        kernel_base = self.build_dcr_kernel(use_full=False)
-        self.use_psf = True
-        kernel_restore = None #self.build_dcr_kernel(use_full=False)
-        kernel_weight = divide_kernels(self.build_dcr_kernel(use_full=True),
-                                       self.build_dcr_kernel(use_full=False))
+        kernel_base = self.build_dcr_kernel(self.exposures, use_full=False, use_psf=False)
+        kernel_weight = divide_kernels(self.build_dcr_kernel(self.exposures, use_full=True, use_psf=True),
+                                       self.build_dcr_kernel(self.exposures, use_full=False, use_psf=True))
         # dcr_kernel = self.build_dcr_kernel(use_full=use_full)
         if use_regularization:
             if kernel_weight is None:

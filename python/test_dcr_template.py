@@ -51,7 +51,6 @@ class _BasicDcrModel(DcrModel):
         rand_gen = np.random
         rand_gen.seed(seed)
         self.butler = None
-        self.use_psf = False
         self.debug = False
 
         bandpass_init = basicBandpass(band_name=band_name, wavelength_step=None)
@@ -87,9 +86,8 @@ class _BasicDcrModel(DcrModel):
 class _BasicDcrCorrection(DcrCorrection):
     """Dummy DcrCorrection object for testing without a repository."""
 
-    def __init__(self, band_name='g', n_step=3, use_psf=False, kernel_size=5, exposures=None):
+    def __init__(self, band_name='g', n_step=3, kernel_size=5, exposures=None):
         self.butler = None
-        self.use_psf = bool(use_psf)
         self.debug = False
 
         self.elevation_arr = []
@@ -539,14 +537,14 @@ class SolverTestCase(lsst.utils.tests.TestCase):
     def test_build_dcr_kernel_full(self):
         """Compare the result of _build_dcr_kernel to previously computed values."""
         data_file = "test_data/build_dcr_kernel_full_vals.npy"
-        kernel = self.dcrCorr.build_dcr_kernel(use_full=True)
+        kernel = self.dcrCorr.build_dcr_kernel(self.dcrCorr.exposures, use_full=True, use_psf=True)
         kernel_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(kernel, kernel_ref)
 
     def test_build_dcr_kernel(self):
         """Compare the result of _build_dcr_kernel to previously computed values."""
         data_file = "test_data/build_dcr_kernel_vals.npy"
-        kernel = self.dcrCorr.build_dcr_kernel(use_full=False)
+        kernel = self.dcrCorr.build_dcr_kernel(self.dcrCorr.exposures, use_full=False, use_psf=False)
         kernel_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(kernel, kernel_ref)
 
@@ -572,7 +570,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         i = x_size//2 + 1
         j = y_size//2 - 1
         image_vals = self.dcrCorr._extract_image_vals(j, i, radius=pix_radius)
-        dcr_kernel = self.dcrCorr.build_dcr_kernel(use_full=False)
+        dcr_kernel = self.dcrCorr.build_dcr_kernel(self.dcrCorr.exposures, use_full=False, use_psf=False)
         model_vals = self.dcrCorr.solve_model(kernel_size, n_step, dcr_kernel, image_vals,
                                               use_regularization=False)
         model_ref = np.load(data_file)
@@ -588,7 +586,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         i = x_size//2 + 1
         j = y_size//2 - 1
         image_vals = self.dcrCorr._extract_image_vals(j, i, radius=pix_radius)
-        dcr_kernel = self.dcrCorr.build_dcr_kernel(use_full=False)
+        dcr_kernel = self.dcrCorr.build_dcr_kernel(self.dcrCorr.exposures, use_full=False, use_psf=False)
         self.dcrCorr.regularize = DcrCorrection.build_regularization(x_size=kernel_size, y_size=kernel_size,
                                                                      n_step=n_step,
                                                                      frequency_regularization=True)
