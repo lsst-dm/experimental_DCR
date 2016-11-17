@@ -113,22 +113,10 @@ class DcrModel:
         if kernel_size is not None:
             self.kernel_size = kernel_size
 
-        # pixel_scale = self.photoParams.platescale
         for exp_i, calexp in enumerate(exposures):
             visitInfo = calexp.getInfo().getVisitInfo()
             el = visitInfo.getBoresightAzAlt().getLatitude()
             az = visitInfo.getBoresightAzAlt().getLongitude()
-            # dcr_gen = self.dcr_generator(self.bandpass, pixel_scale=pixel_scale, elevation=el, azimuth=az)
-            #
-            # make_kernel_kwargs = dict(exposure=calexp, dcr_gen=dcr_gen,
-            #                           x_size=self.kernel_size, y_size=self.kernel_size)
-            # if self.use_psf:
-            #     if use_full:
-            #         dcr_kernel = self.calc_psf_kernel_full(psf_img=self.psf_avg, **make_kernel_kwargs)
-            #     else:
-            #         dcr_kernel = self.calc_psf_kernel(psf_img=self.psf_avg, **make_kernel_kwargs)
-            # else:
-            #     dcr_kernel = self.calc_offset_phase(**make_kernel_kwargs)
             kernel_base = self.build_dcr_kernel([calexp], use_full=False, use_psf=False)
             kernel_weight = divide_kernels(self.build_dcr_kernel([calexp], use_full=True, use_psf=True),
                                            self.build_dcr_kernel([calexp], use_full=False, use_psf=True))
@@ -766,7 +754,6 @@ class DcrCorrection(DcrModel):
         self.kernel_size = int(kernel_size)
         self.debug = bool(debug_mode)
         self.regularize = None
-        # self.calc_psf_model()
 
     @staticmethod
     def build_regularization(x_size=None, y_size=None, n_step=None, weight=1.,
@@ -837,8 +824,6 @@ class DcrCorrection(DcrModel):
                 n_zero = 0
             else:
                 test_solution_use = np.reshape(test_solution, (n_step*x_size*y_size))
-                sigma = np.std(test_solution_use)
-                print(sigma)
                 zero_inds = np.where(np.ravel(test_solution_use) < 0)[0]
                 n_zero = len(zero_inds)
             if n_zero > 0:
@@ -903,8 +888,6 @@ class DcrCorrection(DcrModel):
                                               elevation=Angle(np.pi/2), azimuth=az)
             psf_zen = DcrModel.calc_psf_kernel_full(exposure=exp, dcr_gen=dcr_genZ, center_only=True,
                                                     x_size=self.psf_size, y_size=self.psf_size)
-            # calc_psf_kernel_full returns the full covariance matrix of the psf, but we only want
-            #   the covariance of the center pixel.
             psf_mat.append(psf_zen)
             # Calculate the expected shift (with no psf) due to DCR
             dcr_gen = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
@@ -921,11 +904,6 @@ class DcrCorrection(DcrModel):
         psf_model_large = DcrCorrection.solve_model(self.psf_size, self.n_step, dcr_shift, psf_mat,
                                                     use_nonnegative=True, regularization=regularize_psf,
                                                     use_regularization=True)
-        # regularize_dim = regularize_psf.shape
-        # vals_use = np.append(psf_mat, np.zeros(regularize_dim[1]))
-        # kernel_use = np.append(dcr_shift.T, regularize_psf.T, axis=0)
-        # psf_soln = scipy.optimize.nnls(kernel_use, vals_use)
-        # psf_model_large = np.reshape(psf_soln[0], (self.n_step, self.psf_size, self.psf_size))
 
         p0 = self.psf_size//2 - self.kernel_size//2
         p1 = p0 + self.kernel_size
