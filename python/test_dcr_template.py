@@ -56,8 +56,8 @@ class _BasicDcrModel(DcrModel):
         bandpass_init = basicBandpass(band_name=band_name, wavelength_step=None)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
         self.bandpass = basicBandpass(band_name=band_name, wavelength_step=wavelength_step)
-        self.model = rand_gen.random(size=(n_step, size, size))
-        self.weights = np.ones((n_step, size, size))
+        self.model = [rand_gen.random(size=(size, size)) for f in range(n_step)]
+        self.weights = np.ones((size, size))
         self.mask = np.zeros((size, size), dtype=np.int32)
 
         self.n_step = n_step
@@ -287,38 +287,31 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
             ref_id = {'visit': id, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
             self.assertEqual(ref_id, dataId[i])
 
-    def test_extract_model_no_weights(self):
-        # Make j and i different slightly so we can tell if the indices get swapped
-        i = self.size//2 + 1
-        j = self.size//2 - 1
-        radius = self.kernel_size//2
-        model_use = self.dcrModel.model
-        model_vals = DcrModel._extract_model_vals(j, i, radius=radius, model=model_use)
-        input_vals = [np.ravel(model_use[f, j - radius: j + radius + 1, i - radius: i + radius + 1])
-                      for f in range(self.dcrModel.n_step)]
-        self.assertFloatsAlmostEqual(np.hstack(input_vals), model_vals)
+    # def test_extract_model_no_weights(self):
+    #     # Make j and i different slightly so we can tell if the indices get swapped
+    #     i = self.size//2 + 1
+    #     j = self.size//2 - 1
+    #     radius = self.kernel_size//2
+    #     model_vals = DcrModel._extract_model_vals(j, i, radius=radius, model_arr=self.dcrModel.model)
+    #     input_vals = [np.ravel(model[j - radius: j + radius + 1, i - radius: i + radius + 1])
+    #                   for model in self.dcrModel.model]
+    #     self.assertFloatsAlmostEqual(np.hstack(input_vals), model_vals)
 
     def test_extract_model_with_weights(self):
         # Make j and i different slightly so we can tell if the indices get swapped
         i = self.size//2 + 1
         j = self.size//2 - 1
         radius = self.kernel_size//2
-        model = self.dcrModel.model
         weight_scale = 2.2
-        weights = self.dcrModel.weights * weight_scale
-        weights[:, j, i] = 0.
-        model_vals = DcrModel._extract_model_vals(j, i, radius=radius, model=model, weights=weights)
+        inverse_weights = 1./(self.dcrModel.weights * weight_scale)
+        inverse_weights[j, i] = 0.
+        model_vals = DcrModel._extract_model_vals(j, i, radius=radius, model_arr=self.dcrModel.model,
+                                                  inverse_weights=inverse_weights)
         input_arr = []
-        for f in range(self.dcrModel.n_step):
-            input_vals = model[f, j - radius: j + radius + 1, i - radius: i + radius + 1] / weight_scale
+        for model in self.dcrModel.model:
+            input_vals = model[j - radius: j + radius + 1, i - radius: i + radius + 1] / weight_scale
             input_vals[radius, radius] = 0.
             input_arr.append(np.ravel(input_vals))
-
-        # input_vals = [model[_f, _j - radius: _j + radius + 1, _i - radius: _i + radius + 1] * weight_scale
-        #               for _f in range(self.dcrModel.n_step)]
-        # # input_vals = np.asarray(input_vals)
-        # input_vals[:][radius, radius] = 0.
-        # input_vals = [np.ravel(input_vals[_f]) for _f in range(self.dcrModel.n_step)]
         self.assertFloatsAlmostEqual(np.hstack(input_arr), model_vals)
 
     def test_apply_kernel(self):
@@ -327,8 +320,9 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         i_use = self.size//2
         j_use = self.size//2
         radius = self.kernel_size//2
-        model_vals = DcrModel._extract_model_vals(j_use, i_use, radius=radius, model=self.dcrModel.model,
-                                                  weights=self.dcrModel.weights)
+        inverse_weights = 1./self.dcrModel.weights
+        model_vals = DcrModel._extract_model_vals(j_use, i_use, radius=radius, model_arr=self.dcrModel.model,
+                                                  inverse_weights=inverse_weights)
         dcr_kernel = DcrModel.calc_offset_phase(self.exposure, self.dcr_gen, return_matrix=True,
                                                 x_size=self.kernel_size, y_size=self.kernel_size)
         dcr_vals = DcrModel._apply_dcr_kernel(dcr_kernel, model_vals)
@@ -441,7 +435,9 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         i = self.size//2 + 1
         j = self.size//2 - 1
         radius = self.kernel_size//2
-        image_vals = self.dcrCorr._extract_image_vals(j, i, radius=radius)
+        image_arr = [exp.getMaskedImage().getImage().getArray() for exp in self.dcrCorr.exposures]
+        mask_arr = [exp.getMaskedImage().getMask().getArray() for exp in self.dcrCorr.exposures]
+        image_vals = self.dcrCorr._extract_image_vals(j, i, image_arr, mask=mask_arr, radius=radius)
         input_vals = [np.ravel(self.ref_vals[f][j - radius: j + radius + 1, i - radius: i + radius + 1])
                       for f in range(self.n_images)]
         self.assertFloatsAlmostEqual(np.hstack(input_vals), image_vals)
@@ -453,15 +449,15 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         radius = self.kernel_size//2
         test_vals = np.random.random(size=(self.n_step, self.kernel_size, self.kernel_size))
         model_ref = np.zeros((self.n_step, self.size, self.size))
-        self.dcrCorr.model = model_ref.copy()
-        weights_ref = np.zeros((self.n_step, self.size, self.size))
-        self.dcrCorr.weights = weights_ref.copy()
-        self.dcrCorr._insert_model_vals(j, i, test_vals, radius=radius)
+        model = np.zeros((self.n_step, self.size, self.size))
+        weights_ref = np.zeros((self.size, self.size))
+        weights = np.zeros((self.size, self.size))
         psf_use = self.dcrCorr.psf_avg
+        self.dcrCorr._insert_model_vals(j, i, test_vals, model, weights, radius=radius, kernel=psf_use)
         model_ref[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += test_vals*psf_use
-        weights_ref[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += psf_use
-        self.assertFloatsAlmostEqual(model_ref, self.dcrCorr.model)
-        self.assertFloatsAlmostEqual(weights_ref, self.dcrCorr.weights)
+        weights_ref[j - radius: j + radius + 1, i - radius: i + radius + 1] += psf_use
+        self.assertFloatsAlmostEqual(model_ref, model)
+        self.assertFloatsAlmostEqual(weights_ref, weights)
 
     def test_calculate_psf(self):
         """Compare the result of _calc_psf_model (run in setUp) to previously computed values."""
@@ -569,7 +565,9 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         # Make j and i different slightly so we can tell if the indices get swapped
         i = x_size//2 + 1
         j = y_size//2 - 1
-        image_vals = self.dcrCorr._extract_image_vals(j, i, radius=pix_radius)
+        image_arr = [exp.getMaskedImage().getImage().getArray() for exp in self.dcrCorr.exposures]
+        mask_arr = [exp.getMaskedImage().getMask().getArray() for exp in self.dcrCorr.exposures]
+        image_vals = self.dcrCorr._extract_image_vals(j, i, image_arr, mask=mask_arr, radius=pix_radius)
         dcr_kernel = self.dcrCorr.build_dcr_kernel(self.dcrCorr.exposures, use_full=False, use_psf=False)
         model_vals = self.dcrCorr.solve_model(kernel_size, n_step, dcr_kernel, image_vals,
                                               use_regularization=False)
@@ -585,7 +583,9 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         pix_radius = kernel_size//2
         i = x_size//2 + 1
         j = y_size//2 - 1
-        image_vals = self.dcrCorr._extract_image_vals(j, i, radius=pix_radius)
+        image_arr = [exp.getMaskedImage().getImage().getArray() for exp in self.dcrCorr.exposures]
+        mask_arr = [exp.getMaskedImage().getMask().getArray() for exp in self.dcrCorr.exposures]
+        image_vals = self.dcrCorr._extract_image_vals(j, i, image_arr, mask=mask_arr, radius=pix_radius)
         dcr_kernel = self.dcrCorr.build_dcr_kernel(self.dcrCorr.exposures, use_full=False, use_psf=False)
         self.dcrCorr.regularize = DcrCorrection.build_regularization(x_size=kernel_size, y_size=kernel_size,
                                                                      n_step=n_step,

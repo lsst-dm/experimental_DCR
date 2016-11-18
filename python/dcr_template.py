@@ -220,25 +220,25 @@ class DcrModel:
         return(np.reshape(template_vals, (size, size)))
 
     @staticmethod
-    def _extract_model_vals(j, i, radius=None, model=None, weights=None):
+    def _extract_model_vals(j, i, model_arr, inverse_weights, radius=None):
         """!Return all pixles within a radius of a given point as a 1D vector for each dcr plane model.
 
         @param j  Vertical pixel index
         @param i  Horizontal pixel index
+        @param model_arr  dcrModel read in with DcrModel._load_model or DcrCorrection, a list of 2D arrays
+        @param inverse_weights   A 2D array containing the inverse of the nonzero elements of the weights
+                                 returned by DcrCorrection, with zeros everywhere else.
         @param radius  radius, in pixels, of the box surrounding (j, i) to be extracted.
-        @param model  dcrModel read in with DcrModel._load_model or DcrCorrection
         @return Returns the weighted model values within the range of pixels, formatted for _apply_dcr_kernel
         """
-        model_arr = []
-        if weights is None:
-            weights = np.ones_like(model)
-        for f in range(model.shape[0]):
-            model_use = model[f, j - radius: j + radius + 1, i - radius: i + radius + 1].copy()
-            weights_use = weights[f, j - radius: j + radius + 1, i - radius: i + radius + 1]
-            model_use[weights_use > 0] /= weights_use[weights_use > 0]
-            model_use[weights_use <= 0] = 0.0
-            model_arr.append(np.ravel(model_use))
-        return np.hstack(model_arr)
+        n_step = len(model_arr)
+        n_pix = (2*radius + 1)**2
+        model_return = np.zeros(n_step*n_pix, dtype=np.float64)
+        inv_weights_use = inverse_weights[j - radius: j + radius + 1, i - radius: i + radius + 1]
+        for f, model in enumerate(model_arr):
+            model_use = model[j - radius: j + radius + 1, i - radius: i + radius + 1]
+            model_return[f*n_pix: (f + 1)*n_pix] = np.ravel(model_use*inv_weights_use)
+        return model_return
 
     @staticmethod
     def _insert_template_vals(j, i, vals, template=None, weights=None, radius=None, kernel=None):
@@ -581,7 +581,7 @@ class DcrModel:
         wave_gen = DcrModel._wavelength_iterator(self.bandpass, use_midpoint=False)
         for f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
-            exp = self.create_exposure(self.model[f, :, :], variance=self.weights[f, :, :],
+            exp = self.create_exposure(self.model[f], variance=self.weights,
                                        elevation=Angle(np.pi/2), azimuth=Angle(0), ksupport=self.kernel_size,
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
                                        wavestep=self.bandpass.wavelen_step)
@@ -608,8 +608,8 @@ class DcrModel:
             weights_arr.append(dcrModel.getMaskedImage().getVariance().getArray())
             f += 1
 
-        self.model = np.array(model_arr)
-        self.weights = np.array(weights_arr)
+        self.model = model_arr
+        self.weights = weights_arr[0]  # The weights should be identical for all subfilters. TODO Check this!
         self.mask = dcrModel.getMaskedImage().getMask().getArray()
 
         # This only uses the mask of the last image. For real data all masks should be used.
@@ -639,10 +639,9 @@ class DcrModel:
         @param index  sub-band slice of the DcrModel to extract
         @return Returns a 2D numpy array.
         """
-        model = self.model[index, :, :].copy()
-        weights = self.weights[index, :, :]
-        model[weights > 0] /= weights[weights > 0]
-        model[weights <= 0] = 0.0
+        model = np.zeros_like(self.weights)
+        weight_inds = self.weights > 0
+        model[weight_inds] = self.model[index][weight_inds]/self.weights[weight_inds]
         return model
 
     def build_dcr_kernel(self, exposures, use_full=None, use_psf=False):
@@ -848,31 +847,36 @@ class DcrCorrection(DcrModel):
         else:
             return np.append(reg_pix, reg_lambda, axis=1)
 
-    def _extract_image_vals(self, j, i, radius=None):
+    @staticmethod
+    def _extract_image_vals(j, i, image_arr, mask=None, radius=None):
         """!Return all pixels within a radius of a given point as a 1D vector for each exposure.
 
         @param j  Vertical index of the center pixel
         @param i  Horizontal index of the center pixel
+        @param image_arr  List of 2D numpy arrays containing the image data.
+        @param mask  [Optional] List of mask planes associated with each image.
         @param radius  Number of pixels to either side of (j, i) to extract from each image.
         @return Returns a numpy array of size (number of exposures, (2*radius + 1)**2)
         """
-        img_arr = []
-        for exp in self.exposures:
-            img = exp.getMaskedImage().getImage().getArray()
-            img = img[j - radius: j + radius + 1, i - radius: i + radius + 1]
-            img_arr.append(np.ravel(img))
-        return np.hstack(img_arr)
+        n_pix = (2*radius + 1)**2
+        n_img = len(image_arr)
+        sub_img_arr = np.zeros(n_pix*n_img, dtype=np.float64)
+        for ii, img in enumerate(image_arr):
+            sub_img = img[j - radius: j + radius + 1, i - radius: i + radius + 1]
+            sub_img_arr[ii*n_pix: (ii + 1)*n_pix] = np.ravel(sub_img)
+            # sub_img_arr.append(np.ravel(sub_img))
+        # return np.hstack(sub_img_arr)
+        return sub_img_arr
 
-    def _insert_model_vals(self, j, i, vals, radius=None):
+    def _insert_model_vals(j, i, vals, model, weights, radius=None, kernel=None):
         """!Insert the given values into the model and update the weights.
 
         @param j  Vertical index of the center pixel
         @param i  Horizontal index of the center pixel
         @param vals  Numpy array of values to be inserted, with size (n_step, 2*radius + 1, 2*radius + 1)
         """
-        psf_use = self.psf_avg
-        self.model[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += vals*psf_use
-        self.weights[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += psf_use
+        model[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += vals*kernel
+        weights[j - radius: j + radius + 1, i - radius: i + radius + 1] += kernel
 
     @staticmethod
     def fit_psf_size(exposures, minimum_psf_size=5, threshold=1e-2):
@@ -976,8 +980,8 @@ class DcrCorrection(DcrModel):
         lstsq_kernel = self.build_lstsq_kernel(kernel_base, regularization=self.regularize,
                                                use_regularization=use_regularization,
                                                kernel_weight=kernel_weight)
-        self.model = np.zeros((self.n_step, self.y_size, self.x_size))
-        self.weights = np.zeros_like(self.model)
+        model = np.zeros((self.n_step, self.y_size, self.x_size))
+        weights = np.zeros((self.y_size, self.x_size))
         pix_radius = self.kernel_size//2
 
         variance = np.zeros((self.y_size, self.x_size))
@@ -985,6 +989,8 @@ class DcrCorrection(DcrModel):
             variance += exp.getMaskedImage().getVariance().getArray()**2.
         self.variance = np.sqrt(variance) / self.n_images
         detected_bit = exp.getMaskedImage().getMask().getPlaneBitMask("DETECTED")
+        image_arr = [exp.getMaskedImage().getImage().getArray() for exp in self.exposures]
+        mask_arr = [exp.getMaskedImage().getMask().getArray() for exp in self.exposures]
         if verbose:
             print("Working on column", end="")
         for j in range(self.y_size):
@@ -1004,15 +1010,18 @@ class DcrCorrection(DcrModel):
                 if use_only_detected:
                     if self.mask[j, i] & detected_bit == 0:
                         continue
-                img_vals = self._extract_image_vals(j, i, radius=pix_radius)
+                img_vals = self._extract_image_vals(j, i, image_arr, mask=mask_arr, radius=pix_radius)
 
                 model_vals = self.solve_model(self.kernel_size, self.n_step, kernel_base, img_vals,
                                               lstsq_kernel, use_nonnegative=use_nonnegative,
                                               use_regularization=use_regularization,
                                               regularization=self.regularize)
-                self._insert_model_vals(j, i, model_vals, radius=pix_radius)
+                self._insert_model_vals(j, i, model_vals, model, weights,
+                                        radius=pix_radius, kernel=self.psf_avg)
         if verbose:
             print("\nFinished building model.")
+        self.weights = weights
+        self.model = [model[f, :, :] for f in range(self.n_step)]
 
     @staticmethod
     def build_lstsq_kernel(dcr_kernel, regularization=None, use_regularization=True, kernel_weight=None):
