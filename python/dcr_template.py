@@ -904,7 +904,6 @@ class DcrCorrection(DcrModel):
             psf_size_arr[exp_i] = 2*(psf_dim//2 - np.max(np.where(psf_rel_diff < threshold))) + 1
         return(int(np.min(psf_size_arr)))
 
-    # @profile
     def calc_psf_model(self):
         """!Calculate the fiducial psf from a given set of exposures, accounting for DCR."""
         psf_mat = []
@@ -963,16 +962,18 @@ class DcrCorrection(DcrModel):
         kernel_base = self.build_dcr_kernel(self.exposures, use_full=False, use_psf=False)
         kernel_weight = divide_kernels(self.build_dcr_kernel(self.exposures, use_full=True, use_psf=True),
                                        self.build_dcr_kernel(self.exposures, use_full=False, use_psf=True))
-        # dcr_kernel = self.build_dcr_kernel(use_full=use_full)
         if use_regularization:
             if kernel_weight is None:
                 regularize_scale = np.max(kernel_base)
             else:
                 regularize_scale = np.sqrt(np.max(kernel_base)*np.max(kernel_weight))
-            test_values = np.ones(self.n_images*self.kernel_size**2)
-            test_solution = self.solve_model(self.kernel_size, self.n_step, kernel_base, test_values,
-                                             use_nonnegative=use_nonnegative, use_regularization=False,
-                                             kernel_weight=kernel_weight)
+            if positive_regularization:
+                test_values = np.ones(self.n_images*self.kernel_size**2)
+                test_solution = self.solve_model(self.kernel_size, self.n_step, kernel_base, test_values,
+                                                 use_nonnegative=use_nonnegative, use_regularization=False,
+                                                 kernel_weight=kernel_weight)
+            else:
+                test_solution = None
             self.regularize = self.build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
                                                         n_step=self.n_step, weight=regularize_scale,
                                                         frequency_regularization=frequency_regularization,
@@ -1094,7 +1095,6 @@ class DcrCorrection(DcrModel):
                 lstsq_kernel = DcrCorrection.build_lstsq_kernel(dcr_kernel, regularization=regularization,
                                                                 use_regularization=use_regularization,
                                                                 kernel_weight=None)
-            # model_vals = np.einsum('ij,j->i', lstsq_kernel, img_vals)
             model_vals = lstsq_kernel.dot(img_vals)
         return np.reshape(model_vals, (n_step, y_size, x_size))
 
