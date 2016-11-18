@@ -113,6 +113,8 @@ class DcrModel:
         if kernel_size is not None:
             self.kernel_size = kernel_size
 
+        model_inverse_weights = np.zeros_like(self.weights)
+        model_inverse_weights[self.weights > 0] = 1./self.weights[self.weights > 0]
         for exp_i, calexp in enumerate(exposures):
             visitInfo = calexp.getInfo().getVisitInfo()
             el = visitInfo.getBoresightAzAlt().getLatitude()
@@ -127,8 +129,8 @@ class DcrModel:
                 for i in range(self.x_size):
                     if self._edge_test(j, i):
                         continue
-                    model_vals = self._extract_model_vals(j, i, radius=pix_radius,
-                                                          model=self.model, weights=self.weights)
+                    model_vals = self._extract_model_vals(j, i, radius=pix_radius, model_arr=self.model,
+                                                          inverse_weights=model_inverse_weights)
                     template_vals = self._apply_dcr_kernel(kernel_base*kernel_weight, model_vals)
                     self._insert_template_vals(j, i, template_vals, template=template, weights=weights,
                                                radius=pix_radius, kernel=self.psf_avg)
@@ -868,6 +870,7 @@ class DcrCorrection(DcrModel):
         # return np.hstack(sub_img_arr)
         return sub_img_arr
 
+    @staticmethod
     def _insert_model_vals(j, i, vals, model, weights, radius=None, kernel=None):
         """!Insert the given values into the model and update the weights.
 
