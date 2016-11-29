@@ -387,7 +387,7 @@ class DcrModel:
             yield dcr(dx=dx, dy=dy)
 
     @staticmethod
-    def calc_offset_phase(exposure=None, dcr_gen=None, x_size=None, y_size=None, **kwargs):
+    def calc_offset_phase(exposure=None, dcr_gen=None, x_size=None, y_size=None):
         """!Calculate the covariance matrix for a simple shift with no psf.
 
         @param exposure  An LSST exposure object. Only needed if x_size or y_size is not specified.
@@ -416,7 +416,7 @@ class DcrModel:
         return phase_arr
 
     @staticmethod
-    def calc_psf_kernel(exposure=None, dcr_gen=None, x_size=None, y_size=None, psf_img=None, **kwargs):
+    def calc_psf_kernel(exposure=None, dcr_gen=None, x_size=None, y_size=None, psf_img=None):
         """!Calculate the covariance matrix for a DCR-shifted average psf.
 
         @param exposure  An LSST exposure object. Only needed if x_size or y_size is not specified.
@@ -439,7 +439,7 @@ class DcrModel:
 
     @staticmethod
     def calc_psf_kernel_full(exposure=None, dcr_gen=None, x_size=None, y_size=None,
-                             center_only=False, **kwargs):
+                             center_only=False, psf_img=None):
         """!Calculate the covariance matrix for a DCR-shifted psf that is measured for each exposure.
 
         @param exposure  An LSST exposure object. Always needed for its psf.
