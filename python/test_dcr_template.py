@@ -75,6 +75,7 @@ class _BasicDcrModel(DcrModel):
         self.x_size = size
         self.pixel_scale = pixel_scale
         self.kernel_size = kernel_size
+        self.psf_size = kernel_size
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=pixel_scale,
                                                  bandpass=band_name)
         self.bbox = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(size, size))
@@ -90,7 +91,7 @@ class _BasicDcrModel(DcrModel):
         psfK = afwMath.FixedKernel(psf_image)
         self.psf = measAlg.KernelPsf(psfK)
 
-        self.psf_avg = psf_vals  # self.psf.computeKernelImage().getArray()
+        self.psf_avg = psf_vals
 
 
 class _BasicDcrCorrection(DcrCorrection):
@@ -124,12 +125,20 @@ class _BasicDcrCorrection(DcrCorrection):
         self.n_images = len(exposures)
         self.y_size, self.x_size = exposures[0].getDimensions()
         self.pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
+        self.kernel_size = kernel_size
         exposure_time = visitInfo.getExposureTime()
         self.bbox = calexp.getBBox()
         self.wcs = calexp.getWcs()
         psf = calexp.getPsf().computeKernelImage().getArray()
-        self.psf_size = psf.shape[0]
-        self.psf_avg = psf
+        psf_size_test = psf.shape[0]
+        if psf_size_test > 2*kernel_size:
+            self.psf_size = 2*kernel_size
+            p0 = psf_size_test//2 - self.psf_size//2
+            p1 = p0 + self.psf_size
+            self.psf_avg = psf[p0:p1, p0:p1]
+        else:
+            self.psf_size = psf_size_test
+            self.psf_avg = psf
 
         self.kernel_size = kernel_size
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
@@ -139,10 +148,6 @@ class _BasicDcrCorrection(DcrCorrection):
         dcr_test = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                           elevation=elevation_min, azimuth=Angle(0.))
         self.dcr_max = int(np.ceil(np.max(dcr_test.next())) + 1)
-        if kernel_size is None:
-            self.kernel_size = 2*self.dcr_max + 1
-        else:
-            self.kernel_size = kernel_size
 
 
 class DCRTestCase(lsst.utils.tests.TestCase):
@@ -303,17 +308,7 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
             ref_id = {'visit': id, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
             self.assertEqual(ref_id, dataId[i])
 
-    # def test_extract_model_no_weights(self):
-    #     # Make j and i different slightly so we can tell if the indices get swapped
-    #     i = self.size//2 + 1
-    #     j = self.size//2 - 1
-    #     radius = self.kernel_size//2
-    #     model_vals = DcrModel._extract_model_vals(j, i, radius=radius, model_arr=self.dcrModel.model)
-    #     input_vals = [np.ravel(model[j - radius: j + radius + 1, i - radius: i + radius + 1])
-    #                   for model in self.dcrModel.model]
-    #     self.assertFloatsAlmostEqual(np.hstack(input_vals), model_vals)
-
-    def test_extract_model_with_weights(self):
+    def test_extract_model(self):
         # Make j and i different slightly so we can tell if the indices get swapped
         i = self.size//2 + 1
         j = self.size//2 - 1

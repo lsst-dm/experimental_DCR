@@ -454,7 +454,8 @@ class DcrModel:
         if x_size is None:
             x_size = exposure.getWidth()
         psf_kernel_arr = []
-        psf_img = exposure.getPsf().computeKernelImage().getArray()
+        if psf_img is None:
+            psf_img = exposure.getPsf().computeKernelImage().getArray()
         for dcr in dcr_gen:
             kernel_single = _calc_psf_kernel_subroutine(psf_img, dcr, x_size=x_size, y_size=y_size,
                                                         center_only=center_only)
@@ -665,17 +666,60 @@ class DcrModel:
             az = visitInfo.getBoresightAzAlt().getLongitude()
             dcr_gen = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                              elevation=el, azimuth=az)
-            make_kernel_kwargs = dict(exposure=exp, dcr_gen=dcr_gen, psf_img=self.psf_avg,
+            make_kernel_kwargs = dict(exposure=exp, dcr_gen=dcr_gen,
                                       x_size=self.kernel_size, y_size=self.kernel_size)
             if use_psf:
                 if use_full:
-                    dcr_kernel.append(DcrModel.calc_psf_kernel_full(**make_kernel_kwargs))
+                    psf_img = self.calc_psf_model_single(exp)
+                    dcr_kernel.append(DcrModel.calc_psf_kernel_full(psf_img=psf_img, **make_kernel_kwargs))
                 else:
-                    dcr_kernel.append(DcrModel.calc_psf_kernel(**make_kernel_kwargs))
+                    dcr_kernel.append(DcrModel.calc_psf_kernel(psf_img=self.psf_avg, **make_kernel_kwargs))
             else:
                 dcr_kernel.append(DcrModel.calc_offset_phase(**make_kernel_kwargs))
         dcr_kernel = np.hstack(dcr_kernel)
         return dcr_kernel
+
+    def calc_psf_model_single(self, exposure):
+        """!Calculate the fiducial psf for a single exposure, accounting for DCR.
+
+        @param exposure  A single LSST exposure object.
+        @return  Returns the fiducial PSF for an exposure, after taking out DCR effects.
+        """
+        visitInfo = exposure.getInfo().getVisitInfo()
+        el = visitInfo.getBoresightAzAlt().getLatitude()
+        az = visitInfo.getBoresightAzAlt().getLongitude()
+
+        # Take the measured PSF as the true PSF, smeared out by DCR.
+        psf_img = exposure.getPsf().computeKernelImage().getArray()
+        psf_size_test = psf_img.shape[0]
+        if psf_size_test > self.psf_size:
+            p0 = psf_size_test//2 - self.psf_size//2
+            p1 = p0 + self.psf_size
+            psf_img = psf_img[p0:p1, p0:p1]
+            psf_size_use = self.psf_size
+        else:
+            psf_size_use = psf_size_test
+
+        # Calculate the expected shift (with no psf) due to DCR
+        dcr_gen = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
+                                         elevation=el, azimuth=az)
+        dcr_shift = DcrModel.calc_offset_phase(exposure=exposure, dcr_gen=dcr_gen,
+                                               x_size=psf_size_use, y_size=psf_size_use)
+        # Assume that the PSF does not change between sub-bands.
+        reg_weight = np.max(np.abs(dcr_shift))*100.
+        regularize_psf = DcrCorrection.build_regularization(x_size=psf_size_use, y_size=psf_size_use,
+                                                            n_step=self.n_step, weight=reg_weight,
+                                                            frequency_regularization=True)
+        # Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images
+        # If the original psf is much larger than the kernel, it may be trimmed slightly by fit_psf_size above
+        psf_model_large = DcrCorrection.solve_model(psf_size_use, self.n_step, dcr_shift, np.ravel(psf_img),
+                                                    use_nonnegative=True, regularization=regularize_psf)
+
+        # After solving for the (potentially) large psf, store only the central portion of size kernel_size.
+        psf_vals = np.sum(psf_model_large, axis=0)/self.n_step
+        p0 = self.psf_size//2 - self.kernel_size//2
+        p1 = p0 + self.kernel_size
+        return psf_vals[p0: p1, p0: p1]
 
 
 class DcrCorrection(DcrModel):
@@ -1223,8 +1267,3 @@ def divide_kernels(kernel_numerator, kernel_denominator, threshold=1e-3):
     inds_use = kernel_denominator/np.max(kernel_denominator) >= threshold
     kernel_return[inds_use] = kernel_numerator[inds_use]/kernel_denominator[inds_use]
     return kernel_return
-
-
-class NonnegLstsqIterFit():
-    def __init__():
-        pass
