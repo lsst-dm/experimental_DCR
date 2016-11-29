@@ -475,35 +475,34 @@ class DcrModel:
         """
         # Debugging parameters. Only pixels in the range [y0: y0 + dy, x0: x0 + dx] will be used.
         x0 = 150
-        dx = 65
+        dx = 165
         y0 = 480
-        dy = 70
+        dy = 170
 
         pix_radius = self.kernel_size//2
 
         # Deal with the edges later. Probably by padding the image with zeroes.
-        if i < pix_radius + 1:
-            edge = True
-        elif self.x_size - i < pix_radius + 1:
-            edge = True
-        elif j < pix_radius + 1:
-            edge = True
-        elif self.y_size - j < pix_radius + 1:
-            edge = True
-        elif self.debug:
+        if self.debug:
             if i < x0:
-                edge = True
+                return True
             elif i > x0+dx:
-                edge = True
+                return True
             elif j < y0:
-                edge = True
+                return True
             elif j > y0+dy:
-                edge = True
+                return True
             else:
-                edge = False
+                return False
+        elif i < pix_radius + 1:
+            return True
+        elif self.x_size - i < pix_radius + 1:
+            return True
+        elif j < pix_radius + 1:
+            return True
+        elif self.y_size - j < pix_radius + 1:
+            return True
         else:
-            edge = False
-        return edge
+            return False
 
     # NOTE: This function was copied from StarFast.py
     def create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0,
@@ -757,7 +756,6 @@ class DcrCorrection(DcrModel):
             kernel_size = 2*(kernel_size//2) + 1  # Ensure kernel is odd
         self.kernel_size = int(kernel_size)
         self.debug = bool(debug_mode)
-        self.regularize = None
 
     @staticmethod
     def build_regularization(x_size=None, y_size=None, n_step=None, weight=1.,
@@ -787,22 +785,27 @@ class DcrCorrection(DcrModel):
         reg_lambda = None
         reg_lambda2 = None
         reg_positive = None
+        regularization_full = None
 
         if spatial_regularization:
             reg_pix_x = np.zeros((n_step*x_size*y_size,
                                   n_step*x_size*y_size - x_size))
             for ij in range(n_step*x_size*y_size - x_size):
-                reg_pix_x[ij, ij] = 1
-                reg_pix_x[ij + x_size, ij] = -1
+                reg_pix_x[ij, ij] = weight
+                reg_pix_x[ij + x_size, ij] = -weight
             reg_pix_x = np.append(reg_pix_x, -reg_pix_x, axis=1)
 
             reg_pix_y = np.zeros((n_step*x_size*y_size,
                                   n_step*x_size*y_size - 1))
             for ij in range(n_step*x_size*y_size - 1):
-                reg_pix_y[ij, ij] = 1
-                reg_pix_y[ij + 1, ij] = -1
+                reg_pix_y[ij, ij] = weight
+                reg_pix_y[ij + 1, ij] = -weight
             reg_pix_y = np.append(reg_pix_y, -reg_pix_y, axis=1)
             reg_pix = np.append(reg_pix_x, reg_pix_y, axis=1)
+            if regularization_full is None:
+                regularization_full = reg_pix
+            else:
+                regularization_full = np.append(regularization_full, reg_pix, axis=1)
 
         if frequency_regularization:
             # regularization that forces the SED to be smooth
@@ -815,6 +818,10 @@ class DcrCorrection(DcrModel):
             # reg_lambda = np.append(reg_lambda, -reg_lambda, axis=1). That works out to be the same as
             # just doubling the weight of reg_lambda, so we use 2*weight here instead of inflating the
             # size of the matrix
+            if regularization_full is None:
+                regularization_full = reg_lambda
+            else:
+                regularization_full = np.append(regularization_full, reg_lambda, axis=1)
 
         if frequency_second_regularization:
             # regularization that forces the derivative of the SED to be smooth
@@ -824,6 +831,10 @@ class DcrCorrection(DcrModel):
                     reg_lambda2[f*x_size*y_size + ij, f*x_size*y_size + ij] = -weight
                     reg_lambda2[(f + 1)*x_size*y_size + ij, f*x_size*y_size + ij] = 2.*weight
                     reg_lambda2[(f + 2)*x_size*y_size + ij, f*x_size*y_size + ij] = -weight
+            if regularization_full is None:
+                regularization_full = reg_lambda2
+            else:
+                regularization_full = np.append(regularization_full, reg_lambda2, axis=1)
 
         if positive_regularization:
             #regularization that down-weights negative elements in a trial solution.
@@ -837,23 +848,12 @@ class DcrCorrection(DcrModel):
                 reg_positive = np.zeros((n_step*x_size*y_size, n_zero))
                 for zi in range(n_zero):
                     reg_positive[zero_inds[zi], zi] = weight*test_solution_use[zero_inds[zi]]
+            if regularization_full is None:
+                regularization_full = reg_positive
+            else:
+                regularization_full = np.append(regularization_full, reg_positive, axis=1)
 
-        if reg_lambda is None:
-            reg_lambda = reg_positive
-        elif reg_positive is not None:
-            reg_lambda = np.append(reg_positive, reg_lambda, axis=1)
-
-        if reg_lambda is None:
-            reg_lambda = reg_lambda2
-        elif reg_lambda2 is not None:
-            reg_lambda = np.append(reg_lambda, reg_lambda2, axis=1)
-
-        if reg_pix is None:
-            return reg_lambda
-        elif reg_lambda is None:
-            return reg_pix
-        else:
-            return np.append(reg_pix, reg_lambda, axis=1)
+        return regularization_full
 
     @staticmethod
     def _extract_image_vals(j, i, image_arr, mask=None, radius=None):
@@ -936,14 +936,15 @@ class DcrCorrection(DcrModel):
                                                         x_size=self.psf_size, y_size=self.psf_size))
         psf_mat = np.sum(np.hstack(psf_mat), axis=0)
         dcr_shift = np.hstack(dcr_shift)
-
+        # Assume that the PSF does not change between sub-bands.
+        reg_weight = np.max(np.abs(dcr_shift))*100.
         regularize_psf = self.build_regularization(x_size=self.psf_size, y_size=self.psf_size,
-                                                   n_step=self.n_step, weight=1.,
+                                                   n_step=self.n_step, weight=reg_weight,
                                                    frequency_regularization=True)
         # Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images
+        # If the original psf is much larger than the kernel, it may be trimmed slightly by fit_psf_size above
         psf_model_large = DcrCorrection.solve_model(self.psf_size, self.n_step, dcr_shift, psf_mat,
-                                                    use_nonnegative=True, regularization=regularize_psf,
-                                                    use_regularization=True)
+                                                    use_nonnegative=True, regularization=regularize_psf)
 
         p0 = self.psf_size//2 - self.kernel_size//2
         p1 = p0 + self.kernel_size
@@ -972,27 +973,22 @@ class DcrCorrection(DcrModel):
         kernel_base = self.build_dcr_kernel(self.exposures, use_full=False, use_psf=False)
         kernel_weight = divide_kernels(self.build_dcr_kernel(self.exposures, use_full=True, use_psf=True),
                                        self.build_dcr_kernel(self.exposures, use_full=False, use_psf=True))
-        if use_regularization:
-            if kernel_weight is None:
-                regularize_scale = np.max(kernel_base)
-            else:
-                regularize_scale = np.sqrt(np.max(kernel_base)*np.max(kernel_weight))
-            if positive_regularization:
-                test_values = np.ones(self.n_images*self.kernel_size**2)
-                test_solution = self.solve_model(self.kernel_size, self.n_step, kernel_base, test_values,
-                                                 use_nonnegative=use_nonnegative, use_regularization=False,
-                                                 kernel_weight=kernel_weight)
-            else:
-                test_solution = None
-            self.regularize = self.build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
-                                                        n_step=self.n_step, weight=regularize_scale,
-                                                        frequency_regularization=frequency_regularization,
-                                                        positive_regularization=positive_regularization,
-                                                        test_solution=test_solution)
+        if kernel_weight is None:
+            regularize_scale = np.max(kernel_base)
         else:
-            self.regularize = None
+            regularize_scale = np.sqrt(np.max(kernel_base)*np.max(kernel_weight))
+        if positive_regularization:
+            test_values = np.ones(self.n_images*self.kernel_size**2)
+            test_solution = self.solve_model(self.kernel_size, self.n_step, kernel_base, test_values,
+                                             use_nonnegative=use_nonnegative, kernel_weight=kernel_weight)
+        else:
+            test_solution = None
+        self.regularize = self.build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
+                                                    n_step=self.n_step, weight=regularize_scale,
+                                                    frequency_regularization=frequency_regularization,
+                                                    positive_regularization=positive_regularization,
+                                                    test_solution=test_solution)
         lstsq_kernel = self.build_lstsq_kernel(kernel_base, regularization=self.regularize,
-                                               use_regularization=use_regularization,
                                                kernel_weight=kernel_weight)
         model = np.zeros((self.n_step, self.y_size, self.x_size))
         weights = np.zeros((self.y_size, self.x_size))
@@ -1055,9 +1051,7 @@ class DcrCorrection(DcrModel):
             kernel_weighted_use = dcr_kernel*kernel_weight
         kernel_use = dcr_kernel.T
 
-        if regularization is None:
-            use_regularization = False
-        if use_regularization:
+        if regularization is not None:
             kernel_use = np.append(kernel_use, regularization.T, axis=0)
             kernel_weighted_use = np.append(kernel_weighted_use, regularization, axis=1)
 
@@ -1079,8 +1073,7 @@ class DcrCorrection(DcrModel):
 
     @staticmethod
     def solve_model(kernel_size, n_step, dcr_kernel, img_vals, lstsq_kernel=None, use_nonnegative=False,
-                    regularization=None, use_regularization=True,
-                    kernel_weight=None, kernel_restore=None):
+                    regularization=None, kernel_weight=None):
         """!Wrapper to call a fitter using a given covariance matrix, image values, and any regularization.
 
         @param kernel_size  Size of the kernel to use for calculating the covariance matrix, in pixels.
@@ -1100,7 +1093,7 @@ class DcrCorrection(DcrModel):
         x_size = kernel_size
         y_size = kernel_size
         if use_nonnegative:
-            if use_regularization & (regularization is not None):
+            if regularization is not None:
                 regularize_dim = regularization.shape
                 vals_use = np.append(img_vals, np.zeros(regularize_dim[1]))
                 kernel_use = np.append(dcr_kernel.T, regularization.T, axis=0)
@@ -1112,7 +1105,6 @@ class DcrCorrection(DcrModel):
         else:
             if lstsq_kernel is None:
                 lstsq_kernel = DcrCorrection.build_lstsq_kernel(dcr_kernel, regularization=regularization,
-                                                                use_regularization=use_regularization,
                                                                 kernel_weight=None)
             model_vals = lstsq_kernel.dot(img_vals)
         return np.reshape(model_vals, (n_step, y_size, x_size))
