@@ -46,7 +46,17 @@ class _BasicDcrModel(DcrModel):
     """Dummy DcrModel object for testing without a repository."""
 
     def __init__(self, size=None, kernel_size=5, n_step=3, band_name='g', exposure_time=30.,
-                 pixel_scale=0.25, wavelength_step=10.0):
+                 pixel_scale=0.25, wavelength_step=None):
+        """
+        @param size  Number of pixels on a side of the image and model.
+        @param kernel_size  size, in pixels, of the region surrounding each image pixel that DCR
+                            shifts are calculated.
+        @param n_step  Number of sub-filter wavelength planes to model. Optional if wavelength_step supplied.
+        @param band_name  Common name of the filter used. For LSST, use u, g, r, i, z, or y
+        @param exposure_time  Length of the exposure, in seconds. Needed only for exporting to FITS.
+        @param pixel_scale  Plate scale of the images, in arcseconds
+        @param wavelength_step  Overridden by n_step. Sub-filter width, in nm.
+        """
         seed = 5
         rand_gen = np.random
         rand_gen.seed(seed)
@@ -87,6 +97,13 @@ class _BasicDcrCorrection(DcrCorrection):
     """Dummy DcrCorrection object for testing without a repository."""
 
     def __init__(self, band_name='g', n_step=3, kernel_size=5, exposures=None):
+        """
+        @param band_name  Common name of the filter used. For LSST, use u, g, r, i, z, or y.
+        @param n_step  Number of sub-filter wavelength planes to model. Optional if wavelength_step supplied.
+        @param kernel_size  size, in pixels, of the region surrounding each image pixel that DCR
+                            shifts are calculated.
+        @param exposures  A list of LSST exposures to use as input to the DCR calculation.
+        """
         self.butler = None
         self.debug = False
 
