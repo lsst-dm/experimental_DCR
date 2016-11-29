@@ -1024,7 +1024,6 @@ class DcrCorrection(DcrModel):
 
                 model_vals = self.solve_model(self.kernel_size, self.n_step, kernel_base, img_vals,
                                               lstsq_kernel, use_nonnegative=use_nonnegative,
-                                              use_regularization=use_regularization,
                                               regularization=self.regularize)
                 self._insert_model_vals(j, i, model_vals, model, weights,
                                         radius=pix_radius, kernel=self.psf_avg)
@@ -1137,6 +1136,12 @@ def _calc_psf_kernel_subroutine(psf_img, dcr, x_size=None, y_size=None, center_o
 
     n_substep = 10
     psf_mat = np.zeros((x_size * y_size, x_size * y_size))
+
+    sub_image = np.zeros_like(psf_img)
+    for n in range(n_substep):
+        j_use = (dcr.dy.start*(n_substep - n) + dcr.dy.end*n)/n_substep
+        i_use = (dcr.dx.start*(n_substep - n) + dcr.dx.end*n)/n_substep
+        sub_image += scipy_shift(psf_img, (j_use, i_use), mode='constant', cval=0.0) / n_substep
     for j in range(y_size):
         if center_only:
             if j != y_size//2:
@@ -1146,13 +1151,42 @@ def _calc_psf_kernel_subroutine(psf_img, dcr, x_size=None, y_size=None, center_o
                 if i != x_size//2:
                     continue
             ij = i + j * x_size
-            sub_image = np.zeros_like(psf_img)
-            for n in range(n_substep):
-                j_use = j - y_size//2 + (dcr.dy.start*(n_substep - n) + dcr.dy.end*n)/n_substep
-                i_use = i - x_size//2 + (dcr.dx.start*(n_substep - n) + dcr.dx.end*n)/n_substep
-                sub_image += scipy_shift(psf_img, (j_use, i_use), mode='constant', cval=0.0)
-            psf_mat[ij, :] = np.ravel(sub_image[x0:x1, y0:y1]) / n_substep
+            sub_image_use = shift_array(sub_image, dx=i - x_size//2, dy=j - y_size//2, mode='constant')
+            psf_mat[ij, :] = np.ravel(sub_image_use[x0:x1, y0:y1])
     return psf_mat
+
+
+def shift_array(array, dx=0, dy=0, mode='linear_ramp'):
+    """Shift a 2D array by an integer (dy, dx), without wrapping edge values.
+
+    @param array  Input 2D numpy array.
+    @param dx  Integer number of pixels to shift the array horizontally (along axis=1).
+    @param dy  Integer number of pixels to shift the array vertically (along axis=0).
+    @param mode  Set to 'linear_ramp' to taper to 0 at the edge, or to 'constant' to pad with zeros.
+    @return  Returns a shifted version of array.
+    """
+    y_size, x_size = array.shape
+    if dx < 0:
+        x0 = -dx
+        x_shift = (0, -dx)
+    else:
+        x0 = 0
+        x_shift = (dx, 0)
+    x1 = x0 + x_size
+    if dy < 0:
+        y0 = -dy
+        y_shift = (0, -dy)
+    else:
+        y0 = 0
+        y_shift = (dy, 0)
+    y1 = y0 + y_size
+    if mode == 'linear_ramp':
+        array_return = np.pad(array, (y_shift, x_shift), 'linear_ramp', end_values=0.)
+    elif mode == 'constant':
+        array_return = np.pad(array, (y_shift, x_shift), 'constant', constant_values=0.)
+    else:
+        raise ValueError("Invalid mode supplied for numpy.pad")
+    return array_return[y0:y1, x0:x1]
 
 
 def _kernel_1d(offset, size):
