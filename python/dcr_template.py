@@ -115,7 +115,8 @@ class DcrModel:
             self.kernel_size = kernel_size
 
         model_inverse_weights = np.zeros_like(self.weights)
-        model_inverse_weights[self.weights > 0] = 1./self.weights[self.weights > 0]
+        weight_inds = self.weights > 0
+        model_inverse_weights[weight_inds] = 1./self.weights[weight_inds]
         for exp_i, calexp in enumerate(exposures):
             visitInfo = calexp.getInfo().getVisitInfo()
             el = visitInfo.getBoresightAzAlt().getLatitude()
@@ -237,9 +238,10 @@ class DcrModel:
         n_step = len(model_arr)
         n_pix = (2*radius + 1)**2
         model_return = np.zeros(n_step*n_pix, dtype=np.float64)
-        inv_weights_use = inverse_weights[j - radius: j + radius + 1, i - radius: i + radius + 1]
+        slice_inds = np.s_[j - radius: j + radius + 1, i - radius: i + radius + 1]
+        inv_weights_use = inverse_weights[slice_inds]
         for f, model in enumerate(model_arr):
-            model_use = model[j - radius: j + radius + 1, i - radius: i + radius + 1]
+            model_use = model[slice_inds]
             model_return[f*n_pix: (f + 1)*n_pix] = np.ravel(model_use*inv_weights_use)
         return model_return
 
@@ -259,8 +261,9 @@ class DcrModel:
             kernel_use = 1.0
         else:
             kernel_use = kernel
-        template[j - radius: j + radius + 1, i - radius: i + radius + 1] += vals*kernel_use
-        weights[j - radius: j + radius + 1, i - radius: i + radius + 1] += kernel_use
+        slice_inds = np.s_[j - radius: j + radius + 1, i - radius: i + radius + 1]
+        template[slice_inds] += vals*kernel_use
+        weights[slice_inds] += kernel_use
 
     # NOTE: This function was copied from StarFast.py
     @staticmethod
@@ -612,7 +615,7 @@ class DcrModel:
             f += 1
 
         self.model = model_arr
-        self.weights = weights_arr[0]  # The weights should be identical for all subfilters. TODO Check this!
+        self.weights = weights_arr[0]  # The weights should be identical for all subfilters.
         self.mask = dcrModel.getMaskedImage().getMask().getArray()
 
         # This only uses the mask of the last image. For real data all masks should be used.
