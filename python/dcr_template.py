@@ -69,17 +69,16 @@ class DcrModel:
         self.butler = None
         self.load_model(model_repository=model_repository, band_name=band_name, **kwargs)
 
-    def generate_templates_from_model(self, obsid_range=None, exposures=None, add_noise=False, use_full=True,
+    def generate_templates_from_model(self, obsid_range=None, exposures=None, add_noise=False,
                                       repository=None, output_repository=None, kernel_size=None,
                                       instrument='lsstSim', warp=False, verbose=True, **kwargs):
         """!Use the previously generated model and construct a dcr template image.
 
         @param obsid_range  single, or list of observation IDs in repository to create matched
                             templates for. Ignored if exposures are supplied directly.
-        @param exposures  optional, list of exposure objects that will have matched templates created.
+        @param exposures  optional, list or generator of exposure objects that will
+                          have matched templates created.
         @param add_noise  If set to true, add Poisson noise to the template based on the variance.
-        @param use_full  Flag, set to True to use measured PSF for each exposure,
-                         or False to use the fiducial psf for each.
         @param repository  path to the repository where the exposure data to be matched are stored.
                            Ignored if exposures are supplied directly.
         @param output_repository  path to repository directory where templates will be saved.
@@ -238,7 +237,15 @@ class DcrModel:
 
     @staticmethod
     def create_wcs(bbox=None, pixel_scale=None, ra=nanAngle, dec=nanAngle, sky_rotation=nanAngle):
-        """Create a wcs (coordinate system)."""
+        """!Create a wcs (coordinate system).
+
+        @param bbox  A bounding box.
+        @param pixel_scale  Plate scale, in arcseconds.
+        @param ra  Right Ascension of the reference pixel, as an Angle.
+        @param dec  Declination of the reference pixel, as an Angle.
+        @param sky_rotation  Rotation of the image axis, East from North.
+        @return  Returns a WCS object.
+        """
         crval = IcrsCoord(ra, dec)
         crpix = afwGeom.Box2D(bbox).getCenter()
         cd1_1 = (pixel_scale * afwGeom.arcseconds * np.cos(sky_rotation.asRadians())).asDegrees()
@@ -483,6 +490,7 @@ class DcrModel:
         @param x_size  Width in pixels of the region to perform the calculation over. Default is entire image
         @param y_size  Height in pixels of the region to perform the calculation over. Default is entire image
         @param center_only  Flag, set to True to calculate the covariance for only the center pixel.
+        @param psf_img  Image to use as the base psf model. A 2D numpy array. Read from exposure if None.
         @return Returns the covariance matrix of a measured psf shifted by an offset from dcr_generator
         """
         if y_size is None:
@@ -694,6 +702,7 @@ class DcrModel:
                             or False to use the fiducial psf for each.
         @param use_psf  Flag, set to True to use the PSF for calculating the covariance matrix.
                             If set to False, then use_full is ignored.
+        @return Returns the covariance matrix for the exposure, based on the parameters supplied.
         """
         dcr_kernel = []
         for exp in exposures:
@@ -1054,19 +1063,24 @@ class DcrCorrection(DcrModel):
         psfK = afwMath.FixedKernel(psf_image)
         self.psf = measAlg.KernelPsf(psfK)
 
-    def build_model(self, use_only_detected=False, verbose=True,
+    def build_model(self, use_only_detected=False, verbose=True, kernel_size=None,
                     use_nonnegative=False, positive_regularization=False, frequency_regularization=True):
         """!Calculate a model of the true sky using the known DCR offset for each freq plane.
 
         @param use_only_detected  Flag, set to True to only calculate the DCR model for the footprint
                                     of detected sources.
         @param verbose  Flag, set to True to print progress messages.
+        @param kernel_size  [optional] Override the previously set kernel_size with the given value.
         @param use_nonnegative  Flag, set to True to use a true non-negative least squares fit. Very slow!
         @param positive_regularization  Flag, set to True to use an approximate non-negative least squares fit
         @param frequency_regularization Flag, set to True to add constraints on the slope of the frequency
                                         spectrum of the solution.
         @return  No return value, but modifies self.model and self.weights in place.
         """
+        if kernel_size is not None:
+            if kernel_size != self.kernel_size:
+                self.kernel_size = 2*(kernel_size//2) + 1  # kernel must have odd dimensions.
+
         kernel_base = self.build_dcr_kernel(self.exposures, use_full=False, use_psf=False)
         kernel_weight = divide_kernels(self.build_dcr_kernel(self.exposures, use_full=True, use_psf=True),
                                        self.build_dcr_kernel(self.exposures, use_full=False, use_psf=True))
@@ -1308,7 +1322,7 @@ def _kernel_1d(offset, size):
 
 
 def divide_kernels(kernel_numerator, kernel_denominator, threshold=1e-3):
-    """Safely divide two kernels, avoiding zeroes and denominator values below a relative threshold.
+    """!Safely divide two kernels, avoiding zeroes and denominator values below a relative threshold.
 
     @param kernel_numerator  Array numerator A, of A/B = result.
     @param kernel_denominator  Array denominator B, of A/B = result.
