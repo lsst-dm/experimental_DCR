@@ -70,7 +70,8 @@ class DcrModel:
         self.load_model(model_repository=model_repository, band_name=band_name, **kwargs)
 
     def generate_templates_from_model(self, obsid_range=None, exposures=None, add_noise=False, use_full=True,
-                                      repository=None, output_repository=None, kernel_size=None, **kwargs):
+                                      repository=None, output_repository=None, kernel_size=None,
+                                      instrument='lsstSim', warp=False, verbose=True, **kwargs):
         """!Use the previously generated model and construct a dcr template image.
 
         @param obsid_range  single, or list of observation IDs in repository to create matched
@@ -84,6 +85,10 @@ class DcrModel:
         @param output_repository  path to repository directory where templates will be saved.
         @param kernel_size  [optional] size, in pixels, of the region surrounding each image pixel that DCR
                             shifts are calculated. Default is to use the same value the model was created with
+        @param instrument  Name of the observatory.
+        @param warp  Flag. Set to true if the exposures have different wcs from the model.
+                     If True, the generated templates will be warped to match the wcs of each exposure.
+        @param verbose  Flag, set to True to print progress messages.
         @return Returns a generator that builds DCR-matched templates for each exposure.
         """
         if output_repository is not None:
@@ -116,16 +121,36 @@ class DcrModel:
                 obsid = obsid_range.next()
             else:
                 obsid = self._fetch_metadata(calexp.getMetadata(), "OBSID", default_value=0)
+            if verbose:
+                print("Working on observation %s" % obsid)
             visitInfo = calexp.getInfo().getVisitInfo()
+            bbox_exp = calexp.getBBox()
+            wcs_exp = calexp.getInfo().getWcs()
             el = visitInfo.getBoresightAzAlt().getLatitude()
-            az = visitInfo.getBoresightAzAlt().getLongitude()
+            if instrument == 'decam':
+                hour_angle = visitInfo.getBoresightHourAngle()
+                dec = visitInfo.getBoresightRaDec().getDec()
+                lat = visitInfo.getObservatory().getLatitude()
+                p_angle = parallactic_angle(hour_angle.asRadians(), dec.asRadians(), lat.asRadians())
+                cd = calexp.getInfo().getWcs().getCDMatrix()
+                cd_rot = (np.arctan2(-cd[0, 1], cd[0, 0]) + np.arctan2(cd[1, 0], cd[1, 1]))/2.
+                az = Angle(cd_rot + p_angle)
+            else:
+                az = visitInfo.getBoresightAzAlt().getLongitude()
             kernel_base = self.build_dcr_kernel([calexp], use_full=False, use_psf=False)
             kernel_weight = divide_kernels(self.build_dcr_kernel([calexp], use_full=True, use_psf=True),
                                            self.build_dcr_kernel([calexp], use_full=False, use_psf=True))
             template = np.zeros((self.y_size, self.x_size))
             weights = np.zeros((self.y_size, self.x_size))
             pix_radius = self.kernel_size//2
+            if verbose:
+                print("Working on column")
             for j in range(self.y_size):
+                if verbose:
+                    if j % 100 == 0:
+                        print("%i" % j, end="")
+                    elif j % 10 == 0:
+                        print(".", end="")
                 for i in range(self.x_size):
                     if self._edge_test(j, i):
                         continue
@@ -134,6 +159,8 @@ class DcrModel:
                     template_vals = self._apply_dcr_kernel(kernel_base*kernel_weight, model_vals)
                     self._insert_template_vals(j, i, template_vals, template=template, weights=weights,
                                                radius=pix_radius, kernel=self.psf_avg)
+            if verbose:
+                print("\nFinished building template.")
             # Weights may be different for each exposure
             template[weights > 0] /= weights[weights > 0]
             template[weights == 0] = 0.0
@@ -145,6 +172,8 @@ class DcrModel:
             dataId_out = self._build_dataId(obsid, self.photoParams.bandpass, instrument=instrument)[0]
             exposure = self.create_exposure(template, variance=np.abs(template), snap=0,
                                             elevation=el, azimuth=az, obsid=dataId_out['visit'])
+            if warp:
+                wrap_warpExposure(exposure, wcs_exp, bbox_exp)
             if output_repository is not None:
                 butler_out.put(exposure, "calexp", dataId=dataId_out)
             yield exposure
@@ -169,19 +198,28 @@ class DcrModel:
         return value
 
     @staticmethod
-    def _build_dataId(obsid_range, band):
+    def _build_dataId(obsid_range, band, instrument='lsstSim'):
         """!Construct a dataId dictionary for the butler to find a calexp.
 
         @param obsid_range  A single obsid or list of obsids.
         @param band  name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
+        @param instrument  Name of the observatory. Each observatory defines their own dataIds.
         @return Return a list of dataIds for the butler to use to load a calexp from a repository
         """
-        if hasattr(obsid_range, '__iter__'):
-            dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                      for obsid in obsid_range]
-        else:
-            dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                      for obsid in [obsid_range]]
+        if instrument == 'lsstSim':
+            if hasattr(obsid_range, '__iter__'):
+                dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
+                          for obsid in obsid_range]
+            else:
+                dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
+                          for obsid in [obsid_range]]
+        elif instrument == 'decam':
+            if hasattr(obsid_range, '__iter__'):
+                dataId = [{'visit': obsid, 'ccdnum': 10}
+                          for obsid in obsid_range]
+            else:
+                dataId = [{'visit': obsid, 'ccdnum': 10}
+                          for obsid in [obsid_range]]
         return dataId
 
     @staticmethod
@@ -724,7 +762,8 @@ class DcrCorrection(DcrModel):
     """!Class that loads LSST calibrated exposures and produces airmass-matched template images."""
 
     def __init__(self, repository=".", obsid_range=None, band_name='g', wavelength_step=10,
-                 n_step=None, debug_mode=False, kernel_size=None, exposures=None, **kwargs):
+                 n_step=None, debug_mode=False, kernel_size=None, exposures=None,
+                 warp=False, instrument='lsstSim', **kwargs):
         """!Load images from the repository and set up parameters.
 
         @param repository  path to repository with the data. String, defaults to working directory
@@ -738,11 +777,14 @@ class DcrCorrection(DcrModel):
                             Optional. If missing, will be calculated from the maximum shift predicted from DCR
         @param exposures  A list of LSST exposures to use as input to the DCR calculation.
                           Optional. If missing, exposures will be loaded from the specified repository.
+        @param instrument  Name of the observatory.
+        @param warp  Flag. Set to true if the exposures have different wcs from the model.
+                     If True, the generated templates will be warped to match the wcs of each exposure.
         @param **kwargs  Allows additional keyword arguments to be passed to load_bandpass.
         """
         if exposures is None:
             self.butler = daf_persistence.Butler(repository)
-            dataId_gen = self._build_dataId(obsid_range, band_name)
+            dataId_gen = self._build_dataId(obsid_range, band_name, instrument=instrument)
             self.exposures = []
             for dataId in dataId_gen:
                 calexp = self.butler.get("calexp", dataId=dataId)
@@ -755,18 +797,31 @@ class DcrCorrection(DcrModel):
         self.airmass_arr = np.zeros(self.n_images, dtype=np.float64)
         self.elevation_arr = []
         self.azimuth_arr = []
+        ref_exp_i = 0
+        self.bbox = self.exposures[ref_exp_i].getBBox()
+        self.wcs = self.exposures[ref_exp_i].getWcs()
+
         for i, calexp in enumerate(self.exposures):
             visitInfo = calexp.getInfo().getVisitInfo()
             self.elevation_arr.append(visitInfo.getBoresightAzAlt().getLatitude())
-            self.azimuth_arr.append(visitInfo.getBoresightAzAlt().getLongitude())
             self.airmass_arr[i] = visitInfo.getBoresightAirmass()
             psf_size_arr[i] = calexp.getPsf().computeKernelImage().getArray().shape[0]
+            if instrument == 'decam':
+                hour_angle = visitInfo.getBoresightHourAngle()
+                dec = visitInfo.getBoresightRaDec().getDec()
+                lat = visitInfo.getObservatory().getLatitude()
+                p_angle = parallactic_angle(hour_angle.asRadians(), dec.asRadians(), lat.asRadians())
+                cd = calexp.getInfo().getWcs().getCDMatrix()
+                cd_rot = (np.arctan2(-cd[0, 1], cd[0, 0]) + np.arctan2(cd[1, 0], cd[1, 1]))/2.
+                self.azimuth_arr.append(Angle(cd_rot + p_angle))
+            else:
+                self.azimuth_arr.append(visitInfo.getBoresightAzAlt().getLongitude())
+            if (i != ref_exp_i) & warp:
+                wrap_warpExposure(calexp, self.wcs, self.bbox)
 
-        self.y_size, self.x_size = self.exposures[0].getDimensions()
-        self.pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
-        exposure_time = calexp.getInfo().getVisitInfo().getExposureTime()
-        self.bbox = calexp.getBBox()
-        self.wcs = calexp.getWcs()
+        self.x_size, self.y_size = self.exposures[ref_exp_i].getDimensions()
+        self.pixel_scale = self.exposures[ref_exp_i].getWcs().pixelScale().asArcseconds()
+        exposure_time = self.exposures[ref_exp_i].getInfo().getVisitInfo().getExposureTime()
         self.psf_size = int(np.min(psf_size_arr))
         self.mask = None
         self._combine_masks()
@@ -1265,3 +1320,38 @@ def divide_kernels(kernel_numerator, kernel_denominator, threshold=1e-3):
     inds_use = kernel_denominator/np.max(kernel_denominator) >= threshold
     kernel_return[inds_use] = kernel_numerator[inds_use]/kernel_denominator[inds_use]
     return kernel_return
+
+
+def parallactic_angle(hour_angle, dec, lat):
+    """!Compute the parallactic angle given hour angle, declination, and latitude.
+
+    @param hour_angle  Hour angle of the observation, in radians.
+    @param dec  Declination of the observation, in radians.
+    @param lat  Latitude of the observatory, in radians
+    @return  Returns the parallactic angle of the observation, in radians.
+    """
+    return np.arctan2(np.sin(hour_angle), np.cos(dec)*np.tan(lat) - np.sin(dec)*np.cos(hour_angle))
+
+
+def wrap_warpExposure(exposure, wcs, BBox, warpingControl=None):
+    """!Warp an exposure to fit a given WCS and bounding box.
+
+    @param exposure  An LSST exposure object. The image values will be overwritten!
+    @param wcs  World Coordinate System (wcs) to warp the image to.
+    @param BBox  Bounding box of the new image.
+    @param warpingControl  [optional] afwMath.WarpingControl that sets the interpolation parameters.
+
+    """
+    if warpingControl is None:
+        interpLength = 10
+        warpingControl = afwMath.WarpingControl("lanczos4", "", 0, interpLength)
+    warpExp = afwImage.ExposureD(BBox, wcs)
+    afwMath.warpExposure(warpExp, exposure, warpingControl)
+
+    warpImg = warpExp.getMaskedImage().getImage().getArray()
+    exposure.getMaskedImage().getImage().getArray()[:, :] = warpImg
+    warpMask = warpExp.getMaskedImage().getMask().getArray()
+    exposure.getMaskedImage().getMask().getArray()[:, :] = warpMask
+    warpVariance = warpExp.getMaskedImage().getVariance().getArray()
+    exposure.getMaskedImage().getVariance().getArray()[:, :] = warpVariance
+    exposure.setWcs(wcs)

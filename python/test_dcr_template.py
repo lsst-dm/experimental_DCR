@@ -32,6 +32,8 @@ import unittest
 import lsst.utils.tests
 from .dcr_template import DcrModel
 from .dcr_template import DcrCorrection
+from .dcr_template import divide_kernels
+from .dcr_template import wrap_warpExposure
 
 
 def basicBandpass(band_name='g', wavelength_step=1):
@@ -288,6 +290,19 @@ class KernelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         phase_arr_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref)
 
+    def test_divide_kernels(self):
+        """Check that dividing a kernel by itself produces 1s and 0s."""
+        threshold = 0.1
+        psf = self.exposure.getPsf()
+        psf_size = psf.computeKernelImage().getArray().shape[0]
+        phase_arr = DcrModel.calc_psf_kernel(exposure=self.exposure, dcr_gen=self.dcr_gen,
+                                             x_size=psf_size, y_size=psf_size,
+                                             psf_img=self.dcrModel.psf_avg)
+        kernel_div = divide_kernels(phase_arr, phase_arr, threshold=threshold)
+        kernel_ref = np.zeros_like(phase_arr)
+        kernel_ref[phase_arr > threshold] = 1.
+        self.assertFloatsAlmostEqual(kernel_div, kernel_ref)
+
 
 class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
     """Tests for the functions in the DcrModel class."""
@@ -408,6 +423,18 @@ class PersistanceTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
             m_test = model_test[m_i].getMaskedImage().getImage().getArray()
             m_ref = model_ref[m_i].getMaskedImage().getImage().getArray()
             self.assertFloatsAlmostEqual(m_test, m_ref)
+
+    def test_warp_exposure(self):
+        wcs = self.exposure.getWcs()
+        bbox = self.exposure.getBBox()
+        wrap_warpExposure(self.exposure, wcs, bbox)
+        array_warped = self.exposure.getMaskedImage().getImage().getArray()
+        # For some reason the edges are all NAN.
+        valid_inds = np.isfinite(array_warped)
+        self.assertGreater(np.sum(valid_inds), (self.size/2)**2)
+        array_ref = self.array[valid_inds]
+        array_warped = array_warped[valid_inds]
+        self.assertFloatsAlmostEqual(array_ref, array_warped, rtol=1e-7)
 
 
 class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
