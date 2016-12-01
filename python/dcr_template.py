@@ -97,19 +97,12 @@ class DcrModel:
                 butler = self.butler
             else:
                 raise ValueError("Either repository or exposures must be set.")
-            exposures = []
             if obsid_range is not None:
-                dataId_gen = self._build_dataId(obsid_range, self.photoParams.bandpass)
-                for dataId in dataId_gen:
-                    calexp = butler.get("calexp", dataId=dataId)
-                    exposures.append(calexp)
+                dataId_gen = self._build_dataId(obsid_range, self.photoParams.bandpass, instrument=instrument)
+                exposures = (calexp for calexp in
+                             (butler.get("calexp", dataId=dataId) for dataId in dataId_gen))
             else:
                 raise ValueError("One of obsid_range or exposures must be set.")
-        else:
-            if obsid_range is None:
-                obsid_range = [self._fetch_metadata(calexp.getMetadata(), "OBSID", default_value=0)
-                               for calexp in exposures]
-        dataId_out_arr = self._build_dataId(obsid_range, self.photoParams.bandpass)
 
         if kernel_size is not None:
             self.kernel_size = kernel_size
@@ -117,7 +110,12 @@ class DcrModel:
         model_inverse_weights = np.zeros_like(self.weights)
         weight_inds = self.weights > 0
         model_inverse_weights[weight_inds] = 1./self.weights[weight_inds]
-        for exp_i, calexp in enumerate(exposures):
+
+        for calexp in exposures:
+            if obsid_range is not None:
+                obsid = obsid_range.next()
+            else:
+                obsid = self._fetch_metadata(calexp.getMetadata(), "OBSID", default_value=0)
             visitInfo = calexp.getInfo().getVisitInfo()
             el = visitInfo.getBoresightAzAlt().getLatitude()
             az = visitInfo.getBoresightAzAlt().getLongitude()
@@ -144,7 +142,7 @@ class DcrModel:
                 rand_gen = np.random
                 template += rand_gen.normal(scale=np.sqrt(variance_level), size=template.shape)
 
-            dataId_out = dataId_out_arr[exp_i]
+            dataId_out = self._build_dataId(obsid, self.photoParams.bandpass, instrument=instrument)[0]
             exposure = self.create_exposure(template, variance=np.abs(template), snap=0,
                                             elevation=el, azimuth=az, obsid=dataId_out['visit'])
             if output_repository is not None:
