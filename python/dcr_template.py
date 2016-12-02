@@ -26,6 +26,7 @@ from collections import namedtuple
 
 import numpy as np
 from scipy import constants
+from scipy.linalg import pinv2 as scipy_invert
 from scipy.ndimage.interpolation import shift as scipy_shift
 import scipy.optimize.nnls
 
@@ -1166,7 +1167,7 @@ class DcrCorrection(DcrModel):
             kernel_weighted_use = np.append(kernel_weighted_use, regularization, axis=1)
 
         gram_matrix = kernel_weighted_use.dot(kernel_use)  # compute A^T A
-        kernel_inv = np.linalg.pinv(gram_matrix)
+        kernel_inv = scipy_invert(gram_matrix)
         lstsq_kernel = kernel_inv.T.dot(dcr_kernel)
         return lstsq_kernel
 
