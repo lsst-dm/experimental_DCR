@@ -116,9 +116,12 @@ class DcrModel:
         weight_inds = self.weights > 0
         model_inverse_weights[weight_inds] = 1./self.weights[weight_inds]
 
-        for calexp in exposures:
+        if obsid_range is not None:
+            if not hasattr(obsid_range, '__iter__'):
+                obsid_range = [obsid_range]
+        for exp_i, calexp in enumerate(exposures):
             if obsid_range is not None:
-                obsid = obsid_range.next()
+                obsid = obsid_range[exp_i]
             else:
                 obsid = self._fetch_metadata(calexp.getMetadata(), "OBSID", default_value=0)
             if verbose:
