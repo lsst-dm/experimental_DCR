@@ -32,7 +32,6 @@ import unittest
 import lsst.utils.tests
 from .dcr_template import DcrModel
 from .dcr_template import DcrCorrection
-from .dcr_template import divide_kernels
 from .dcr_template import wrap_warpExposure
 
 
@@ -264,8 +263,7 @@ class KernelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         data_file = "test_data/simple_phase_kernel.npy"
         psf = self.exposure.getPsf()
         psf_size = psf.computeKernelImage().getArray().shape[0]
-        phase_arr = DcrModel.calc_offset_phase(exposure=self.exposure, dcr_gen=self.dcr_gen,
-                                               x_size=psf_size, y_size=psf_size)
+        phase_arr = DcrModel.calc_offset_phase(exposure=self.exposure, dcr_gen=self.dcr_gen, size=psf_size)
         phase_arr_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref)
 
@@ -274,9 +272,7 @@ class KernelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         data_file = "test_data/simple_psf_kernel.npy"
         psf = self.exposure.getPsf()
         psf_size = psf.computeKernelImage().getArray().shape[0]
-        phase_arr = DcrModel.calc_psf_kernel(exposure=self.exposure, dcr_gen=self.dcr_gen,
-                                             x_size=psf_size, y_size=psf_size,
-                                             psf_img=self.dcrModel.psf_avg)
+        phase_arr = self.dcrModel.build_psf_kernel(exposure=self.exposure, size=psf_size, use_full=False)
         phase_arr_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref)
 
@@ -285,23 +281,9 @@ class KernelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         data_file = "test_data/full_psf_kernel.npy"
         psf = self.exposure.getPsf()
         psf_size = psf.computeKernelImage().getArray().shape[0]
-        phase_arr = DcrModel.calc_psf_kernel_full(exposure=self.exposure, dcr_gen=self.dcr_gen,
-                                                  x_size=psf_size, y_size=psf_size)
+        phase_arr = self.dcrModel.build_psf_kernel(exposure=self.exposure, size=psf_size, use_full=True)
         phase_arr_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref)
-
-    def test_divide_kernels(self):
-        """Check that dividing a kernel by itself produces 1s and 0s."""
-        threshold = 0.1
-        psf = self.exposure.getPsf()
-        psf_size = psf.computeKernelImage().getArray().shape[0]
-        phase_arr = DcrModel.calc_psf_kernel(exposure=self.exposure, dcr_gen=self.dcr_gen,
-                                             x_size=psf_size, y_size=psf_size,
-                                             psf_img=self.dcrModel.psf_avg)
-        kernel_div = divide_kernels(phase_arr, phase_arr, threshold=threshold)
-        kernel_ref = np.zeros_like(phase_arr)
-        kernel_ref[phase_arr > threshold] = 1.
-        self.assertFloatsAlmostEqual(kernel_div, kernel_ref)
 
 
 class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
@@ -339,37 +321,6 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
             input_vals[radius, radius] = 0.
             input_arr.append(np.ravel(input_vals))
         self.assertFloatsAlmostEqual(np.hstack(input_arr), model_vals)
-
-    def test_apply_kernel(self):
-        """Compare the result of _apply_dcr_kernel to previously computed values."""
-        data_file = "test_data/dcr_kernel_vals.npy"
-        i_use = self.size//2
-        j_use = self.size//2
-        radius = self.kernel_size//2
-        inverse_weights = 1./self.dcrModel.weights
-        model_vals = DcrModel._extract_model_vals(j_use, i_use, radius=radius, model_arr=self.dcrModel.model,
-                                                  inverse_weights=inverse_weights)
-        dcr_kernel = DcrModel.calc_offset_phase(self.exposure, self.dcr_gen,
-                                                x_size=self.kernel_size, y_size=self.kernel_size)
-        dcr_vals = DcrModel._apply_dcr_kernel(dcr_kernel, model_vals)
-        dcr_ref = np.load(data_file)
-        self.assertFloatsAlmostEqual(dcr_vals, dcr_ref)
-
-    @unittest.expectedFailure
-    def test_apply_even_kernel(self):
-        """Only odd kernel sizes are currently supported, so this test is expected to fail for now."""
-        data_file = "test_data/dcr_kernel_even_vals.npy"
-        kernel_size = 6
-        i_use = self.size//2
-        j_use = self.size//2
-        radius = kernel_size//2
-        model_vals = DcrModel._extract_model_vals(j_use, i_use, radius=radius, model=self.dcrModel.model,
-                                                  weights=self.dcrModel.weights)
-        dcr_kernel = DcrModel.calc_offset_phase(self.exposure, self.dcr_gen,
-                                                x_size=kernel_size, y_size=kernel_size)
-        dcr_vals = DcrModel._apply_dcr_kernel(dcr_kernel, model_vals)
-        dcr_ref = np.load(data_file)
-        self.assertFloatsAlmostEqual(dcr_vals, dcr_ref)
 
 
 class PersistanceTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
@@ -513,24 +464,15 @@ class RegularizationTestCase(lsst.utils.tests.TestCase):
         self.kernel_size = 5
         self.n_step = 3
 
-    def test_spatial_regularization(self):
-        """Compare the result of _build_regularization to previously computed values."""
-        data_file = "test_data/spatial_regularization.npy"
-        reg = DcrCorrection.build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
-                                                 n_step=self.n_step, spatial_regularization=True)
-        test_reg = np.load(data_file)
-        self.assertFloatsAlmostEqual(reg, test_reg)
-
     def test_no_regularization(self):
         # All regularization is set to False by default
-        reg = DcrCorrection.build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
-                                                 n_step=self.n_step)
+        reg = DcrCorrection.build_regularization(size=self.kernel_size, n_step=self.n_step)
         self.assertIsNone(reg)
 
     def test_frequency_regularization(self):
         """Compare the result of _build_regularization to previously computed values."""
         data_file = "test_data/frequency_regularization.npy"
-        reg = DcrCorrection.build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
+        reg = DcrCorrection.build_regularization(size=self.kernel_size,
                                                  n_step=self.n_step, frequency_regularization=True)
         test_reg = np.load(data_file)
         self.assertFloatsAlmostEqual(reg, test_reg)
@@ -538,24 +480,22 @@ class RegularizationTestCase(lsst.utils.tests.TestCase):
     def test_frequency_derivative_regularization(self):
         """Compare the result of _build_regularization to previously computed values."""
         data_file = "test_data/frequency_derivative_regularization.npy"
-        reg = DcrCorrection.build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
+        reg = DcrCorrection.build_regularization(size=self.kernel_size,
                                                  n_step=self.n_step, frequency_second_regularization=True)
+        # np.save(data_file, reg)
         test_reg = np.load(data_file)
         self.assertFloatsAlmostEqual(reg, test_reg)
 
     def test_multiple_regularization(self):
         """Compare the result of _build_regularization to previously computed values."""
-        spatial_file = "test_data/spatial_regularization.npy"
         freq_file = "test_data/frequency_regularization.npy"
         deriv_file = "test_data/frequency_derivative_regularization.npy"
 
-        reg = DcrCorrection.build_regularization(x_size=self.kernel_size, y_size=self.kernel_size,
-                                                 n_step=self.n_step, spatial_regularization=True,
-                                                 frequency_regularization=True,
+        reg = DcrCorrection.build_regularization(size=self.kernel_size,
+                                                 n_step=self.n_step, frequency_regularization=True,
                                                  frequency_second_regularization=True)
-        freq_reg = np.append(np.load(freq_file), np.load(deriv_file), axis=1)
-        test_reg = np.append(np.load(spatial_file), freq_reg, axis=1)
-        self.assertFloatsAlmostEqual(reg, test_reg)
+        freq_reg = np.append(np.load(freq_file), np.load(deriv_file), axis=0)
+        self.assertFloatsAlmostEqual(reg, freq_reg)
 
 
 class SolverTestCase(lsst.utils.tests.TestCase):
@@ -568,17 +508,24 @@ class SolverTestCase(lsst.utils.tests.TestCase):
     def tearDown(self):
         del self.dcrCorr
 
-    def test_build_dcr_kernel_full(self):
+    def test_build_psf_kernel_full(self):
         """Compare the result of _build_dcr_kernel to previously computed values."""
-        data_file = "test_data/build_dcr_kernel_full_vals.npy"
-        kernel = self.dcrCorr.build_dcr_kernel(self.dcrCorr.exposures, use_full=True, use_psf=True)
+        data_file = "test_data/build_psf_kernel_full_vals.npy"
+        kernel = self.dcrCorr.build_psf_kernel(use_full=True)
+        kernel_ref = np.load(data_file)
+        self.assertFloatsAlmostEqual(kernel, kernel_ref)
+
+    def test_build_psf_kernel(self):
+        """Compare the result of _build_dcr_kernel to previously computed values."""
+        data_file = "test_data/build_psf_kernel_vals.npy"
+        kernel = self.dcrCorr.build_psf_kernel(use_full=False)
         kernel_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(kernel, kernel_ref)
 
     def test_build_dcr_kernel(self):
         """Compare the result of _build_dcr_kernel to previously computed values."""
         data_file = "test_data/build_dcr_kernel_vals.npy"
-        kernel = self.dcrCorr.build_dcr_kernel(self.dcrCorr.exposures, use_full=False, use_psf=False)
+        kernel = self.dcrCorr.build_dcr_kernel()
         kernel_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(kernel, kernel_ref)
 
@@ -605,8 +552,10 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         image_arr = [exp.getMaskedImage().getImage().getArray() for exp in self.dcrCorr.exposures]
         mask_arr = [exp.getMaskedImage().getMask().getArray() for exp in self.dcrCorr.exposures]
         image_vals = self.dcrCorr._extract_image_vals(j, i, image_arr, mask=mask_arr, radius=pix_radius)
-        dcr_kernel = self.dcrCorr.build_dcr_kernel(self.dcrCorr.exposures, use_full=False, use_psf=False)
-        model_vals = self.dcrCorr.solve_model(kernel_size, n_step, dcr_kernel, image_vals)
+        dcr_kernel = self.dcrCorr.build_dcr_kernel()
+        lstsq_kernel = self.dcrCorr.build_lstsq_kernel(dcr_kernel)
+        model_vals = self.dcrCorr.solve_model(kernel_size, image_vals, n_step=n_step,
+                                              lstsq_kernel=lstsq_kernel)
         model_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(model_vals, model_ref)
 
@@ -622,11 +571,12 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         image_arr = [exp.getMaskedImage().getImage().getArray() for exp in self.dcrCorr.exposures]
         mask_arr = [exp.getMaskedImage().getMask().getArray() for exp in self.dcrCorr.exposures]
         image_vals = self.dcrCorr._extract_image_vals(j, i, image_arr, mask=mask_arr, radius=pix_radius)
-        dcr_kernel = self.dcrCorr.build_dcr_kernel(self.dcrCorr.exposures, use_full=False, use_psf=False)
-        self.dcrCorr.regularize = DcrCorrection.build_regularization(x_size=kernel_size, y_size=kernel_size,
-                                                                     n_step=n_step,
-                                                                     frequency_regularization=True)
-        model_vals = self.dcrCorr.solve_model(kernel_size, n_step, dcr_kernel, image_vals)
+        dcr_kernel = self.dcrCorr.build_dcr_kernel()
+        regularize = DcrCorrection.build_regularization(size=kernel_size, n_step=n_step,
+                                                        frequency_regularization=True)
+        lstsq_kernel = self.dcrCorr.build_lstsq_kernel(dcr_kernel, regularization=regularize)
+        model_vals = self.dcrCorr.solve_model(kernel_size, image_vals, n_step=n_step,
+                                              lstsq_kernel=lstsq_kernel)
         model_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(model_vals, model_ref)
 
