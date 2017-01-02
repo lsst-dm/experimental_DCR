@@ -1026,20 +1026,18 @@ class DcrCorrection(DcrModel):
         self.debug = bool(debug_mode)
 
     @staticmethod
-    def build_regularization(x_size=None, y_size=None, n_step=None, weight=1.,
-                             spatial_regularization=False,
+    def build_regularization(size, size_out=None, n_step=None, weight=1.,
                              frequency_regularization=False, frequency_second_regularization=False,
                              positive_regularization=False, test_solution=None):
         """!Regularization adapted from Nate Lust's DCR Demo iPython notebook.
 
         Calculate a difference matrix for regularization as if each wavelength were a pixel, then scale
         the difference matrix to the size of the number of pixels times number of wavelengths
-        @param x_size  width of the kernel, in pixels.
-        @param y_size  height of the kernel, in pixels.
+        @param size  width of the kernel in the origin image, in pixels.
+        @param size_out  width of the kernel in the destination image, in pixels.
         @param n_step  Number of sub-filter wavelength planes.
         @param weight  Scale factor for the regularization kernel.
                        Weight equal to the mean of the covariance matrix is recommended.
-        @param spatial_regularization  Flag, set to True to include spatial regularization (not recommended)
         @param frequency_regularization  Flag, set to True to regularize using frequency smoothness
         @param frequency_second_regularization  Flag, set to True to regularize using smoothness of the
                derivative of the frequency.
@@ -1053,14 +1051,36 @@ class DcrCorrection(DcrModel):
         reg_lambda2 = None
         reg_positive = None
         regularization_full = None
+        n_pix_in = size**2
+        if size_out is None:
+            size_out = size
+        n_pix_out = size_out**2
+        if n_pix_in == n_pix_out:
+            inds_in = np.arange(n_pix_in)
+            inds_out = np.arange(n_pix_in)
+        elif n_pix_in > n_pix_out:
+            ind_test = np.zeros((size, size))
+            i0 = size//2 - size_out//2
+            i1 = i0 + size_out
+            ind_test[i0: i1, i0: i1] = 1
+            inds_in = np.flatnonzero(ind_test)
+            inds_out = np.arange(n_pix_out)
+        elif n_pix_in < n_pix_out:
+            inds_in = np.arange(n_pix_in)
+            ind_test = np.zeros((size_out, size_out))
+            i0 = size_out//2 - size//2
+            i1 = i0 + size
+            ind_test[i0: i1, i0: i1] = 1
+            inds_out = np.flatnonzero(ind_test)
+        n_inds = len(inds_in)
 
         if frequency_regularization:
             # regularization that forces the SED to be smooth
-            reg_lambda = np.zeros((n_step*x_size*y_size, (n_step - 1)*x_size*y_size))
+            reg_lambda = np.zeros((n_step*n_pix_out, (n_step - 1)*n_pix_in))
             for f in range(n_step - 1):
-                for ij in range(x_size*y_size):
-                    reg_lambda[f*x_size*y_size + ij, f*x_size*y_size + ij] = 2*weight
-                    reg_lambda[(f + 1)*x_size*y_size + ij, f*x_size*y_size + ij] = -2*weight
+                for ij in range(n_inds):
+                    reg_lambda[f*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = 2*weight
+                    reg_lambda[(f + 1)*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = -2*weight
             # We should include both positive and negative slopes, which could be dealt with by taking
             # reg_lambda = np.append(reg_lambda, -reg_lambda, axis=1). That works out to be the same as
             # just doubling the weight of reg_lambda, so we use 2*weight here instead of inflating the
@@ -1072,12 +1092,12 @@ class DcrCorrection(DcrModel):
 
         if frequency_second_regularization:
             # regularization that forces the derivative of the SED to be smooth
-            reg_lambda2 = np.zeros((n_step*x_size*y_size, (n_step - 2)*x_size*y_size))
+            reg_lambda2 = np.zeros((n_step*n_pix_out, (n_step - 2)*n_pix_in))
             for f in range(n_step - 2):
-                for ij in range(x_size*y_size):
-                    reg_lambda2[f*x_size*y_size + ij, f*x_size*y_size + ij] = -weight
-                    reg_lambda2[(f + 1)*x_size*y_size + ij, f*x_size*y_size + ij] = 2.*weight
-                    reg_lambda2[(f + 2)*x_size*y_size + ij, f*x_size*y_size + ij] = -weight
+                for ij in range(n_inds):
+                    reg_lambda2[f*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = -weight
+                    reg_lambda2[(f + 1)*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = 2.*weight
+                    reg_lambda2[(f + 2)*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = -weight
             if regularization_full is None:
                 regularization_full = reg_lambda2
             else:
@@ -1088,11 +1108,11 @@ class DcrCorrection(DcrModel):
             if test_solution is None:
                 n_zero = 0
             else:
-                test_solution_use = np.reshape(test_solution, (n_step*x_size*y_size))
+                test_solution_use = np.reshape(test_solution, (n_step*n_pix_out))
                 zero_inds = np.where(np.ravel(test_solution_use) < 0)[0]
                 n_zero = len(zero_inds)
             if n_zero > 0:
-                reg_positive = np.zeros((n_step*x_size*y_size, n_zero))
+                reg_positive = np.zeros((n_step*n_pix_out, n_zero))
                 for zi in range(n_zero):
                     reg_positive[zero_inds[zi], zi] = weight*test_solution_use[zero_inds[zi]]
             if regularization_full is None:
@@ -1100,7 +1120,10 @@ class DcrCorrection(DcrModel):
             else:
                 regularization_full = np.append(regularization_full, reg_positive, axis=1)
 
-        return regularization_full
+        if regularization_full is not None:
+            return regularization_full.T
+        else:
+            return None
 
     @staticmethod
     def _extract_image_vals(j, i, image_arr, mask=None, radius=None):
