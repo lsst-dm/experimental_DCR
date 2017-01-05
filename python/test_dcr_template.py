@@ -313,7 +313,7 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         weight_scale = 2.2
         inverse_weights = 1./(self.dcrModel.weights * weight_scale)
         inverse_weights[j, i] = 0.
-        model_vals = DcrModel._extract_model_vals(j, i, radius=radius, model_arr=self.dcrModel.model,
+        model_vals = DcrModel._extract_image_vals(j, i, radius=radius, image_arr=self.dcrModel.model,
                                                   inverse_weights=inverse_weights)
         input_arr = []
         for model in self.dcrModel.model:
@@ -431,21 +431,25 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
                       for f in range(self.n_images)]
         self.assertFloatsAlmostEqual(np.hstack(input_vals), image_vals)
 
-    def test_insert_model_vals(self):
+    def test_insert_image_vals(self):
         # Make j and i different slightly so we can tell if the indices get swapped
         i = self.size//2 + 1
         j = self.size//2 - 1
         radius = self.kernel_size//2
-        test_vals = np.random.random(size=(self.n_step, self.kernel_size, self.kernel_size))
-        model_ref = np.zeros((self.n_step, self.size, self.size))
-        model = np.zeros((self.n_step, self.size, self.size))
+        slice_inds = np.s_[j - radius: j + radius + 1, i - radius: i + radius + 1]
+        test_vals = [np.random.random(size=(self.kernel_size, self.kernel_size)) for f in range(self.n_step)]
         weights_ref = np.zeros((self.size, self.size))
         weights = np.zeros((self.size, self.size))
         psf_use = self.dcrCorr.psf_avg
-        self.dcrCorr._insert_model_vals(j, i, test_vals, model, weights, radius=radius, kernel=psf_use)
-        model_ref[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += test_vals*psf_use
-        weights_ref[j - radius: j + radius + 1, i - radius: i + radius + 1] += psf_use
-        self.assertFloatsAlmostEqual(model_ref, model)
+        for model_i in range(self.n_step):
+            model = np.zeros((self.size, self.size))
+            model_ref = np.zeros((self.size, self.size))
+            self.dcrCorr._insert_image_vals(j, i, test_vals[model_i], model, weights,
+                                            radius=radius, kernel=psf_use)
+            model_ref[slice_inds] += test_vals[model_i]*psf_use
+            self.assertFloatsAlmostEqual(model_ref, model)
+        weights/=self.n_step
+        weights_ref[slice_inds] += psf_use
         self.assertFloatsAlmostEqual(weights_ref, weights)
 
     def test_calculate_psf(self):
@@ -556,8 +560,9 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         lstsq_kernel = self.dcrCorr.build_lstsq_kernel(dcr_kernel)
         model_vals = self.dcrCorr.solve_model(kernel_size, image_vals, n_step=n_step,
                                               lstsq_kernel=lstsq_kernel)
+        model_arr = [model for model in model_vals]
         model_ref = np.load(data_file)
-        self.assertFloatsAlmostEqual(model_vals, model_ref)
+        self.assertFloatsAlmostEqual(model_arr, model_ref)
 
     def test_solve_model_with_regularization(self):
         """Compare the result of _solve_model to previously computed values."""
@@ -577,8 +582,9 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         lstsq_kernel = self.dcrCorr.build_lstsq_kernel(dcr_kernel, regularization=regularize)
         model_vals = self.dcrCorr.solve_model(kernel_size, image_vals, n_step=n_step,
                                               lstsq_kernel=lstsq_kernel)
+        model_arr = [model for model in model_vals]
         model_ref = np.load(data_file)
-        self.assertFloatsAlmostEqual(model_vals, model_ref)
+        self.assertFloatsAlmostEqual(model_arr, model_ref)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):

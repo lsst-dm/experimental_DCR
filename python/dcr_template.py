@@ -167,16 +167,15 @@ class DcrModel:
                 for i in range(self.x_size):
                     if self._edge_test(j, i):
                         continue
-                    model_vals = self._extract_model_vals(j, i, radius=pix_radius, model_arr=self.model,
+                    model_vals = self._extract_image_vals(j, i, self.model, radius=pix_radius,
                                                           inverse_weights=model_inverse_weights)
-                    template_vals = self.solve_model(self.kernel_size, model_vals,
-                                                     lstsq_kernel=lstsq_kernel, kernel_dcr=kernel_dcr,
-                                                     center_only=debug_solver,
-                                                     kernel_ref=kernel_model, kernel_restore=kernel_exp,
-                                                     use_nonnegative=use_nonnegative)
-                    self._insert_template_vals(j, i, template_vals, template=template, weights=weights,
-                                               radius=pix_radius, kernel=self.psf_avg,
-                                               center_only=debug_solver)
+                    template_gen = self.solve_model(self.kernel_size, model_vals,
+                                                    lstsq_kernel=lstsq_kernel, kernel_dcr=kernel_dcr,
+                                                    center_only=debug_solver,
+                                                    kernel_ref=kernel_model, kernel_restore=kernel_exp,
+                                                    use_nonnegative=use_nonnegative)
+                    self._insert_image_vals(j, i, next(template_gen), image=template, weights=weights,
+                                            radius=pix_radius, kernel=self.psf_avg, center_only=debug_solver)
             if verbose:
                 print("\nFinished building template.")
             # Weights may be different for each exposure
@@ -274,52 +273,58 @@ class DcrModel:
         return(afwImage.makeWcs(crval, crpix, cd1_1, cd1_2, cd2_1, cd2_2))
 
     @staticmethod
-    def _extract_model_vals(j, i, model_arr, inverse_weights, radius=None):
-        """!Return all pixels within a box surrounding a given point as a 1D vector for each dcr plane model.
+    def _extract_image_vals(j, i, image_arr, inverse_weights=None, mask=None, radius=None,
+                            iterative_solution=None):
+        """!Return all pixels within a radius of a given point as a 1D vector for each exposure.
 
-        @param j  Vertical pixel index
-        @param i  Horizontal pixel index
-        @param model_arr  dcrModel read in with DcrModel._load_model or DcrCorrection, a list of 2D arrays
-        @param inverse_weights   A 2D array containing the inverse of the nonzero elements of the weights
-                                 returned by DcrCorrection, with zeros everywhere else.
-        @param radius  Half the width, in pixels, of the box surrounding (j, i) to be extracted.
-        @return Returns the weighted model values within the range of pixels, formatted for _apply_dcr_kernel
+        @param j  Vertical index of the center pixel
+        @param i  Horizontal index of the center pixel
+        @param image_arr  List of 2D numpy arrays containing the image data.
+        @param inverse_weights  A 2D array containing the inverse of the nonzero elements of the weights
+                                returned by DcrCorrection, with zeros everywhere else.
+        @param mask  [Optional] List of mask planes associated with each image. #TODO Not yet implemented!
+        @param radius  Half the width, in pixels, of the box surrounding (j, i) to be updated.
+        @param iterative_solution  @TODO
+        @return Returns a numpy array of size (number of images, (2*radius + 1)**2)
         """
-        n_step = len(model_arr)
         n_pix = (2*radius + 1)**2
-        model_return = np.zeros(n_step*n_pix, dtype=np.float64)
+        n_img = len(image_arr)
+        sub_img_arr = np.zeros(n_pix*n_img, dtype=np.float64)
         slice_inds = np.s_[j - radius: j + radius + 1, i - radius: i + radius + 1]
-        inv_weights_use = inverse_weights[slice_inds]
-        for f, model in enumerate(model_arr):
-            model_use = model[slice_inds]
-            model_return[f*n_pix: (f + 1)*n_pix] = np.ravel(model_use*inv_weights_use)
-        return model_return
+        if inverse_weights is None:
+            inv_weights_use = 1.
+        else:
+            inv_weights_use = inverse_weights[slice_inds]
+        for ii, image in enumerate(image_arr):
+            sub_image = image[slice_inds]
+            sub_img_arr[ii*n_pix: (ii + 1)*n_pix] = np.ravel(sub_image*inv_weights_use)
+            if iterative_solution is not None:
+                sub_img_arr[ii*n_pix: (ii + 1)*n_pix] -= np.ravel(iterative_solution[ii][slice_inds])
+        return sub_img_arr
 
     @staticmethod
-    def _insert_template_vals(j, i, vals, template=None, weights=None, radius=None, kernel=None,
-                              center_only=False):
-        """!Update a template image in place.
+    def _insert_image_vals(j, i, vals, image, weights, radius=None, kernel=1., center_only=False):
+        """!Update an image and associated weights in place.
 
         @param j  Vertical pixel index
         @param i  Horizontal pixel index
-        @param vals  DCR-corrected template values, from solve_model
-        @param template  The existing template image, which will be modified in place.
+        @param vals  Numpy array of values to be inserted, with size (2*radius + 1, 2*radius + 1)
+        @param image  The existing template image, which will be modified in place.
         @param weights  An array of weights, to be modified in place.
         @param radius  Half the width, in pixels, of the box surrounding (j, i) to be updated.
-        @param kernel  [optional] Weight inserted template values with this kernel.
+        @param kernel  A scalar or numpy array of weights to multiply vals by for a weighted average.
         @param center_only  Set to True to update only the value of the center pixel.
         """
-        if kernel is None:
-            kernel_use = 1.0
-        else:
-            kernel_use = kernel
+        if radius is None:
+            n_vals = len(vals)
+            radius = (np.sqrt(n_vals) - 1)//2
         if center_only:
-            template[j, i] += vals
+            image[j, i] += vals
             weights[j, i] += 1.
         else:
             slice_inds = np.s_[j - radius: j + radius + 1, i - radius: i + radius + 1]
-            template[slice_inds] += vals*kernel_use
-            weights[slice_inds] += kernel_use
+            image[slice_inds] += vals*kernel
+            weights[slice_inds] += kernel
 
     # NOTE: This function was copied from StarFast.py
     @staticmethod
@@ -918,14 +923,17 @@ class DcrModel:
             model_vals = lstsq_kernel.dot(img_vals)
         if n_step is None:
             if center_only:
-                return model_vals
+                yield model_vals
             else:
-                return np.reshape(model_vals, (y_size, x_size))
+                yield np.reshape(model_vals, (y_size, x_size))
         else:
             if center_only:
-                return np.reshape(model_vals, (n_step))
+                for model_val in model_vals:
+                    yield model_val
             else:
-                return np.reshape(model_vals, (n_step, y_size, x_size))
+                n_pix = x_size*y_size
+                for f in range(n_step):
+                    yield np.reshape(model_vals[f*n_pix: (f + 1)*n_pix], (y_size, x_size))
 
 
 class DcrCorrection(DcrModel):
@@ -1126,45 +1134,6 @@ class DcrCorrection(DcrModel):
             return None
 
     @staticmethod
-    def _extract_image_vals(j, i, image_arr, mask=None, radius=None):
-        """!Return all pixels within a radius of a given point as a 1D vector for each exposure.
-
-        @param j  Vertical index of the center pixel
-        @param i  Horizontal index of the center pixel
-        @param image_arr  List of 2D numpy arrays containing the image data.
-        @param mask  [Optional] List of mask planes associated with each image. #TODO Not yet implemented!
-        @param radius  Half the width, in pixels, of the box surrounding (j, i) to be updated.
-        @return Returns a numpy array of size (number of exposures, (2*radius + 1)**2)
-        """
-        n_pix = (2*radius + 1)**2
-        n_img = len(image_arr)
-        sub_img_arr = np.zeros(n_pix*n_img, dtype=np.float64)
-        for ii, img in enumerate(image_arr):
-            sub_img = img[j - radius: j + radius + 1, i - radius: i + radius + 1]
-            sub_img_arr[ii*n_pix: (ii + 1)*n_pix] = np.ravel(sub_img)
-        return sub_img_arr
-
-    @staticmethod
-    def _insert_model_vals(j, i, vals, model, weights, radius=None, kernel=1., center_only=False):
-        """!Insert the given values into the model and update the weights.
-
-        @param j  Vertical index of the center pixel
-        @param i  Horizontal index of the center pixel
-        @param vals  Numpy array of values to be inserted, with size (n_step, 2*radius + 1, 2*radius + 1)
-        @param model  The weighted model to be updated. Modified in place.
-        @param weights  The weights to use for calculating a weighted average of the model. Modified in place.
-        @param radius  Half the width, in pixels, of the box surrounding (j, i) to be updated.
-        @param kernel  A scalar or numpy array of weights to multiply vals by for a weighted average.
-        @param center_only  Flag, set to True to calculate the covariance for only the center pixel.
-        """
-        if center_only:
-            model[:, j, i] += vals
-            weights[j, i] += 1.
-        else:
-            model[:, j - radius: j + radius + 1, i - radius: i + radius + 1] += vals*kernel
-            weights[j - radius: j + radius + 1, i - radius: i + radius + 1] += kernel
-
-    @staticmethod
     def fit_psf_size(exposures, minimum_psf_size=5, threshold=1e-2):
         """!Fit for the size of the psf to use from a set of exposures.
 
@@ -1210,15 +1179,15 @@ class DcrCorrection(DcrModel):
                                                    frequency_regularization=True)
         # Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images
         # If the original psf is much larger than the kernel, it may be trimmed slightly by fit_psf_size above
-        psf_model_large = DcrCorrection.solve_model(self.psf_size, psf_mat, n_step=self.n_step,
-                                                    kernel_dcr=dcr_shift,
-                                                    use_nonnegative=True, regularization=regularize_psf)
+        psf_model_gen = DcrCorrection.solve_model(self.psf_size, psf_mat, n_step=self.n_step,
+                                                  kernel_dcr=dcr_shift,
+                                                  use_nonnegative=True, regularization=regularize_psf)
 
         p0 = self.psf_size//2 - self.kernel_size//2
         p1 = p0 + self.kernel_size
         # After solving for the (potentially) large psf, store only the central portion of size kernel_size.
-        self.psf_model = psf_model_large[:, p0: p1, p0: p1]
-        psf_vals = np.sum(psf_model_large, axis=0)/self.n_step
+        # self.psf_model = psf_model_large[:, p0: p1, p0: p1]
+        psf_vals = np.sum(psf_model_gen)/self.n_step
         self.psf_avg = psf_vals[p0: p1, p0: p1]
         psf_image = afwImage.ImageD(self.psf_size, self.psf_size)
         psf_image.getArray()[:, :] = psf_vals
@@ -1227,7 +1196,7 @@ class DcrCorrection(DcrModel):
 
     def build_model(self, use_only_detected=False, verbose=True, kernel_size=None,
                     use_nonnegative=False, positive_regularization=False, frequency_regularization=True,
-                    debug_solver=False, debug_regularize=None):
+                    debug_solver=False, debug_regularize=None, iterative_solution=None):
         """!Calculate a model of the true sky using the known DCR offset for each freq plane.
 
         @param use_only_detected  Flag, set to True to only calculate the DCR model for the footprint
@@ -1289,7 +1258,7 @@ class DcrCorrection(DcrModel):
                                                kernel_dcr_intermediate=kernel_dcr_intermediate,
                                                center_only=debug_solver)
         self.lstsq = lstsq_kernel
-        model = np.zeros((self.n_step, self.y_size, self.x_size))
+        model_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
         weights = np.zeros((self.y_size, self.x_size))
         pix_radius = self.kernel_size//2
 
@@ -1319,19 +1288,22 @@ class DcrCorrection(DcrModel):
                 if use_only_detected:
                     if self.mask[j, i] & detected_bit == 0:
                         continue
-                img_vals = self._extract_image_vals(j, i, image_arr, mask=mask_arr, radius=pix_radius)
+                img_vals = self._extract_image_vals(j, i, image_arr, mask=mask_arr, radius=pix_radius,
+                                                    iterative_solution=iterative_solution)
 
-                model_vals = self.solve_model(self.kernel_size, img_vals, n_step=self.n_step,
-                                              lstsq_kernel=lstsq_kernel, use_nonnegative=use_nonnegative,
-                                              regularization=self.regularize, center_only=debug_solver,
-                                              kernel_ref=kernel_full, kernel_restore=kernel_restore,
-                                              kernel_dcr=kernel_dcr)
-                self._insert_model_vals(j, i, model_vals, model, weights, center_only=debug_solver,
-                                        radius=pix_radius, kernel=self.psf_avg)
+                model_vals_gen = self.solve_model(self.kernel_size, img_vals, n_step=self.n_step,
+                                                  lstsq_kernel=lstsq_kernel, use_nonnegative=use_nonnegative,
+                                                  regularization=self.regularize, center_only=debug_solver,
+                                                  kernel_ref=kernel_full, kernel_restore=kernel_restore,
+                                                  kernel_dcr=kernel_dcr)
+                for f, model_vals in enumerate(model_vals_gen):
+                    self._insert_image_vals(j, i, model_vals, model_arr[f], weights, center_only=debug_solver,
+                                            radius=pix_radius, kernel=self.psf_avg)
+        weights /= self.n_step  # weights are currently updated for every frame, which is wasteful.
         if verbose:
             print("\nFinished building model.")
         self.weights = weights
-        self.model = [model[f, :, :] for f in range(self.n_step)]
+        self.model = model_arr
 
     def _combine_masks(self):
         """!Compute the bitwise OR of the input masks."""
