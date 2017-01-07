@@ -110,6 +110,7 @@ class DcrModel:
             else:
                 raise ValueError("One of obsid_range or exposures must be set.")
 
+        self.instrument = instrument
         self.model_sigma = None
         if kernel_size is not None:
             if kernel_size != self.kernel_size:
@@ -576,7 +577,7 @@ class DcrModel:
             exp = self.create_exposure(self.model[f], variance=self.weights,
                                        elevation=Angle(np.pi/2), azimuth=Angle(0), ksupport=self.kernel_size,
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
-                                       wavestep=self.bandpass.wavelen_step)
+                                       wavestep=self.bandpass.wavelen_step, telescop=self.instrument)
             butler.put(exp, "dcrModel", dataId=self._build_model_dataId(self.photoParams.bandpass, f))
 
     def load_model(self, model_repository=None, band_name='g', **kwargs):
@@ -608,14 +609,15 @@ class DcrModel:
         meta = dcrModel.getMetadata()
         self.wcs = dcrModel.getWcs()
         self.n_step = len(model_arr)
-        wave_step = meta.get("WAVESTEP")
+        wave_step = self._fetch_metadata(meta, "WAVESTEP")
         self.y_size, self.x_size = dcrModel.getDimensions()
         self.pixel_scale = self.wcs.pixelScale().asArcseconds()
         exposure_time = dcrModel.getInfo().getVisitInfo().getExposureTime()
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
                                                  bandpass=band_name)
         self.bbox = dcrModel.getBBox()
-        self.kernel_size = meta.get("KSUPPORT")
+        self.kernel_size = self._fetch_metadata(meta, "KSUPPORT")
+        self.instrument = self._fetch_metadata(meta, "TELESCOP", default_value='lsstSim')
         self.bandpass = DcrModel.load_bandpass(band_name=band_name, wavelength_step=wave_step, **kwargs)
 
         self.psf = dcrModel.getPsf()
@@ -970,6 +972,7 @@ class DcrCorrection(DcrModel):
         else:
             self.exposures = exposures
 
+        self.instrument = instrument
         self.n_images = len(self.exposures)
         psf_size_arr = np.zeros(self.n_images)
         self.airmass_arr = np.zeros(self.n_images, dtype=np.float64)

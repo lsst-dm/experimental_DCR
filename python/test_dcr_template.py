@@ -63,6 +63,7 @@ class _BasicDcrModel(DcrModel):
         rand_gen.seed(seed)
         self.butler = None
         self.debug = False
+        self.instrument = 'lsstSim'
 
         bandpass_init = basicBandpass(band_name=band_name, wavelength_step=wavelength_step)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
@@ -108,6 +109,7 @@ class _BasicDcrCorrection(DcrCorrection):
         """
         self.butler = None
         self.debug = False
+        self.instrument = 'lsstSim'
 
         self.elevation_arr = []
         self.azimuth_arr = []
