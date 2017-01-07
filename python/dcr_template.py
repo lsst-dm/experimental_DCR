@@ -1089,7 +1089,7 @@ class DcrCorrection(DcrModel):
 
     def build_model(self, use_only_detected=False, verbose=True, kernel_size=None,
                     use_nonnegative=False, positive_regularization=False, frequency_regularization=True,
-                    debug_solver=False, debug_regularize=None, iterative_solution=None):
+                    debug_solver=False, debug_regularize=None, use_iterative_solution=False):
         """!Calculate a model of the true sky using the known DCR offset for each freq plane.
 
         @param use_only_detected  Flag, set to True to only calculate the DCR model for the footprint
@@ -1103,6 +1103,7 @@ class DcrCorrection(DcrModel):
         @return  No return value, but modifies self.model and self.weights in place.
         """
         self.model_sigma = None
+        iterative_solution = None
         if kernel_size is not None:
             if kernel_size != self.kernel_size:
                 print("Recalculating the PSF model!")
@@ -1119,14 +1120,9 @@ class DcrCorrection(DcrModel):
         kernel_dcr = self.build_dcr_kernel(expand_intermediate=False)
         kernel_weight = self.build_weight_kernel(expand_intermediate=expand_intermediate)
 
-        self.kernel_restore = kernel_restore
-        self.kernel_full = kernel_full
-        self.kernel_dcr = kernel_dcr
-
         regularize_scale = np.max(kernel_dcr)
         if debug_regularize is not None:
             regularize_scale *= debug_regularize
-            kernel_dcr_intermediate = None
         if expand_intermediate:
             kernel_size_intermediate = self.kernel_size*2
             kernel_dcr_intermediate = self.build_dcr_kernel(expand_intermediate=True)
@@ -1157,8 +1153,52 @@ class DcrCorrection(DcrModel):
         self.variance = np.sqrt(variance) / self.n_images
         detected_bit = exp.getMaskedImage().getMask().getPlaneBitMask("DETECTED")
         image_arr = [exp.getMaskedImage().getImage().getArray() for exp in self.exposures]
-        mask_arr = [exp.getMaskedImage().getMask().getArray() for exp in self.exposures]
+
+        if use_iterative_solution:
             if verbose:
+                print("Calculating initial solution...")
+            bandpass0 = DcrModel.load_bandpass(band_name=self.photoParams.bandpass, wavelength_step=None)
+            kernel_dcr0 = self.build_dcr_kernel(expand_intermediate=False, bandpass=bandpass0, n_step=1)
+            if expand_intermediate:
+                kernel_dcr0_intermediate = self.build_dcr_kernel(expand_intermediate=True,
+                                                                 bandpass=bandpass0, n_step=1)
+            else:
+                kernel_dcr0_intermediate = None
+            lstsq_kernel0 = build_lstsq_kernel(kernel_dcr0, kernel_ref=kernel_full,
+                                               kernel_restore=kernel_restore, kernel_weight=kernel_weight,
+                                               regularization=None, n_pix=n_pix,
+                                               kernel_dcr_intermediate=kernel_dcr0_intermediate,
+                                               center_only=False)
+            model_arr0, weights0 = self.solver_wrapper(image_arr, lstsq_kernel=lstsq_kernel0,
+                                                       verbose=verbose, use_nonnegative=use_nonnegative,
+                                                       mask=self.mask, use_only_detected=use_only_detected,
+                                                       detected_bit=detected_bit, center_only=False)
+            model_inverse_weights = np.zeros_like(weights0)
+            weight_inds = weights0 > 0
+            model_inverse_weights[weight_inds] = 1./weights0[weight_inds]
+            iterative_solution = []
+            for exp in self.exposures:
+                obsid = self._fetch_metadata(exp.getMetadata(), "OBSID", default_value=0)
+                if verbose:
+                    print("Building initial template for observation %s" % obsid)
+                kernel_dcr_single = self.build_dcr_kernel(exposure=exp, bandpass=bandpass0, n_step=1)
+                kernel_model = self.build_psf_kernel(exposure=exp, use_full=False, expand_intermediate=True)
+                kernel_exp = self.build_psf_kernel(exposure=exp, use_full=True, expand_intermediate=True)
+                lstsq_kernel_single = build_lstsq_kernel(kernel_dcr_single, kernel_ref=kernel_model,
+                                                         kernel_restore=kernel_exp, invert=True)
+
+                template, weights = self.solver_wrapper(model_arr0, lstsq_kernel=lstsq_kernel_single,
+                                                        verbose=verbose, use_nonnegative=use_nonnegative,
+                                                        center_only=False,
+                                                        inverse_weights=model_inverse_weights)
+                template = template[0]  # template is returned as a single element list.
+                # Weights may be different for each exposure
+                template[weights > 0] /= weights[weights > 0]
+                template[weights == 0] = 0.0
+                iterative_solution.append(template)
+            if verbose:
+                print("Finished calculating initial solution.")
+
         model_arr, weights = self.solver_wrapper(image_arr, kernel_dcr=kernel_dcr, kernel_ref=kernel_full,
                                                  kernel_restore=kernel_restore, lstsq_kernel=lstsq_kernel,
                                                  verbose=verbose, use_nonnegative=use_nonnegative,
@@ -1167,9 +1207,13 @@ class DcrCorrection(DcrModel):
                                                  use_only_detected=use_only_detected,
                                                  detected_bit=detected_bit, center_only=debug_solver)
         if verbose:
-            print("\nFinished building model.")
-        self.weights = weights
-        self.model = model_arr
+            print("Finished building model.")
+        if use_iterative_solution:
+            self.weights = weights*weights0
+            self.model = [model*weights0 + model_arr0[0]*weights/self.n_step for model in model_arr]
+        else:
+            self.weights = weights
+            self.model = model_arr
 
     def _combine_masks(self):
         """!Compute the bitwise OR of the input masks."""
