@@ -32,6 +32,10 @@ import unittest
 import lsst.utils.tests
 from .dcr_template import DcrModel
 from .dcr_template import DcrCorrection
+from .dcr_template import build_lstsq_kernel
+from .dcr_template import extract_image_vals
+from .dcr_template import insert_image_vals
+from .dcr_template import solve_model
 from .dcr_template import wrap_warpExposure
 
 
@@ -315,8 +319,8 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         weight_scale = 2.2
         inverse_weights = 1./(self.dcrModel.weights * weight_scale)
         inverse_weights[j, i] = 0.
-        model_vals = DcrModel._extract_image_vals(j, i, radius=radius, image_arr=self.dcrModel.model,
-                                                  inverse_weights=inverse_weights)
+        model_vals = extract_image_vals(j, i, radius=radius, image_arr=self.dcrModel.model,
+                                        inverse_weights=inverse_weights)
         input_arr = []
         for model in self.dcrModel.model:
             input_vals = model[j - radius: j + radius + 1, i - radius: i + radius + 1] / weight_scale
@@ -428,7 +432,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         radius = self.kernel_size//2
         image_arr = [exp.getMaskedImage().getImage().getArray() for exp in self.dcrCorr.exposures]
         mask_arr = [exp.getMaskedImage().getMask().getArray() for exp in self.dcrCorr.exposures]
-        image_vals = self.dcrCorr._extract_image_vals(j, i, image_arr, mask=mask_arr, radius=radius)
+        image_vals = extract_image_vals(j, i, image_arr, mask=mask_arr, radius=radius)
         input_vals = [np.ravel(self.ref_vals[f][j - radius: j + radius + 1, i - radius: i + radius + 1])
                       for f in range(self.n_images)]
         self.assertFloatsAlmostEqual(np.hstack(input_vals), image_vals)
@@ -443,19 +447,17 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         weights_ref = np.zeros((self.size, self.size))
         weights = np.zeros((self.size, self.size))
         psf_use = self.dcrCorr.psf_avg
+        model_arr = [np.zeros((self.size, self.size)) for model_i in range(self.n_step)]
+        insert_image_vals(j, i, test_vals, model_arr, weights, radius=radius, kernel=psf_use)
         for model_i in range(self.n_step):
-            model = np.zeros((self.size, self.size))
             model_ref = np.zeros((self.size, self.size))
-            self.dcrCorr._insert_image_vals(j, i, test_vals[model_i], model, weights,
-                                            radius=radius, kernel=psf_use)
             model_ref[slice_inds] += test_vals[model_i]*psf_use
-            self.assertFloatsAlmostEqual(model_ref, model)
-        weights/=self.n_step
+            self.assertFloatsAlmostEqual(model_ref, model_arr[model_i])
         weights_ref[slice_inds] += psf_use
         self.assertFloatsAlmostEqual(weights_ref, weights)
 
     def test_calculate_psf(self):
-        """Compare the result of _calc_psf_model (run in setUp) to previously computed values."""
+        """Compare the result of calc_psf_model (run in setUp) to previously computed values."""
         data_file = "test_data/calculate_psf.npy"
         psf_size = self.dcrCorr.psf.computeKernelImage().getArray().shape[0]
         p0 = psf_size//2 - self.kernel_size//2
@@ -557,12 +559,11 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         j = y_size//2 - 1
         image_arr = [exp.getMaskedImage().getImage().getArray() for exp in self.dcrCorr.exposures]
         mask_arr = [exp.getMaskedImage().getMask().getArray() for exp in self.dcrCorr.exposures]
-        image_vals = self.dcrCorr._extract_image_vals(j, i, image_arr, mask=mask_arr, radius=pix_radius)
+        image_vals = extract_image_vals(j, i, image_arr, mask=mask_arr, radius=pix_radius)
         dcr_kernel = self.dcrCorr.build_dcr_kernel()
-        lstsq_kernel = self.dcrCorr.build_lstsq_kernel(dcr_kernel)
-        model_vals = self.dcrCorr.solve_model(kernel_size, image_vals, n_step=n_step,
-                                              lstsq_kernel=lstsq_kernel)
-        model_arr = [model for model in model_vals]
+        lstsq_kernel = build_lstsq_kernel(dcr_kernel)
+        model_vals_gen = solve_model(kernel_size, image_vals, n_step=n_step, lstsq_kernel=lstsq_kernel)
+        model_arr = [model for model in model_vals_gen]
         model_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(model_arr, model_ref)
 
@@ -577,14 +578,13 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         j = y_size//2 - 1
         image_arr = [exp.getMaskedImage().getImage().getArray() for exp in self.dcrCorr.exposures]
         mask_arr = [exp.getMaskedImage().getMask().getArray() for exp in self.dcrCorr.exposures]
-        image_vals = self.dcrCorr._extract_image_vals(j, i, image_arr, mask=mask_arr, radius=pix_radius)
+        image_vals = extract_image_vals(j, i, image_arr, mask=mask_arr, radius=pix_radius)
         dcr_kernel = self.dcrCorr.build_dcr_kernel()
         regularize = DcrCorrection.build_regularization(size=kernel_size, n_step=n_step,
                                                         frequency_regularization=True)
-        lstsq_kernel = self.dcrCorr.build_lstsq_kernel(dcr_kernel, regularization=regularize)
-        model_vals = self.dcrCorr.solve_model(kernel_size, image_vals, n_step=n_step,
-                                              lstsq_kernel=lstsq_kernel)
-        model_arr = [model for model in model_vals]
+        lstsq_kernel = build_lstsq_kernel(dcr_kernel, regularization=regularize)
+        model_vals_gen = solve_model(kernel_size, image_vals, n_step=n_step, lstsq_kernel=lstsq_kernel)
+        model_arr = [model for model in model_vals_gen]
         model_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(model_arr, model_ref)
 

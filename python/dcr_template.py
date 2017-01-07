@@ -151,34 +151,18 @@ class DcrModel:
             kernel_dcr = self.build_dcr_kernel(exposure=calexp)
             kernel_model = self.build_psf_kernel(exposure=calexp, use_full=False, expand_intermediate=True)
             kernel_exp = self.build_psf_kernel(exposure=calexp, use_full=True, expand_intermediate=True)
-            lstsq_kernel = self.build_lstsq_kernel(kernel_dcr, kernel_ref=kernel_model,
-                                                   kernel_restore=kernel_exp, invert=True)
+            lstsq_kernel = build_lstsq_kernel(kernel_dcr, kernel_ref=kernel_model,
+                                              kernel_restore=kernel_exp, invert=True)
 
-            template = np.zeros((self.y_size, self.x_size))
-            weights = np.zeros((self.y_size, self.x_size))
-            pix_radius = self.kernel_size//2
+            template, weights = self.solver_wrapper(self.model, kernel_dcr=kernel_dcr,
+                                                    kernel_ref=kernel_model,
+                                                    inverse_weights=model_inverse_weights,
+                                                    kernel_restore=kernel_exp, lstsq_kernel=lstsq_kernel,
+                                                    verbose=verbose, use_nonnegative=use_nonnegative,
+                                                    center_only=debug_solver)
             if verbose:
-                print("Working on column")
-            for j in range(self.y_size):
-                if verbose:
-                    if j % 100 == 0:
-                        print("%i" % j, end="")
-                    elif j % 10 == 0:
-                        print(".", end="")
-                for i in range(self.x_size):
-                    if self._edge_test(j, i):
-                        continue
-                    model_vals = self._extract_image_vals(j, i, self.model, radius=pix_radius,
-                                                          inverse_weights=model_inverse_weights)
-                    template_gen = self.solve_model(self.kernel_size, model_vals,
-                                                    lstsq_kernel=lstsq_kernel, kernel_dcr=kernel_dcr,
-                                                    center_only=debug_solver,
-                                                    kernel_ref=kernel_model, kernel_restore=kernel_exp,
-                                                    use_nonnegative=use_nonnegative)
-                    self._insert_image_vals(j, i, next(template_gen), image=template, weights=weights,
-                                            radius=pix_radius, kernel=self.psf_avg, center_only=debug_solver)
-            if verbose:
-                print("\nFinished building template.")
+                print("Finished building template.")
+            template = template[0]  # template is returned as a single element list.
             # Weights may be different for each exposure
             template[weights > 0] /= weights[weights > 0]
             template[weights == 0] = 0.0
@@ -195,6 +179,73 @@ class DcrModel:
             if output_repository is not None:
                 butler_out.put(exposure, "calexp", dataId=dataId_out)
             yield exposure
+
+    def solver_wrapper(self, image_arr, kernel_dcr=None, kernel_ref=None, kernel_restore=None,
+                       lstsq_kernel=None, verbose=False, inverse_weights=None, use_nonnegative=False,
+                       iterative_solution=None, n_step=None, mask=None, regularization=None,
+                       use_only_detected=False, detected_bit=32, center_only=False):
+        """!Wrapper to call a fitter using a given covariance matrix, image values, and any regularization.
+
+        @param img_vals  Image data values for the pixels being used for the calculation, as a 1D vector.
+        @param kernel_dcr  The covariance matrix describing the effect of DCR
+        @param kernel_ref  The covariance matrix for the reference image, used only if use_nonnegative is set
+                           or lstsq_kernel is None.
+        @param kernel_restore  The covariance matrix for the final restored image, used only if
+                               use_nonnegative is set or lstsq_kernel is None.
+        @param lstsq_kernel  Pre-computed matrix for solving the linear least squares solution.
+                             Built with build_lstsq_kernel.
+        @param verbose  Flag, set to True to print progress messages.
+        @param inverse_weights  A 2D array containing the inverse of the nonzero elements of the weights
+                                returned by DcrCorrection, with zeros everywhere else.
+        @param use_nonnegative  Flag, set to True to use a true non-negative least squares solution [SLOW]
+        @param iterative_solution  @TODO
+        @param n_step  Number of sub-filter wavelength planes to model. Optional if wavelength_step supplied.
+        @param mask  [Optional] List of mask planes associated with each image. #TODO Not yet implemented!
+        @param regularization  Regularization matrix created by build_regularization. If None, it is not used.
+                                 The type of regularization is set previously with build_regularization.
+                                 Used to build lstsq_kernel if not supplied, or if use_nonnegative is set.
+        @param use_only_detected  Flag, set to True to only calculate the DCR model for the footprint
+                                    of detected sources.
+        @param detected_bit  @TODO
+        @param center_only  Flag, set to True to calculate the covariance for only the center pixel.
+        @return  Returns a numpy array containing the solution values.
+        """
+        pix_radius = self.kernel_size//2
+        if n_step is None:
+            image_return = [np.zeros((self.y_size, self.x_size))]
+        else:
+            image_return = [np.zeros((self.y_size, self.x_size)) for f in range(n_step)]
+        weights = np.zeros((self.y_size, self.x_size))
+        if verbose:
+            print("Working on column")
+        for j in range(self.y_size):
+            if verbose:
+                if j % 100 == 0:
+                    print("%i" % j, end="")
+                elif j % 10 == 0:
+                    print(".", end="")
+            for i in range(self.x_size):
+                if self._edge_test(j, i):
+                    continue
+                # This option saves time by only performing the fit if the center pixel is masked as detected
+                # Note that by gridding the results with the psf and maintaining a separate 'weights' array
+                # this allows us to construct a variance-weighted average of the model.
+                if use_only_detected:
+                    if mask[j, i] & detected_bit == 0:
+                        continue
+                input_vals = extract_image_vals(j, i, image_arr, radius=pix_radius, mask=mask,
+                                                inverse_weights=inverse_weights,
+                                                iterative_solution=iterative_solution)
+                solve_vals_gen = solve_model(self.kernel_size, input_vals, n_step=n_step,
+                                             lstsq_kernel=lstsq_kernel, kernel_dcr=kernel_dcr,
+                                             regularization=regularization, center_only=center_only,
+                                             kernel_ref=kernel_ref, kernel_restore=kernel_restore,
+                                             use_nonnegative=use_nonnegative)
+                insert_image_vals(j, i, solve_vals_gen, image_arr=image_return, weights=weights,
+                                  radius=pix_radius, kernel=self.psf_avg, center_only=center_only)
+        if verbose:
+            print("")  # Add a newline
+        return (image_return, weights)
 
     @staticmethod
     def _fetch_metadata(metadata, property_name, default_value=None):
@@ -272,60 +323,6 @@ class DcrModel:
         cd2_1 = (pixel_scale * afwGeom.arcseconds * np.sin(sky_rotation.asRadians())).asDegrees()
         cd2_2 = (pixel_scale * afwGeom.arcseconds * np.cos(sky_rotation.asRadians())).asDegrees()
         return(afwImage.makeWcs(crval, crpix, cd1_1, cd1_2, cd2_1, cd2_2))
-
-    @staticmethod
-    def _extract_image_vals(j, i, image_arr, inverse_weights=None, mask=None, radius=None,
-                            iterative_solution=None):
-        """!Return all pixels within a radius of a given point as a 1D vector for each exposure.
-
-        @param j  Vertical index of the center pixel
-        @param i  Horizontal index of the center pixel
-        @param image_arr  List of 2D numpy arrays containing the image data.
-        @param inverse_weights  A 2D array containing the inverse of the nonzero elements of the weights
-                                returned by DcrCorrection, with zeros everywhere else.
-        @param mask  [Optional] List of mask planes associated with each image. #TODO Not yet implemented!
-        @param radius  Half the width, in pixels, of the box surrounding (j, i) to be updated.
-        @param iterative_solution  @TODO
-        @return Returns a numpy array of size (number of images, (2*radius + 1)**2)
-        """
-        n_pix = (2*radius + 1)**2
-        n_img = len(image_arr)
-        sub_img_arr = np.zeros(n_pix*n_img, dtype=np.float64)
-        slice_inds = np.s_[j - radius: j + radius + 1, i - radius: i + radius + 1]
-        if inverse_weights is None:
-            inv_weights_use = 1.
-        else:
-            inv_weights_use = inverse_weights[slice_inds]
-        for ii, image in enumerate(image_arr):
-            sub_image = image[slice_inds]
-            sub_img_arr[ii*n_pix: (ii + 1)*n_pix] = np.ravel(sub_image*inv_weights_use)
-            if iterative_solution is not None:
-                sub_img_arr[ii*n_pix: (ii + 1)*n_pix] -= np.ravel(iterative_solution[ii][slice_inds])
-        return sub_img_arr
-
-    @staticmethod
-    def _insert_image_vals(j, i, vals, image, weights, radius=None, kernel=1., center_only=False):
-        """!Update an image and associated weights in place.
-
-        @param j  Vertical pixel index
-        @param i  Horizontal pixel index
-        @param vals  Numpy array of values to be inserted, with size (2*radius + 1, 2*radius + 1)
-        @param image  The existing template image, which will be modified in place.
-        @param weights  An array of weights, to be modified in place.
-        @param radius  Half the width, in pixels, of the box surrounding (j, i) to be updated.
-        @param kernel  A scalar or numpy array of weights to multiply vals by for a weighted average.
-        @param center_only  Set to True to update only the value of the center pixel.
-        """
-        if radius is None:
-            n_vals = len(vals)
-            radius = (np.sqrt(n_vals) - 1)//2
-        if center_only:
-            image[j, i] += vals
-            weights[j, i] += 1.
-        else:
-            slice_inds = np.s_[j - radius: j + radius + 1, i - radius: i + radius + 1]
-            image[slice_inds] += vals*kernel
-            weights[slice_inds] += kernel
 
     # NOTE: This function was copied from StarFast.py
     @staticmethod
@@ -814,128 +811,14 @@ class DcrModel:
                                                             weight=reg_weight, frequency_regularization=True)
         # Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images
         # If the original psf is much larger than the kernel, it may be trimmed slightly by fit_psf_size above
-        psf_model_large = DcrCorrection.solve_model(psf_size_use, np.ravel(psf_img), n_step=self.n_step,
-                                                    use_nonnegative=True, regularization=regularize_psf,
-                                                    kernel_dcr=dcr_shift)
+        psf_model_gen = solve_model(psf_size_use, np.ravel(psf_img), n_step=self.n_step,
+                                    use_nonnegative=True, regularization=regularize_psf, kernel_dcr=dcr_shift)
 
         # After solving for the (potentially) large psf, store only the central portion of size kernel_size.
-        psf_vals = np.sum(psf_model_large, axis=0)/self.n_step
+        psf_vals = np.sum(psf_model_gen, axis=0)/self.n_step
         p0 = self.psf_size//2 - self.kernel_size//2
         p1 = p0 + self.kernel_size
         return psf_vals[p0: p1, p0: p1]
-
-    @staticmethod
-    def build_lstsq_kernel(kernel_dcr, kernel_ref=None, kernel_restore=None, regularization=None, n_pix=None,
-                           kernel_dcr_intermediate=None, invert=False, center_only=False, kernel_weight=None):
-        """!Build the matrix M for a linear least squares solution to solve Q B y = P s for y.
-
-        M = (B^T B)^-1 B^T (Q^T W Q)^-1 Q^T W P
-        @param kernel_dcr  The covariance matrix B describing the effect of DCR
-        @param kernel_ref  The covariance matrix Q for the reference image values s.
-        @param kernel_restore  The covariance matrix P for the final restored image values y.
-        @param regularization  Regularization matrix created with build_regularization
-                               The type of regularization is set previously with build_regularization.
-                               If set to None, no regularization will be used.
-        @param n_pix  Total number of pixels in the origin image kernel, only used if center_only is set.
-        @param kernel_dcr_intermediate Alternate DCR covariance matrix to use for calculating (B^T B)^-1
-        @param invert Set to instead solve for s, so that M = (P^T W P)^-1 P^T W Q B y
-        @param center_only Flag, set to True to calculate the covariance for only the center pixel.
-        @param kernel_weight  [optional] Additional weighting W to include when computing the matrix inverse.
-        @return  Returns the matrix M for the linear least squares solution
-        """
-        if kernel_dcr_intermediate is None:
-            kernel_dcr_intermediate = kernel_dcr
-        if regularization is not None:
-            kernel_use = np.append(kernel_dcr_intermediate, regularization, axis=0)
-        else:
-            kernel_use = kernel_dcr_intermediate
-
-        if not invert:
-            gram_matrix = kernel_use.T.dot(kernel_use)  # compute A^T A
-            kernel_inv = scipy_invert(gram_matrix)
-            lstsq_dcr = kernel_inv.dot(kernel_dcr.T)
-
-        if (kernel_ref is None) or (kernel_restore is None):
-            if invert:
-                lstsq_kernel = kernel_dcr
-            else:
-                lstsq_kernel = lstsq_dcr
-        else:
-            if kernel_weight is None:
-                kernel_ref_T = kernel_ref.T
-            else:
-                kernel_ref_T = kernel_ref.T.dot(kernel_weight)
-            gram_matrix_psf = kernel_ref_T.dot(kernel_ref)
-            kernel_inv_psf = scipy_invert(gram_matrix_psf)
-
-            if invert:
-                lstsq_kernel = ((kernel_ref_T.dot(kernel_restore)).dot(kernel_inv_psf)).dot(kernel_dcr)
-            else:
-                lstsq_kernel = (lstsq_dcr.dot(kernel_inv_psf)).dot(kernel_ref_T.dot(kernel_restore))
-
-        if center_only:
-            lstsq_kernel = lstsq_kernel[n_pix//2::n_pix, :]
-        return lstsq_kernel
-
-    @staticmethod
-    def solve_model(kernel_size, img_vals, n_step=None, lstsq_kernel=None, use_nonnegative=False,
-                    regularization=None, center_only=False,
-                    kernel_dcr=None, kernel_ref=None, kernel_restore=None):
-        """!Wrapper to call a fitter using a given covariance matrix, image values, and any regularization.
-
-        @param kernel_size  Size of the kernel to use for calculating the covariance matrix, in pixels.
-        @param img_vals  Image data values for the pixels being used for the calculation, as a 1D vector.
-        @param n_step  Number of sub-filter wavelength planes to model. Optional if wavelength_step supplied.
-        @param lstsq_kernel  Pre-computed matrix for solving the linear least squares solution.
-                             Built with build_lstsq_kernel.
-        @param use_nonnegative  Flag, set to True to use a true non-negative least squares solution [SLOW]
-        @param regularization  Regularization matrix created by build_regularization. If None, it is not used.
-                                 The type of regularization is set previously with build_regularization.
-                                 Used to build lstsq_kernel if not supplied, or if use_nonnegative is set.
-        @param center_only  Flag, set to True to calculate the covariance for only the center pixel.
-        @param kernel_dcr  The covariance matrix describing the effect of DCR
-        @param kernel_ref  The covariance matrix for the reference image, used only if use_nonnegative is set
-                           or lstsq_kernel is None.
-        @param kernel_restore  The covariance matrix for the final restored image, used only if
-                               use_nonnegative is set or lstsq_kernel is None.
-        @return  Returns a numpy array containing the solution values.
-        """
-        x_size = kernel_size
-        y_size = kernel_size
-        if use_nonnegative:
-            center_only = False
-            if (kernel_restore is None) or (kernel_ref is None):
-                vals_use = img_vals
-                kernel_use = kernel_dcr
-            else:
-                vals_use = kernel_restore.dot(img_vals)
-                kernel_use = kernel_ref.dot(kernel_dcr)
-
-            if regularization is not None:
-                regularize_dim = regularization.shape
-                vals_use = np.append(vals_use, np.zeros(regularize_dim[0]))
-                kernel_use = np.append(kernel_use, regularization, axis=0)
-            model_solution = scipy.optimize.nnls(kernel_use, vals_use)
-            model_vals = model_solution[0]
-        else:
-            if lstsq_kernel is None:
-                lstsq_kernel = DcrCorrection.build_lstsq_kernel(kernel_dcr, kernel_ref=kernel_ref,
-                                                                kernel_restore=kernel_restore,
-                                                                regularization=regularization)
-            model_vals = lstsq_kernel.dot(img_vals)
-        if n_step is None:
-            if center_only:
-                yield model_vals
-            else:
-                yield np.reshape(model_vals, (y_size, x_size))
-        else:
-            if center_only:
-                for model_val in model_vals:
-                    yield model_val
-            else:
-                n_pix = x_size*y_size
-                for f in range(n_step):
-                    yield np.reshape(model_vals[f*n_pix: (f + 1)*n_pix], (y_size, x_size))
 
 
 class DcrCorrection(DcrModel):
@@ -1182,9 +1065,8 @@ class DcrCorrection(DcrModel):
                                                    frequency_regularization=True)
         # Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images
         # If the original psf is much larger than the kernel, it may be trimmed slightly by fit_psf_size above
-        psf_model_gen = DcrCorrection.solve_model(self.psf_size, psf_mat, n_step=self.n_step,
-                                                  kernel_dcr=dcr_shift,
-                                                  use_nonnegative=True, regularization=regularize_psf)
+        psf_model_gen = solve_model(self.psf_size, psf_mat, n_step=self.n_step, kernel_dcr=dcr_shift,
+                                    use_nonnegative=True, regularization=regularize_psf)
 
         p0 = self.psf_size//2 - self.kernel_size//2
         p1 = p0 + self.kernel_size
@@ -1249,21 +1131,17 @@ class DcrCorrection(DcrModel):
         #                                      use_nonnegative=use_nonnegative, kernel_weight=kernel_weight)
         # else:
         #     test_solution = None
-        self.regularize = self.build_regularization(kernel_size_intermediate, size_out=self.kernel_size,
-                                                    n_step=self.n_step, weight=regularize_scale,
-                                                    frequency_regularization=frequency_regularization,
-                                                    positive_regularization=positive_regularization,
-                                                    test_solution=None)
+        regularization = self.build_regularization(kernel_size_intermediate, size_out=self.kernel_size,
+                                                   n_step=self.n_step, weight=regularize_scale,
+                                                   frequency_regularization=frequency_regularization,
+                                                   positive_regularization=positive_regularization,
+                                                   test_solution=None)
         n_pix = self.kernel_size**2
-        lstsq_kernel = self.build_lstsq_kernel(kernel_dcr, kernel_ref=kernel_full,
-                                               kernel_restore=kernel_restore, kernel_weight=kernel_weight,
-                                               regularization=self.regularize, n_pix=n_pix,
-                                               kernel_dcr_intermediate=kernel_dcr_intermediate,
-                                               center_only=debug_solver)
-        self.lstsq = lstsq_kernel
-        model_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
-        weights = np.zeros((self.y_size, self.x_size))
-        pix_radius = self.kernel_size//2
+        lstsq_kernel = build_lstsq_kernel(kernel_dcr, kernel_ref=kernel_full,
+                                          kernel_restore=kernel_restore, kernel_weight=kernel_weight,
+                                          regularization=regularization, n_pix=n_pix,
+                                          kernel_dcr_intermediate=kernel_dcr_intermediate,
+                                          center_only=debug_solver)
 
         variance = np.zeros((self.y_size, self.x_size))
         for exp in self.exposures:
@@ -1272,37 +1150,14 @@ class DcrCorrection(DcrModel):
         detected_bit = exp.getMaskedImage().getMask().getPlaneBitMask("DETECTED")
         image_arr = [exp.getMaskedImage().getImage().getArray() for exp in self.exposures]
         mask_arr = [exp.getMaskedImage().getMask().getArray() for exp in self.exposures]
-        if verbose:
-            print("Working on column", end="")
-        for j in range(self.y_size):
             if verbose:
-                if j % 100 == 0:
-                    print("\n %i" % j, end="")
-                elif j % 10 == 0:
-                    print("|", end="")
-                else:
-                    print(".", end="")
-            for i in range(self.x_size):
-                if self._edge_test(j, i):
-                    continue
-                # This option saves time by only performing the fit if the center pixel is masked as detected
-                # Note that by gridding the results with the psf and maintaining a separate 'weights' array
-                # this allows us to construct a variance-weighted average of the model.
-                if use_only_detected:
-                    if self.mask[j, i] & detected_bit == 0:
-                        continue
-                img_vals = self._extract_image_vals(j, i, image_arr, mask=mask_arr, radius=pix_radius,
-                                                    iterative_solution=iterative_solution)
-
-                model_vals_gen = self.solve_model(self.kernel_size, img_vals, n_step=self.n_step,
-                                                  lstsq_kernel=lstsq_kernel, use_nonnegative=use_nonnegative,
-                                                  regularization=self.regularize, center_only=debug_solver,
-                                                  kernel_ref=kernel_full, kernel_restore=kernel_restore,
-                                                  kernel_dcr=kernel_dcr)
-                for f, model_vals in enumerate(model_vals_gen):
-                    self._insert_image_vals(j, i, model_vals, model_arr[f], weights, center_only=debug_solver,
-                                            radius=pix_radius, kernel=self.psf_avg)
-        weights /= self.n_step  # weights are currently updated for every frame, which is wasteful.
+        model_arr, weights = self.solver_wrapper(image_arr, kernel_dcr=kernel_dcr, kernel_ref=kernel_full,
+                                                 kernel_restore=kernel_restore, lstsq_kernel=lstsq_kernel,
+                                                 verbose=verbose, use_nonnegative=use_nonnegative,
+                                                 iterative_solution=iterative_solution, n_step=self.n_step,
+                                                 mask=self.mask, regularization=regularization,
+                                                 use_only_detected=use_only_detected,
+                                                 detected_bit=detected_bit, center_only=debug_solver)
         if verbose:
             print("\nFinished building model.")
         self.weights = weights
@@ -1427,3 +1282,175 @@ def wrap_warpExposure(exposure, wcs, BBox, warpingControl=None):
     warpVariance = warpExp.getMaskedImage().getVariance().getArray()
     exposure.getMaskedImage().getVariance().getArray()[:, :] = warpVariance
     exposure.setWcs(wcs)
+
+
+def build_lstsq_kernel(kernel_dcr, kernel_ref=None, kernel_restore=None, regularization=None, n_pix=None,
+                       kernel_dcr_intermediate=None, invert=False, center_only=False, kernel_weight=None):
+    """!Build the matrix M for a linear least squares solution to solve Q B y = P s for y.
+
+    M = (B^T B)^-1 B^T (Q^T W Q)^-1 Q^T W P
+    @param kernel_dcr  The covariance matrix B describing the effect of DCR
+    @param kernel_ref  The covariance matrix Q for the reference image values s.
+    @param kernel_restore  The covariance matrix P for the final restored image values y.
+    @param regularization  Regularization matrix created with build_regularization
+                           The type of regularization is set previously with build_regularization.
+                           If set to None, no regularization will be used.
+    @param n_pix  Total number of pixels in the origin image kernel, only used if center_only is set.
+    @param kernel_dcr_intermediate Alternate DCR covariance matrix to use for calculating (B^T B)^-1
+    @param invert Set to instead solve for s, so that M = (P^T W P)^-1 P^T W Q B y
+    @param center_only Flag, set to True to calculate the covariance for only the center pixel.
+    @param kernel_weight  [optional] Additional weighting W to include when computing the matrix inverse.
+    @return  Returns the matrix M for the linear least squares solution
+    """
+    if kernel_dcr_intermediate is None:
+        kernel_dcr_intermediate = kernel_dcr
+    if regularization is not None:
+        kernel_use = np.append(kernel_dcr_intermediate, regularization, axis=0)
+    else:
+        kernel_use = kernel_dcr_intermediate
+
+    if not invert:
+        gram_matrix = kernel_use.T.dot(kernel_use)  # compute A^T A
+        kernel_inv = scipy_invert(gram_matrix)
+        lstsq_dcr = kernel_inv.dot(kernel_dcr.T)
+
+    if (kernel_ref is None) or (kernel_restore is None):
+        if invert:
+            lstsq_kernel = kernel_dcr
+        else:
+            lstsq_kernel = lstsq_dcr
+    else:
+        if kernel_weight is None:
+            kernel_ref_T = kernel_ref.T
+        else:
+            kernel_ref_T = kernel_ref.T.dot(kernel_weight)
+        gram_matrix_psf = kernel_ref_T.dot(kernel_ref)
+        kernel_inv_psf = scipy_invert(gram_matrix_psf)
+
+        if invert:
+            lstsq_kernel = ((kernel_ref_T.dot(kernel_restore)).dot(kernel_inv_psf)).dot(kernel_dcr)
+        else:
+            lstsq_kernel = (lstsq_dcr.dot(kernel_inv_psf)).dot(kernel_ref_T.dot(kernel_restore))
+
+    if center_only:
+        lstsq_kernel = lstsq_kernel[n_pix//2::n_pix, :]
+    return lstsq_kernel
+
+
+def solve_model(kernel_size, img_vals, n_step=None, lstsq_kernel=None, use_nonnegative=False,
+                regularization=None, center_only=False,
+                kernel_dcr=None, kernel_ref=None, kernel_restore=None):
+    """!Wrapper to call a fitter using a given covariance matrix, image values, and any regularization.
+
+    @param kernel_size  Size of the kernel to use for calculating the covariance matrix, in pixels.
+    @param img_vals  Image data values for the pixels being used for the calculation, as a 1D vector.
+    @param n_step  Number of sub-filter wavelength planes to model. Optional if wavelength_step supplied.
+    @param lstsq_kernel  Pre-computed matrix for solving the linear least squares solution.
+                         Built with build_lstsq_kernel.
+    @param use_nonnegative  Flag, set to True to use a true non-negative least squares solution [SLOW]
+    @param regularization  Regularization matrix created by build_regularization. If None, it is not used.
+                             The type of regularization is set previously with build_regularization.
+                             Used to build lstsq_kernel if not supplied, or if use_nonnegative is set.
+    @param center_only  Flag, set to True to calculate the covariance for only the center pixel.
+    @param kernel_dcr  The covariance matrix describing the effect of DCR
+    @param kernel_ref  The covariance matrix for the reference image, used only if use_nonnegative is set
+                       or lstsq_kernel is None.
+    @param kernel_restore  The covariance matrix for the final restored image, used only if
+                           use_nonnegative is set or lstsq_kernel is None.
+    @return  Returns a numpy array containing the solution values.
+    """
+    x_size = kernel_size
+    y_size = kernel_size
+    if use_nonnegative:
+        center_only = False
+        if (kernel_restore is None) or (kernel_ref is None):
+            vals_use = img_vals
+            kernel_use = kernel_dcr
+        else:
+            vals_use = kernel_restore.dot(img_vals)
+            kernel_use = kernel_ref.dot(kernel_dcr)
+
+        if regularization is not None:
+            regularize_dim = regularization.shape
+            vals_use = np.append(vals_use, np.zeros(regularize_dim[0]))
+            kernel_use = np.append(kernel_use, regularization, axis=0)
+        model_solution = scipy.optimize.nnls(kernel_use, vals_use)
+        model_vals = model_solution[0]
+    else:
+        if lstsq_kernel is None:
+            lstsq_kernel = build_lstsq_kernel(kernel_dcr, kernel_ref=kernel_ref,
+                                              kernel_restore=kernel_restore, regularization=regularization)
+        model_vals = lstsq_kernel.dot(img_vals)
+    if n_step is None:
+        if center_only:
+            yield model_vals
+        else:
+            yield np.reshape(model_vals, (y_size, x_size))
+    else:
+        if center_only:
+            for model_val in model_vals:
+                yield model_val
+        else:
+            n_pix = x_size*y_size
+            for f in range(n_step):
+                yield np.reshape(model_vals[f*n_pix: (f + 1)*n_pix], (y_size, x_size))
+
+
+def extract_image_vals(j, i, image_arr, inverse_weights=None, mask=None, radius=None,
+                       iterative_solution=None):
+    """!Return all pixels within a radius of a given point as a 1D vector for each exposure.
+
+    @param j  Vertical index of the center pixel
+    @param i  Horizontal index of the center pixel
+    @param image_arr  List of 2D numpy arrays containing the image data.
+    @param inverse_weights  A 2D array containing the inverse of the nonzero elements of the weights
+                            returned by DcrCorrection, with zeros everywhere else.
+    @param mask  [Optional] List of mask planes associated with each image. #TODO Not yet implemented!
+    @param radius  Half the width, in pixels, of the box surrounding (j, i) to be updated.
+    @param iterative_solution  @TODO
+    @return Returns a numpy array of size (number of images, (2*radius + 1)**2)
+    """
+    n_pix = (2*radius + 1)**2
+    n_img = len(image_arr)
+    sub_img_arr = np.zeros(n_pix*n_img, dtype=np.float64)
+    slice_inds = np.s_[j - radius: j + radius + 1, i - radius: i + radius + 1]
+    if inverse_weights is None:
+        inv_weights_use = 1.
+    else:
+        inv_weights_use = inverse_weights[slice_inds]
+    for ii, image in enumerate(image_arr):
+        sub_image = image[slice_inds]
+        sub_img_arr[ii*n_pix: (ii + 1)*n_pix] = np.ravel(sub_image*inv_weights_use)
+        if iterative_solution is not None:
+            sub_img_arr[ii*n_pix: (ii + 1)*n_pix] -= np.ravel(iterative_solution[ii][slice_inds])
+    return sub_img_arr
+
+
+def insert_image_vals(j, i, vals_gen, image_arr, weights, radius=None, kernel=1., center_only=False):
+    """!Update an image and associated weights in place.
+
+    @param j  Vertical pixel index
+    @param i  Horizontal pixel index
+    @param vals  Generator of numpy arrays of values to be inserted, with size (2*radius + 1, 2*radius + 1)
+    @param image_arr  A list of the existing template images, which will be modified in place.
+    @param weights  An array of weights, to be modified in place.
+    @param radius  Half the width, in pixels, of the box surrounding (j, i) to be updated.
+    @param kernel  A scalar or numpy array of weights to multiply vals by for a weighted average.
+    @param center_only  Set to True to update only the value of the center pixel.
+    """
+    if center_only:
+        slice_inds = np.s_[j, i]
+        weights[slice_inds] += 1
+    else:
+        slice_inds = np.s_[j - radius: j + radius + 1, i - radius: i + radius + 1]
+        weights[slice_inds] += kernel
+    for img_i, vals in enumerate(vals_gen):
+        image_arr[img_i][slice_inds] += vals*kernel
+
+
+def tukey_filter(size, filter_width=None, alpha=0.5):
+    """Note: this function is not currently used, but I want to leave it in case filtering is needed later."""
+    tukey_y = scipy_tukey(size, alpha=alpha)
+    tukey_x = scipy_tukey(size, alpha=alpha)
+    tukey = np.einsum('i,j->ij', tukey_y, tukey_x)
+    return tukey
