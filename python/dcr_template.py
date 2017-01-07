@@ -369,6 +369,8 @@ class DcrModel:
         band_dict = {'u': (324.0, 395.0), 'g': (405.0, 552.0), 'r': (552.0, 691.0),
                      'i': (818.0, 921.0), 'z': (922.0, 997.0), 'y': (975.0, 1075.0)}
         band_range = band_dict[band_name]
+        if wavelength_step is None:
+            wavelength_step = band_range[1] - band_range[0]
         bandpass = BandpassMod(wavelen_min=band_range[0], wavelen_max=band_range[1],
                                wavelen_step=wavelength_step)
         throughput_dir = getPackageDir('throughputs')
@@ -664,7 +666,8 @@ class DcrModel:
         phase_arr = np.hstack(phase_arr)
         return phase_arr
 
-    def build_dcr_kernel(self, size=None, expand_intermediate=False, exposure=None):
+    def build_dcr_kernel(self, size=None, expand_intermediate=False, exposure=None,
+                         bandpass=None, n_step=None):
         """!Calculate the DCR covariance matrix for a set of exposures, or a single exposure.
 
         @param size  Width in pixels of the region used in the origin image. Default is entire image
@@ -673,6 +676,7 @@ class DcrModel:
                                     This helps avoid edge effects when computing A^T A.
         @param exposure Optional, an LSST exposure object. If not supplied, the covariance matrix for all
                         exposures in self.exposures is calculated.
+        @param bandpass  Optional. Bandpass object created with load_bandpass
         @return Returns the covariance matrix for the exposure(s).
         """
         if size is None:
@@ -692,12 +696,16 @@ class DcrModel:
         else:
             exp_gen = (exposure for i in range(1))
             n_images = 1
-        dcr_kernel = np.zeros((n_images*n_pix_int, self.n_step*n_pix))
+        if n_step is None:
+            n_step = self.n_step
+        if bandpass is None:
+            bandpass = self.bandpass
+        dcr_kernel = np.zeros((n_images*n_pix_int, n_step*n_pix))
         for exp_i, exp in enumerate(exp_gen):
             visitInfo = exp.getInfo().getVisitInfo()
             el = visitInfo.getBoresightAzAlt().getLatitude()
             az = visitInfo.getBoresightAzAlt().getLongitude()
-            dcr_gen = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
+            dcr_gen = DcrModel.dcr_generator(bandpass, pixel_scale=self.pixel_scale,
                                              elevation=el, azimuth=az)
             kernel_single = DcrModel.calc_offset_phase(dcr_gen=dcr_gen, size=size_use,
                                                        size_out=kernel_size_intermediate)
@@ -741,7 +749,7 @@ class DcrModel:
                 psf_img = self.calc_psf_model_single(exp)
                 self.psf_arr.append(psf_img)
             else:
-                psf_img = self.psf_avg  # /self.n_step
+                psf_img = self.psf_avg
             kernel_single = _calc_psf_kernel_subroutine(psf_img, size=self.kernel_size,
                                                         size_out=kernel_size_intermediate)
             kernel[exp_i*n_pix_int: (exp_i + 1)*n_pix_int, exp_i*n_pix: (exp_i + 1)*n_pix] = kernel_single
