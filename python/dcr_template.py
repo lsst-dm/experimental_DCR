@@ -73,7 +73,7 @@ class DcrModel:
     def generate_templates_from_model(self, obsid_range=None, exposures=None, add_noise=False,
                                       repository=None, output_repository=None, kernel_size=None,
                                       instrument='lsstSim', warp=False, verbose=True, debug_solver=False,
-                                      use_nonnegative=False, **debug_kwargs):
+                                      use_nonnegative=False, output_obsid_offset=None, **debug_kwargs):
         """!Use the previously generated model and construct a dcr template image.
 
         @param obsid_range  single, or list of observation IDs in repository to create matched
@@ -172,9 +172,13 @@ class DcrModel:
                 rand_gen = np.random
                 template += rand_gen.normal(scale=np.sqrt(variance_level), size=template.shape)
 
-            dataId_out = self._build_dataId(obsid, self.photoParams.bandpass, instrument=instrument)[0]
+            if output_obsid_offset is not None:
+                obsid_out = obsid + output_obsid_offset
+            else:
+                obsid_out = obsid
+            dataId_out = self._build_dataId(obsid_out, self.photoParams.bandpass, instrument=instrument)[0]
             exposure = self.create_exposure(template, variance=np.abs(template), snap=0,
-                                            elevation=el, azimuth=az, obsid=dataId_out['visit'])
+                                            elevation=el, azimuth=az, obsid=obsid_out)
             if warp:
                 wrap_warpExposure(exposure, wcs_exp, bbox_exp)
             if output_repository is not None:
