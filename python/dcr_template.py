@@ -480,9 +480,7 @@ class DcrModel:
                 return True
             elif j > y0+dy:
                 return True
-            else:
-                return False
-        elif i < pix_radius + 1:
+        if i < pix_radius + 1:
             return True
         elif self.x_size - i < pix_radius + 1:
             return True
