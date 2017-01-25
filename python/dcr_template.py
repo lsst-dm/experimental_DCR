@@ -152,7 +152,7 @@ class DcrModel:
             kernel_dcr = self.build_dcr_kernel(exposure=calexp)
             kernel_model = self.build_psf_kernel(exposure=calexp, use_full=False, expand_intermediate=True)
             kernel_exp = self.build_psf_kernel(exposure=calexp, use_full=True, expand_intermediate=True)
-            lstsq_kernel = build_lstsq_kernel(kernel_dcr, kernel_ref=kernel_model,
+            lstsq_kernel = build_lstsq_kernel(kernel_dcr=kernel_dcr, kernel_ref=kernel_model,
                                               kernel_restore=kernel_exp, invert=True)
 
             template, weights = self.solver_wrapper(self.model, kernel_dcr=kernel_dcr,
@@ -462,11 +462,7 @@ class DcrModel:
         @return Returns True if the pixel is near the edge or outside the debugging region if debug_mode
                 is turned on, returns False otherwise.
         """
-        # Debugging parameters. Only pixels in the range [y0: y0 + dy, x0: x0 + dx] will be used.
-        x0 = 150
-        dx = 165
-        y0 = 480
-        dy = 170
+        # x0,dx,y0,dy: Debugging parameters. Only pixels in the range [y0: y0 + dy, x0: x0 + dx] will be used.
 
         pix_radius = self.kernel_size//2
 
@@ -670,7 +666,7 @@ class DcrModel:
         return phase_arr
 
     def build_dcr_kernel(self, size=None, expand_intermediate=False, exposure=None,
-                         bandpass=None, n_step=None):
+                         bandpass=None, n_step=None, debug_direction=False):
         """!Calculate the DCR covariance matrix for a set of exposures, or a single exposure.
 
         @param size  Width in pixels of the region used in the origin image. Default is entire image
@@ -708,6 +704,8 @@ class DcrModel:
             visitInfo = exp.getInfo().getVisitInfo()
             el = visitInfo.getBoresightAzAlt().getLatitude()
             az = visitInfo.getBoresightAzAlt().getLongitude()
+            if debug_direction:
+                az = az - Angle(np.radians(180.0))
             dcr_gen = DcrModel.dcr_generator(bandpass, pixel_scale=self.pixel_scale,
                                              elevation=el, azimuth=az)
             kernel_single = DcrModel.calc_offset_phase(dcr_gen=dcr_gen, size=size_use,
@@ -1123,7 +1121,11 @@ class DcrCorrection(DcrModel):
 
     def build_model(self, use_only_detected=False, verbose=True, kernel_size=None,
                     use_nonnegative=False, positive_regularization=False, frequency_regularization=True,
-                    debug_solver=False, debug_regularize=None, use_iterative_solution=False, **debug_kwargs):
+                    spatial_regularization=False,
+                    debug_solver=False, debug_regularize=None, use_iterative_solution=False,
+                    debug_psf_correction=True, debug_kernel_weight=False,
+                    debug_direction=False, debug_save_iter=False,
+                    debug_subtract_model=False, debug_restore_iter=False, **debug_kwargs):
         """!Calculate a model of the true sky using the known DCR offset for each freq plane.
 
         @param use_only_detected  Flag, set to True to only calculate the DCR model for the footprint
@@ -1151,10 +1153,12 @@ class DcrCorrection(DcrModel):
             expand_intermediate = True
         kernel_restore = self.build_psf_kernel(use_full=False, expand_intermediate=expand_intermediate)
         kernel_full = self.build_psf_kernel(use_full=True, expand_intermediate=expand_intermediate)
-        kernel_dcr = self.build_dcr_kernel(expand_intermediate=False)
+        kernel_dcr = self.build_dcr_kernel(expand_intermediate=False, debug_direction=debug_direction)
         kernel_weight = self.build_weight_kernel(expand_intermediate=expand_intermediate)
 
-        regularize_scale = np.max(kernel_dcr)
+        if debug_kernel_weight:
+            kernel_weight = None
+        regularize_scale = np.max(kernel_dcr)/np.max(self.psf_avg)
         if debug_regularize is not None:
             regularize_scale *= debug_regularize
         if expand_intermediate:
@@ -1162,7 +1166,7 @@ class DcrCorrection(DcrModel):
             kernel_dcr_intermediate = self.build_dcr_kernel(expand_intermediate=True)
         else:
             kernel_size_intermediate = self.kernel_size
-            kernel_dcr_intermediate = None
+            kernel_dcr_intermediate = self.build_dcr_kernel(expand_intermediate=False)
         # if positive_regularization:
         #     test_values = np.ones(self.n_images*self.kernel_size**2)
         #     test_solution = self.solve_model(self.kernel_size, self.n_step, kernel_base, test_values,
@@ -1188,6 +1192,18 @@ class DcrCorrection(DcrModel):
         detected_bit = exp.getMaskedImage().getMask().getPlaneBitMask("DETECTED")
         image_arr = [exp.getMaskedImage().getImage().getArray() for exp in self.exposures]
 
+        if debug_restore_iter:
+            try:
+                iterative_solution = self.iterative_solution
+                use_iterative_solution = False
+                model_arr0 = self.model_base
+                weights0 = self.weights_base
+                if debug_psf_correction:
+                    kernel_full = None
+                    kernel_restore = None
+                    kernel_weight = None
+            except Exception:
+                debug_restore_iter = False
         if use_iterative_solution:
             if verbose:
                 print("Calculating initial solution...")
@@ -1233,6 +1249,14 @@ class DcrCorrection(DcrModel):
                 iterative_solution.append(template)
             if verbose:
                 print("Finished calculating initial solution.")
+            if debug_save_iter:
+                self.iterative_solution = iterative_solution
+            if debug_psf_correction:
+                # If turned on, this option assumes that the PSF is taken care of to first order by the above
+                # fit, and can be ignored for the sub-band fit
+                kernel_full = None
+                kernel_restore = None
+                kernel_weight = None
 
         model_arr, weights = self.solver_wrapper(image_arr, kernel_dcr=kernel_dcr, kernel_ref=kernel_full,
                                                  kernel_restore=kernel_restore, lstsq_kernel=lstsq_kernel,
@@ -1244,7 +1268,7 @@ class DcrCorrection(DcrModel):
                                                  **debug_kwargs)
         if verbose:
             print("Finished building model.")
-        if use_iterative_solution:
+        if (use_iterative_solution or debug_restore_iter) and not debug_subtract_model:
             self.weights = weights*weights0
             self.model = [model*weights0 + model_arr0[0]*weights/self.n_step for model in model_arr]
         else:
@@ -1474,7 +1498,7 @@ def solve_model(kernel_size, img_vals, n_step=None, lstsq_kernel=None, use_nonne
         model_vals = model_solution[0]
     else:
         if lstsq_kernel is None:
-            lstsq_kernel = build_lstsq_kernel(kernel_dcr, kernel_ref=kernel_ref,
+            lstsq_kernel = build_lstsq_kernel(kernel_dcr=kernel_dcr, kernel_ref=kernel_ref,
                                               kernel_restore=kernel_restore, regularization=regularization)
         model_vals = lstsq_kernel.dot(img_vals)
     if n_step is None:
