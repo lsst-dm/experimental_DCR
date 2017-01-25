@@ -270,6 +270,7 @@ class KernelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         psf = self.exposure.getPsf()
         psf_size = psf.computeKernelImage().getArray().shape[0]
         phase_arr = DcrModel.calc_offset_phase(exposure=self.exposure, dcr_gen=self.dcr_gen, size=psf_size)
+        # np.save(data_file, phase_arr)
         phase_arr_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref)
 
@@ -279,6 +280,7 @@ class KernelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         psf = self.exposure.getPsf()
         psf_size = psf.computeKernelImage().getArray().shape[0]
         phase_arr = self.dcrModel.build_psf_kernel(exposure=self.exposure, size=psf_size, use_full=False)
+        # np.save(data_file, phase_arr)
         phase_arr_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref)
 
@@ -288,6 +290,7 @@ class KernelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         psf = self.exposure.getPsf()
         psf_size = psf.computeKernelImage().getArray().shape[0]
         phase_arr = self.dcrModel.build_psf_kernel(exposure=self.exposure, size=psf_size, use_full=True)
+        # np.save(data_file, phase_arr)
         phase_arr_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref)
 
@@ -375,6 +378,7 @@ class PersistanceTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
                      for el in elevation_arr]
         model_gen = self.dcrModel.generate_templates_from_model(exposures=exposures, kernel_size=5)
         model_test = [model for model in model_gen]
+        # np.save(data_file, model_test)
         model_ref = np.load(data_file)
         for m_i in range(len(model_test)):
             m_test = model_test[m_i].getMaskedImage().getImage().getArray()
@@ -463,6 +467,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         p0 = psf_size//2 - self.kernel_size//2
         p1 = p0 + self.kernel_size
         psf_new = self.dcrCorr.psf.computeKernelImage().getArray()[p0: p1, p0: p1]
+        # np.save(data_file, psf_new)
         psf_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(psf_ref, psf_new)
 
@@ -482,6 +487,7 @@ class RegularizationTestCase(lsst.utils.tests.TestCase):
         data_file = "test_data/frequency_regularization.npy"
         reg = DcrCorrection.build_regularization(size=self.kernel_size,
                                                  n_step=self.n_step, frequency_regularization=True)
+        # np.save(data_file, reg)
         test_reg = np.load(data_file)
         self.assertFloatsAlmostEqual(reg, test_reg)
 
@@ -520,6 +526,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         """Compare the result of _build_dcr_kernel to previously computed values."""
         data_file = "test_data/build_psf_kernel_full_vals.npy"
         kernel = self.dcrCorr.build_psf_kernel(use_full=True)
+        # np.save(data_file, kernel)
         kernel_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(kernel, kernel_ref)
 
@@ -534,6 +541,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         """Compare the result of _build_dcr_kernel to previously computed values."""
         data_file = "test_data/build_dcr_kernel_vals.npy"
         kernel = self.dcrCorr.build_dcr_kernel()
+        # np.save(data_file, kernel)
         kernel_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(kernel, kernel_ref)
 
@@ -544,6 +552,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         self.dcrCorr.calc_psf_model()
         self.dcrCorr.build_model(verbose=False, use_nonnegative=False)
         model_vals = self.dcrCorr.model
+        # np.save(data_file, model_vals)
         model_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(model_vals, model_ref)
 
@@ -564,6 +573,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         lstsq_kernel = build_lstsq_kernel(dcr_kernel)
         model_vals_gen = solve_model(kernel_size, image_vals, n_step=n_step, lstsq_kernel=lstsq_kernel)
         model_arr = [model for model in model_vals_gen]
+        # np.save(data_file, model_arr)
         model_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(model_arr, model_ref)
 
@@ -585,6 +595,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         lstsq_kernel = build_lstsq_kernel(dcr_kernel, regularization=regularize)
         model_vals_gen = solve_model(kernel_size, image_vals, n_step=n_step, lstsq_kernel=lstsq_kernel)
         model_arr = [model for model in model_vals_gen]
+        # np.save(data_file, model_arr)
         model_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(model_arr, model_ref)
 

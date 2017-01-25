@@ -28,6 +28,7 @@ import numpy as np
 from scipy import constants
 from scipy.linalg import pinv2 as scipy_invert
 import scipy.optimize.nnls
+from scipy.signal import tukey as scipy_tukey
 
 from lsst.daf.base import DateTime
 import lsst.daf.persistence as daf_persistence
@@ -72,7 +73,7 @@ class DcrModel:
     def generate_templates_from_model(self, obsid_range=None, exposures=None, add_noise=False,
                                       repository=None, output_repository=None, kernel_size=None,
                                       instrument='lsstSim', warp=False, verbose=True, debug_solver=False,
-                                      use_nonnegative=False):
+                                      use_nonnegative=False, **debug_kwargs):
         """!Use the previously generated model and construct a dcr template image.
 
         @param obsid_range  single, or list of observation IDs in repository to create matched
@@ -159,7 +160,7 @@ class DcrModel:
                                                     inverse_weights=model_inverse_weights,
                                                     kernel_restore=kernel_exp, lstsq_kernel=lstsq_kernel,
                                                     verbose=verbose, use_nonnegative=use_nonnegative,
-                                                    center_only=debug_solver)
+                                                    center_only=debug_solver, **debug_kwargs)
             if verbose:
                 print("Finished building template.")
             template = template[0]  # template is returned as a single element list.
@@ -183,7 +184,7 @@ class DcrModel:
     def solver_wrapper(self, image_arr, kernel_dcr=None, kernel_ref=None, kernel_restore=None,
                        lstsq_kernel=None, verbose=False, inverse_weights=None, use_nonnegative=False,
                        iterative_solution=None, n_step=None, mask=None, regularization=None,
-                       use_only_detected=False, detected_bit=32, center_only=False):
+                       use_only_detected=False, detected_bit=32, center_only=False, **debug_kwargs):
         """!Wrapper to call a fitter using a given covariance matrix, image values, and any regularization.
 
         @param img_vals  Image data values for the pixels being used for the calculation, as a 1D vector.
@@ -225,7 +226,7 @@ class DcrModel:
                 elif j % 10 == 0:
                     print(".", end="")
             for i in range(self.x_size):
-                if self._edge_test(j, i):
+                if self._edge_test(j, i, **debug_kwargs):
                     continue
                 # This option saves time by only performing the fit if the center pixel is masked as detected
                 # Note that by gridding the results with the psf and maintaining a separate 'weights' array
@@ -447,7 +448,7 @@ class DcrModel:
                        end=refract_end*np.cos(azimuth.asRadians()))
             yield dcr(dx=dx, dy=dy)
 
-    def _edge_test(self, j, i):
+    def _edge_test(self, j, i, x0=400, dx=50, y0=500, dy=80, **kwargs):
         """!Check if a given pixel is near the edge of the image.
 
             #TODO I expect this function to go away in production code. It exists to simplify other code
@@ -1089,7 +1090,7 @@ class DcrCorrection(DcrModel):
 
     def build_model(self, use_only_detected=False, verbose=True, kernel_size=None,
                     use_nonnegative=False, positive_regularization=False, frequency_regularization=True,
-                    debug_solver=False, debug_regularize=None, use_iterative_solution=False):
+                    debug_solver=False, debug_regularize=None, use_iterative_solution=False, **debug_kwargs):
         """!Calculate a model of the true sky using the known DCR offset for each freq plane.
 
         @param use_only_detected  Flag, set to True to only calculate the DCR model for the footprint
@@ -1172,7 +1173,8 @@ class DcrCorrection(DcrModel):
             model_arr0, weights0 = self.solver_wrapper(image_arr, lstsq_kernel=lstsq_kernel0,
                                                        verbose=verbose, use_nonnegative=use_nonnegative,
                                                        mask=self.mask, use_only_detected=use_only_detected,
-                                                       detected_bit=detected_bit, center_only=False)
+                                                       detected_bit=detected_bit, center_only=False,
+                                                       **debug_kwargs)
             model_inverse_weights = np.zeros_like(weights0)
             weight_inds = weights0 > 0
             model_inverse_weights[weight_inds] = 1./weights0[weight_inds]
@@ -1205,7 +1207,8 @@ class DcrCorrection(DcrModel):
                                                  iterative_solution=iterative_solution, n_step=self.n_step,
                                                  mask=self.mask, regularization=regularization,
                                                  use_only_detected=use_only_detected,
-                                                 detected_bit=detected_bit, center_only=debug_solver)
+                                                 detected_bit=detected_bit, center_only=debug_solver,
+                                                 **debug_kwargs)
         if verbose:
             print("Finished building model.")
         if use_iterative_solution:
