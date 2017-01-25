@@ -1499,12 +1499,13 @@ def insert_image_vals(j, i, vals_gen, image_arr, weights, radius=None, kernel=1.
     """
     if center_only:
         slice_inds = np.s_[j, i]
-        weights[slice_inds] += 1
+        kernel_use = 1
     else:
         slice_inds = np.s_[j - radius: j + radius + 1, i - radius: i + radius + 1]
-        weights[slice_inds] += kernel
-    for img_i, vals in enumerate(vals_gen):
-        image_arr[img_i][slice_inds] += vals*kernel
+        kernel_use = kernel
+    weights[slice_inds] += kernel_use
+    for image in image_arr:
+        image[slice_inds] += next(vals_gen)*kernel_use
 
 
 def tukey_filter(size, filter_width=None, alpha=0.5):
