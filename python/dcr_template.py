@@ -425,7 +425,7 @@ class DcrModel:
     # NOTE: This function was modified from StarFast.py
     @staticmethod
     def dcr_generator(bandpass, pixel_scale=None, elevation=Angle(np.radians(50.0)),
-                      azimuth=Angle(np.radians(0.0)), **kwargs):
+                      azimuth=Angle(np.radians(0.0))):
         """!Call the functions that compute Differential Chromatic Refraction (relative to mid-band).
 
         @param bandpass  bandpass object created with load_bandpass
@@ -441,9 +441,9 @@ class DcrModel:
         for wl_start, wl_end in DcrModel._wavelength_iterator(bandpass, use_midpoint=False):
             # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
             refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
-                                            zenith_angle=zenith_angle.asDegrees(), **kwargs)
+                                            zenith_angle=zenith_angle.asDegrees())
             refract_end = diff_refraction(wavelength=wl_end, wavelength_ref=wavelength_midpoint,
-                                          zenith_angle=zenith_angle.asDegrees(), **kwargs)
+                                          zenith_angle=zenith_angle.asDegrees())
             refract_start *= 3600.0 / pixel_scale  # Refraction initially in degrees, convert to pixels.
             refract_end *= 3600.0 / pixel_scale
             dx = delta(start=refract_start*np.sin(azimuth.asRadians()),
