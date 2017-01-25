@@ -448,11 +448,12 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         radius = self.kernel_size//2
         slice_inds = np.s_[j - radius: j + radius + 1, i - radius: i + radius + 1]
         test_vals = [np.random.random(size=(self.kernel_size, self.kernel_size)) for f in range(self.n_step)]
+        test_vals_gen = (test_vals[f] for f in range(self.n_step))
         weights_ref = np.zeros((self.size, self.size))
         weights = np.zeros((self.size, self.size))
         psf_use = self.dcrCorr.psf_avg
         model_arr = [np.zeros((self.size, self.size)) for model_i in range(self.n_step)]
-        insert_image_vals(j, i, test_vals, model_arr, weights, radius=radius, kernel=psf_use)
+        insert_image_vals(j, i, test_vals_gen, model_arr, weights, radius=radius, kernel=psf_use)
         for model_i in range(self.n_step):
             model_ref = np.zeros((self.size, self.size))
             model_ref[slice_inds] += test_vals[model_i]*psf_use
