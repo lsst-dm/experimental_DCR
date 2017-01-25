@@ -1151,6 +1151,7 @@ class DcrCorrection(DcrModel):
             expand_intermediate = False
         else:
             expand_intermediate = True
+        n_pix = self.kernel_size**2
         kernel_restore = self.build_psf_kernel(use_full=False, expand_intermediate=expand_intermediate)
         kernel_full = self.build_psf_kernel(use_full=True, expand_intermediate=expand_intermediate)
         kernel_dcr = self.build_dcr_kernel(expand_intermediate=False, debug_direction=debug_direction)
@@ -1177,14 +1178,8 @@ class DcrCorrection(DcrModel):
                                                    n_step=self.n_step, weight=regularize_scale,
                                                    frequency_regularization=frequency_regularization,
                                                    positive_regularization=positive_regularization,
-                                                   test_solution=None)
-        n_pix = self.kernel_size**2
-        lstsq_kernel = build_lstsq_kernel(kernel_dcr, kernel_ref=kernel_full,
-                                          kernel_restore=kernel_restore, kernel_weight=kernel_weight,
-                                          regularization=regularization, n_pix=n_pix,
-                                          kernel_dcr_intermediate=kernel_dcr_intermediate,
-                                          center_only=debug_solver)
-
+                                                   spatial_regularization=spatial_regularization,
+                                                   test_solution=None, kernel_weights=np.ravel(self.psf_avg))
         variance = np.zeros((self.y_size, self.x_size))
         for exp in self.exposures:
             variance += exp.getMaskedImage().getVariance().getArray()**2.
@@ -1208,25 +1203,32 @@ class DcrCorrection(DcrModel):
             if verbose:
                 print("Calculating initial solution...")
             bandpass0 = DcrModel.load_bandpass(band_name=self.photoParams.bandpass, wavelength_step=None)
+
             kernel_dcr0 = self.build_dcr_kernel(expand_intermediate=False, bandpass=bandpass0, n_step=1)
             if expand_intermediate:
                 kernel_dcr0_intermediate = self.build_dcr_kernel(expand_intermediate=True,
                                                                  bandpass=bandpass0, n_step=1)
             else:
                 kernel_dcr0_intermediate = None
-            lstsq_kernel0 = build_lstsq_kernel(kernel_dcr0, kernel_ref=kernel_full,
+            lstsq_kernel0 = build_lstsq_kernel(kernel_dcr=kernel_dcr0, kernel_ref=kernel_full,
                                                kernel_restore=kernel_restore, kernel_weight=kernel_weight,
                                                regularization=None, n_pix=n_pix,
                                                kernel_dcr_intermediate=kernel_dcr0_intermediate,
                                                center_only=False)
             model_arr0, weights0 = self.solver_wrapper(image_arr, lstsq_kernel=lstsq_kernel0,
+                                                       kernel_dcr=kernel_dcr0, kernel_ref=kernel_full,
+                                                       kernel_restore=kernel_restore,
                                                        verbose=verbose, use_nonnegative=use_nonnegative,
                                                        mask=self.mask, use_only_detected=use_only_detected,
                                                        detected_bit=detected_bit, center_only=False,
                                                        **debug_kwargs)
+            model_arr0 = [model_arr0]
             model_inverse_weights = np.zeros_like(weights0)
             weight_inds = weights0 > 0
             model_inverse_weights[weight_inds] = 1./weights0[weight_inds]
+            self.model_base = model_arr0
+
+            self.weights_base = weights0
             iterative_solution = []
             for exp in self.exposures:
                 obsid = self._fetch_metadata(exp.getMetadata(), "OBSID", default_value=0)
@@ -1235,20 +1237,25 @@ class DcrCorrection(DcrModel):
                 kernel_dcr_single = self.build_dcr_kernel(exposure=exp, bandpass=bandpass0, n_step=1)
                 kernel_model = self.build_psf_kernel(exposure=exp, use_full=False, expand_intermediate=True)
                 kernel_exp = self.build_psf_kernel(exposure=exp, use_full=True, expand_intermediate=True)
-                lstsq_kernel_single = build_lstsq_kernel(kernel_dcr_single, kernel_ref=kernel_model,
+                lstsq_kernel_single = build_lstsq_kernel(kernel_dcr=kernel_dcr_single,
+                                                         kernel_ref=kernel_model,
                                                          kernel_restore=kernel_exp, invert=True)
 
                 template, weights = self.solver_wrapper(model_arr0, lstsq_kernel=lstsq_kernel_single,
                                                         verbose=verbose, use_nonnegative=use_nonnegative,
-                                                        center_only=False,
-                                                        inverse_weights=model_inverse_weights)
+                                                        center_only=False, kernel_dcr=kernel_dcr_single,
+                                                        kernel_ref=kernel_model, kernel_restore=kernel_exp,
+                                                        inverse_weights=model_inverse_weights,
+                                                        **debug_kwargs)
                 template = template[0]  # template is returned as a single element list.
+                self.iterative_single = template.copy()
                 # Weights may be different for each exposure
                 template[weights > 0] /= weights[weights > 0]
                 template[weights == 0] = 0.0
                 iterative_solution.append(template)
             if verbose:
                 print("Finished calculating initial solution.")
+            use_nonnegative = False  # Need to turn this off if solving for a delta off the base model.
             if debug_save_iter:
                 self.iterative_solution = iterative_solution
             if debug_psf_correction:
@@ -1257,6 +1264,12 @@ class DcrCorrection(DcrModel):
                 kernel_full = None
                 kernel_restore = None
                 kernel_weight = None
+
+        lstsq_kernel = build_lstsq_kernel(kernel_dcr=kernel_dcr, kernel_ref=kernel_full,
+                                          kernel_restore=kernel_restore, kernel_weight=kernel_weight,
+                                          regularization=regularization, n_pix=n_pix,
+                                          kernel_dcr_intermediate=kernel_dcr_intermediate,
+                                          center_only=debug_solver)
 
         model_arr, weights = self.solver_wrapper(image_arr, kernel_dcr=kernel_dcr, kernel_ref=kernel_full,
                                                  kernel_restore=kernel_restore, lstsq_kernel=lstsq_kernel,
