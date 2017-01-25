@@ -933,9 +933,9 @@ class DcrCorrection(DcrModel):
         self.debug = bool(debug_mode)
 
     @staticmethod
-    def build_regularization(size, size_out=None, n_step=None, weight=1.,
+    def build_regularization(size, size_out=None, n_step=None, weight=1., spatial_regularization=False,
                              frequency_regularization=False, frequency_second_regularization=False,
-                             positive_regularization=False, test_solution=None):
+                             positive_regularization=False, test_solution=None, kernel_weights=None):
         """!Regularization adapted from Nate Lust's DCR Demo iPython notebook.
 
         Calculate a difference matrix for regularization as if each wavelength were a pixel, then scale
@@ -957,6 +957,7 @@ class DcrCorrection(DcrModel):
         reg_lambda = None
         reg_lambda2 = None
         reg_positive = None
+        reg_spatial = None
         regularization_full = None
         n_pix_in = size**2
         if size_out is None:
@@ -984,10 +985,15 @@ class DcrCorrection(DcrModel):
         if frequency_regularization:
             # regularization that forces the SED to be smooth
             reg_lambda = np.zeros((n_step*n_pix_out, (n_step - 1)*n_pix_in))
+            kernel_weights
             for f in range(n_step - 1):
                 for ij in range(n_inds):
-                    reg_lambda[f*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = 2*weight
-                    reg_lambda[(f + 1)*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = -2*weight
+                    if kernel_weights is None:
+                        weight_use = weight
+                    else:
+                        weight_use = weight*kernel_weights[ij]
+                    reg_lambda[f*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = 2*weight_use
+                    reg_lambda[(f + 1)*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = -2*weight_use
             # We should include both positive and negative slopes, which could be dealt with by taking
             # reg_lambda = np.append(reg_lambda, -reg_lambda, axis=1). That works out to be the same as
             # just doubling the weight of reg_lambda, so we use 2*weight here instead of inflating the
@@ -1002,9 +1008,13 @@ class DcrCorrection(DcrModel):
             reg_lambda2 = np.zeros((n_step*n_pix_out, (n_step - 2)*n_pix_in))
             for f in range(n_step - 2):
                 for ij in range(n_inds):
-                    reg_lambda2[f*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = -weight
-                    reg_lambda2[(f + 1)*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = 2.*weight
-                    reg_lambda2[(f + 2)*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = -weight
+                    if kernel_weights is None:
+                        weight_use = weight
+                    else:
+                        weight_use = weight*kernel_weights[ij]
+                    reg_lambda2[f*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = -weight_use
+                    reg_lambda2[(f + 1)*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = 2.*weight_use
+                    reg_lambda2[(f + 2)*n_pix_out + inds_out[ij], f*n_pix_in + inds_in[ij]] = -weight_use
             if regularization_full is None:
                 regularization_full = reg_lambda2
             else:
@@ -1026,6 +1036,27 @@ class DcrCorrection(DcrModel):
                 regularization_full = reg_positive
             else:
                 regularization_full = np.append(regularization_full, reg_positive, axis=1)
+
+        if spatial_regularization:
+            for direction in [-1, 1]:
+                for offset in [1, size_out]:
+                    reg_spatial = np.zeros((n_step*n_pix_out, n_step*n_pix_in))
+                    for ij in range(n_inds):
+                        if inds_out[ij] + direction*offset >= size_out:
+                            continue
+                        if kernel_weights is None:
+                            weight_use = weight
+                        else:
+                            weight_use = weight*kernel_weights[ij]
+                        for f in range(n_step):
+                            reg_spatial[f*n_pix_out + inds_out[ij],
+                                        f*n_pix_in + inds_in[ij]] = weight_use
+                            reg_spatial[f*n_pix_out + inds_out[ij] + direction*offset,
+                                        f*n_pix_in + inds_in[ij]] = -weight_use
+                    if regularization_full is None:
+                        regularization_full = reg_spatial
+                    else:
+                        regularization_full = np.append(regularization_full, reg_spatial, axis=1)
 
         if regularization_full is not None:
             return regularization_full.T
