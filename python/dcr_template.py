@@ -1278,7 +1278,7 @@ def _calc_psf_kernel_subroutine(psf_img, size=None, size_out=None):
     return psf_mat
 
 
-def _kernel_1d(offset, size, n_substep=None, lanczos=None):
+def _kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False):
     """!Pre-compute the 1D sinc function values along each axis.
 
     @param offset  tuple of start/end pixel offsets of dft locations along single axis (either x or y)
@@ -1300,11 +1300,19 @@ def _kernel_1d(offset, size, n_substep=None, lanczos=None):
         if loc % 1.0 == 0:
             kernel[int(loc)] += 1.0
         else:
-            x = pi*(pix - loc)
-            if lanczos is None:
-                kernel += np.sin(x)/x
+            if debug_sinc:
+                i_low = int(np.floor(loc))
+                i_high = i_low + 1
+                frac_high = loc - i_low
+                frac_low = 1. - frac_high
+                kernel[i_low] += frac_low
+                kernel[i_high] += frac_high
             else:
-                kernel += (np.sin(x)/x)*(np.sin(x/lanczos)/(x/lanczos))
+                x = pi*(pix - loc)
+                if lanczos is None:
+                    kernel += np.sin(x)/x
+                else:
+                    kernel += (np.sin(x)/x)*(np.sin(x/lanczos)/(x/lanczos))
     return kernel/n_substep
 
 
