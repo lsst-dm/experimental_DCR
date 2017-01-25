@@ -45,7 +45,7 @@ from lsst.utils import getPackageDir
 
 from .calc_refractive_index import diff_refraction
 
-__all__ = ["DcrModel", "DcrCorrection"]
+__all__ = ("DcrModel", "DcrCorrection")
 
 nanFloat = float("nan")
 nanAngle = Angle(nanFloat)
