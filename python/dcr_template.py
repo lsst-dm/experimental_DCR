@@ -133,16 +133,6 @@ class DcrModel:
             bbox_exp = calexp.getBBox()
             wcs_exp = calexp.getInfo().getWcs()
             el = visitInfo.getBoresightAzAlt().getLatitude()
-            if instrument == 'decam':
-                hour_angle = visitInfo.getBoresightHourAngle()
-                dec = visitInfo.getBoresightRaDec().getDec()
-                lat = visitInfo.getObservatory().getLatitude()
-                p_angle = parallactic_angle(hour_angle.asRadians(), dec.asRadians(), lat.asRadians())
-                cd = calexp.getInfo().getWcs().getCDMatrix()
-                cd_rot = (np.arctan2(-cd[0, 1], cd[0, 0]) + np.arctan2(cd[1, 0], cd[1, 1]))/2.
-                az = Angle(cd_rot + p_angle)
-            else:
-                az = visitInfo.getBoresightAzAlt().getLongitude()
             kernel_dcr = self.build_dcr_kernel(exposure=calexp)
             kernel_model = self.build_psf_kernel(exposure=calexp, use_full=False, expand_intermediate=True)
             kernel_exp = self.build_psf_kernel(exposure=calexp, use_full=True, expand_intermediate=True)
@@ -155,6 +145,11 @@ class DcrModel:
                                                     kernel_restore=kernel_exp, lstsq_kernel=lstsq_kernel,
                                                     verbose=verbose, use_nonnegative=use_nonnegative,
                                                     center_only=debug_solver, **debug_kwargs)
+            az = visitInfo.getBoresightAzAlt().getLongitude()
+            lat = visitInfo.getObservatory().getLatitude()
+            lon = visitInfo.getObservatory().getLongitude()
+            alt = visitInfo.getObservatory().getElevation()
+            rotation_angle = calculate_rotation_angle(calexp)
             if verbose:
                 print("Finished building template.")
             template = template[0]  # template is returned as a single element list.
@@ -171,8 +166,10 @@ class DcrModel:
             else:
                 obsid_out = obsid
             dataId_out = self._build_dataId(obsid_out, self.photoParams.bandpass, instrument=instrument)[0]
-            exposure = self.create_exposure(template, variance=np.abs(template), snap=0,
-                                            elevation=el, azimuth=az, obsid=obsid_out)
+            exposure = self.create_exposure(template, variance=variance, snap=0,
+                                            boresightRotAngle=rotation_angle.asDegrees(),
+                                            elevation=el, azimuth=az, latitude=lat,
+                                            longitude=lon, altitude=alt, obsid=obsid_out)
             if warp:
                 wrap_warpExposure(exposure, wcs_exp, bbox_exp)
             if output_repository is not None:
@@ -392,7 +389,7 @@ class DcrModel:
     # NOTE: This function was modified from StarFast.py
     @staticmethod
     def dcr_generator(bandpass, pixel_scale=None, elevation=Angle(np.radians(50.0)),
-                      azimuth=Angle(np.radians(0.0))):
+                      rotation_angle=Angle(np.radians(0.0)), use_midpoint=False):
         """!Call the functions that compute Differential Chromatic Refraction (relative to mid-band).
 
         @param bandpass  bandpass object created with load_bandpass
@@ -422,7 +419,8 @@ class DcrModel:
         else:
 
     # NOTE: This function was copied from StarFast.py
-    def create_exposure(self, array, variance=None, elevation=None, azimuth=None, snap=0,
+    def create_exposure(self, array, variance=None, elevation=None, azimuth=None,
+                        latitude=lsst_lat, longitude=lsst_lon, altitude=lsst_alt, snap=0,
                         exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanFloat, **kwargs):
         """Convert a numpy array to an LSST exposure, and units of electron counts.
 
@@ -459,9 +457,11 @@ class DcrModel:
 
         if self.mask is not None:
             exposure.getMaskedImage().getMask().getArray()[:, :] = self.mask
-
-        hour_angle = (90.0 - elevation.asDegrees())*np.cos(azimuth.asRadians())/15.0
-        mjd = 59000.0 + (lsst_lat.asDegrees()/15.0 - hour_angle)/24.0
+        ha_term1 = np.sin(elevation.asRadians())
+        ha_term2 = np.sin(dec.asRadians())*np.sin(latitude.asRadians())
+        ha_term3 = np.cos(dec.asRadians())*np.cos(latitude.asRadians())
+        hour_angle = np.arccos((ha_term1 - ha_term2) / ha_term3)
+        mjd = 59000.0 + (latitude.asDegrees()/15.0 - hour_angle*180/np.pi)/24.0
         airmass = 1.0/np.sin(elevation.asRadians())
         meta = exposure.getMetadata()
         meta.add("CHIPID", "R22_S11")
@@ -472,7 +472,7 @@ class DcrModel:
         meta.add("MJD-OBS", mjd)
 
         meta.add("EXTTYPE", "IMAGE")
-        meta.add("EXPTIME", 30.0)
+        meta.add("EXPTIME", self.photoParams.exptime)
         meta.add("AIRMASS", airmass)
         meta.add("ZENITH", 90. - elevation.asDegrees())
         meta.add("AZIMUTH", azimuth.asDegrees())
@@ -482,22 +482,25 @@ class DcrModel:
 
         visitInfo = afwImage.makeVisitInfo(
             exposureId=int(exposureId),
-            exposureTime=30.0,
-            darkTime=30.0,
+            exposureTime=self.photoParams.exptime,
+            darkTime=self.photoParams.exptime,
             date=DateTime(mjd),
             ut1=mjd,
             boresightRaDec=IcrsCoord(ra, dec),
             boresightAzAlt=Coord(azimuth, elevation),
             boresightAirmass=airmass,
             boresightRotAngle=Angle(np.radians(boresightRotAngle)),
-            observatory=Observatory(lsst_lon, lsst_lat, lsst_alt),)
+            observatory=Observatory(longitude, latitude, altitude),)
         exposure.getInfo().setVisitInfo(visitInfo)
         return exposure
 
     def export_model(self, model_repository=None):
         """!Persist a DcrModel with metadata to a repository.
 
-        @param model_repository  full path to the directory of the repository to save the dcrModel in.
+        Parameters
+        ----------
+        model_repository : None, optional
+            Full path to the directory of the repository to save the dcrModel in
         """
         if model_repository is None:
             butler = self.butler
@@ -621,11 +624,9 @@ class DcrModel:
             visitInfo = exp.getInfo().getVisitInfo()
             el = visitInfo.getBoresightAzAlt().getLatitude()
             az = visitInfo.getBoresightAzAlt().getLongitude()
-            if debug_direction:
-                az = az - Angle(np.radians(180.0))
             dcr_gen = DcrModel.dcr_generator(bandpass, pixel_scale=self.pixel_scale,
                                              elevation=el, rotation_angle=az)
-            kernel_single = DcrModel.calc_offset_phase(dcr_gen=dcr_gen, size=size,
+            kernel_single = DcrModel.calc_offset_phase(dcr_gen=dcr_gen, size=size_use,
                                                        size_out=kernel_size_intermediate)
             dcr_kernel[exp_i*n_pix_int: (exp_i + 1)*n_pix_int, :] = kernel_single
         return dcr_kernel
@@ -706,29 +707,28 @@ class DcrCorrection(DcrModel):
 
         self.instrument = instrument
         self.n_images = len(self.exposures)
+        self.detected_bit = detected_bit
         psf_size_arr = np.zeros(self.n_images)
         self.airmass_arr = np.zeros(self.n_images, dtype=np.float64)
         self.elevation_arr = []
         self.azimuth_arr = []
+        self.sky_rotation_arr = []
         ref_exp_i = 0
         self.bbox = self.exposures[ref_exp_i].getBBox()
         self.wcs = self.exposures[ref_exp_i].getWcs()
 
         for i, calexp in enumerate(self.exposures):
             visitInfo = calexp.getInfo().getVisitInfo()
-            self.elevation_arr.append(visitInfo.getBoresightAzAlt().getLatitude())
             self.airmass_arr[i] = visitInfo.getBoresightAirmass()
             psf_size_arr[i] = calexp.getPsf().computeKernelImage().getArray().shape[0]
-            if instrument == 'decam':
-                hour_angle = visitInfo.getBoresightHourAngle()
-                dec = visitInfo.getBoresightRaDec().getDec()
-                lat = visitInfo.getObservatory().getLatitude()
-                p_angle = parallactic_angle(hour_angle.asRadians(), dec.asRadians(), lat.asRadians())
-                cd = calexp.getInfo().getWcs().getCDMatrix()
-                cd_rot = (np.arctan2(-cd[0, 1], cd[0, 0]) + np.arctan2(cd[1, 0], cd[1, 1]))/2.
-                self.azimuth_arr.append(Angle(cd_rot + p_angle))
-            else:
-                self.azimuth_arr.append(visitInfo.getBoresightAzAlt().getLongitude())
+
+            el = visitInfo.getBoresightAzAlt().getLatitude()
+            az = visitInfo.getBoresightAzAlt().getLongitude()
+            rotation_angle = calculate_rotation_angle(calexp)
+            self.elevation_arr.append(el)
+            self.azimuth_arr.append(az)
+            self.sky_rotation_arr.append(rotation_angle)
+
             if (i != ref_exp_i) & warp:
                 wrap_warpExposure(calexp, self.wcs, self.bbox)
 
@@ -987,5 +987,18 @@ def solve_model(kernel_size, img_vals, n_step=None, regularization=None,
             for f in range(n_step):
                 yield np.reshape(model_vals[f*n_pix: (f + 1)*n_pix], (y_size, x_size))
 
+def calculate_rotation_angle(exposure):
+    visitInfo = exposure.getInfo().getVisitInfo()
 
+    az = visitInfo.getBoresightAzAlt().getLongitude()
+    hour_angle = visitInfo.getBoresightHourAngle()
+    if np.isfinite(hour_angle.asRadians()):
+        dec = visitInfo.getBoresightRaDec().getDec()
+        lat = visitInfo.getObservatory().getLatitude()
+        p_angle = parallactic_angle(hour_angle.asRadians(), dec.asRadians(), lat.asRadians())
     else:
+        p_angle = az.asRadians()
+    cd = exposure.getInfo().getWcs().getCDMatrix()
+    cd_rot = (np.arctan2(-cd[0, 1], cd[0, 0]) + np.arctan2(cd[1, 0], cd[1, 1]))/2.
+    rotation_angle = Angle(cd_rot + p_angle)
+    return rotation_angle

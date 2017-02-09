@@ -150,7 +150,7 @@ class _BasicDcrCorrection(DcrCorrection):
         # Calculate slightly worse DCR than maximum.
         elevation_min = np.min(self.elevation_arr) - Angle(np.radians(5.))
         dcr_test = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                          elevation=elevation_min, azimuth=Angle(0.))
+                                          elevation=elevation_min, rotation_angle=Angle(0.))
         self.dcr_max = int(np.ceil(np.max(dcr_test.next())) + 1)
 
 
@@ -170,12 +170,12 @@ class DCRTestCase(lsst.utils.tests.TestCase):
 
     def test_dcr_generator(self):
         """Check that _dcr_generator returns a generator with n_step iterations, and (0,0) at zenith."""
-        azimuth = Angle(0.0)
+        rotation_angle = Angle(0.0)
         elevation = Angle(np.pi/2)
         zenith_dcr = 0.
         bp = self.bandpass
         dcr_gen = DcrModel.dcr_generator(bp, pixel_scale=self.pixel_scale,
-                                         elevation=elevation, azimuth=azimuth)
+                                         elevation=elevation, rotation_angle=rotation_angle)
         n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
         for f in range(n_step):
             dcr = next(dcr_gen)
@@ -189,7 +189,7 @@ class DCRTestCase(lsst.utils.tests.TestCase):
 
     def test_dcr_values(self):
         """Check DCR against pre-computed values."""
-        azimuth = Angle(0.)
+        rotation_angle = Angle(0.)
         elevation = Angle(np.radians(50.0))
         dcr_ref_vals = [(1.92315562164, 1.58521701549),
                         (1.58521701549, 1.27259917189),
@@ -208,7 +208,7 @@ class DCRTestCase(lsst.utils.tests.TestCase):
                         (-1.18027985272, -1.2741430827)]
         bp = self.bandpass
         dcr_gen = DcrModel.dcr_generator(bp, pixel_scale=self.pixel_scale, elevation=elevation,
-                                         azimuth=azimuth)
+                                         rotation_angle=rotation_angle)
         n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
         for f in range(n_step):
             dcr = next(dcr_gen)
@@ -245,11 +245,14 @@ class DcrModelTestBase:
         self.array = np.random.random(size=(self.size, self.size))
         self.dcrModel = _BasicDcrModel(size=self.size, kernel_size=self.kernel_size, band_name=band_name,
                                        n_step=n_step, pixel_scale=pixel_scale)
+        rotation_angle = Angle(np.radians(0.0))
         azimuth = Angle(np.radians(0.0))
         elevation = Angle(np.radians(70.0))
         self.dcr_gen = DcrModel.dcr_generator(self.dcrModel.bandpass, pixel_scale=self.dcrModel.pixel_scale,
-                                              elevation=elevation, azimuth=azimuth, use_midpoint=False)
+                                              elevation=elevation, rotation_angle=rotation_angle,
+                                              use_midpoint=False)
         self.exposure = self.dcrModel.create_exposure(self.array, variance=None, elevation=elevation,
+                                                      rotation_angle=rotation_angle.asDegrees(),
                                                       azimuth=azimuth)
 
     def tearDown(self):
