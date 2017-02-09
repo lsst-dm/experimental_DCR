@@ -26,9 +26,9 @@ from collections import namedtuple
 
 import numpy as np
 from scipy import constants
-from scipy.linalg import pinv2 as scipy_invert
+from scipy.ndimage import binary_dilation as scipy_dilation
+from scipy.ndimage.interpolation import shift as scipy_shift
 import scipy.optimize.nnls
-from scipy.signal import tukey as scipy_tukey
 
 from lsst.daf.base import DateTime
 import lsst.daf.persistence as daf_persistence
@@ -45,6 +45,7 @@ from lsst.utils import getPackageDir
 
 from .calc_refractive_index import diff_refraction
 
+
 __all__ = ("DcrModel", "DcrCorrection")
 
 nanFloat = float("nan")
@@ -57,7 +58,7 @@ lsst_alt = 2663.
 class DcrModel:
     """!Lightweight object with only the minimum needed to generate DCR-matched template exposures."""
 
-    def __init__(self, model_repository=None, band_name='g', debug_mode=False, **kwargs):
+    def __init__(self, model_repository=None, band_name='g', **kwargs):
         """!Restore a persisted DcrModel.
 
         Only run when restoring a model or for testing; otherwise superceded by DcrCorrection __init__.
@@ -66,7 +67,6 @@ class DcrModel:
         @param debug_mode  if set to True, only use a subset of the data for speed (used in _edge_test)
         @param **kwargs  Any additional keyword arguments to pass to load_bandpass
         """
-        self.debug = debug_mode
         self.butler = None
         self.load_model(model_repository=model_repository, band_name=band_name, **kwargs)
 
@@ -93,8 +93,7 @@ class DcrModel:
         @param use_nonnegative  Flag, set to True to use a true non-negative least squares solution [SLOW]
         @return Returns a generator that builds DCR-matched templates for each exposure.
         """
-        if output_repository is not None:
-            butler_out = daf_persistence.Butler(output_repository)
+        butler_out = None  # Overwritten later if a butler is used
         if exposures is None:
             if repository is not None:
                 butler = daf_persistence.Butler(repository)
@@ -115,10 +114,6 @@ class DcrModel:
         if self.psf_avg is None:
             self.calc_psf_model()
 
-        model_inverse_weights = np.zeros_like(self.weights)
-        weight_inds = self.weights > 0
-        model_inverse_weights[weight_inds] = 1./self.weights[weight_inds]
-
         if obsid_range is not None:
             if not hasattr(obsid_range, '__iter__'):
                 obsid_range = [obsid_range]
@@ -128,38 +123,23 @@ class DcrModel:
             else:
                 obsid = self._fetch_metadata(calexp.getMetadata(), "OBSID", default_value=0)
             if verbose:
-                print("Working on observation %s" % obsid)
+                print("Working on observation %s" % obsid, end="")
             visitInfo = calexp.getInfo().getVisitInfo()
             bbox_exp = calexp.getBBox()
             wcs_exp = calexp.getInfo().getWcs()
             el = visitInfo.getBoresightAzAlt().getLatitude()
-            kernel_dcr = self.build_dcr_kernel(exposure=calexp)
-            kernel_model = self.build_psf_kernel(exposure=calexp, use_full=False, expand_intermediate=True)
-            kernel_exp = self.build_psf_kernel(exposure=calexp, use_full=True, expand_intermediate=True)
-            lstsq_kernel = build_lstsq_kernel(kernel_dcr=kernel_dcr, kernel_ref=kernel_model,
-                                              kernel_restore=kernel_exp, invert=True)
-
-            template, weights = self.solver_wrapper(self.model, kernel_dcr=kernel_dcr,
-                                                    kernel_ref=kernel_model,
-                                                    inverse_weights=model_inverse_weights,
-                                                    kernel_restore=kernel_exp, lstsq_kernel=lstsq_kernel,
-                                                    verbose=verbose, use_nonnegative=use_nonnegative,
-                                                    center_only=debug_solver, **debug_kwargs)
             az = visitInfo.getBoresightAzAlt().getLongitude()
             lat = visitInfo.getObservatory().getLatitude()
             lon = visitInfo.getObservatory().getLongitude()
             alt = visitInfo.getObservatory().getElevation()
             rotation_angle = calculate_rotation_angle(calexp)
+            template, variance = self.build_matched_template(calexp, el=el, rotation_angle=rotation_angle)
+
             if verbose:
-                print("Finished building template.")
-            template = template[0]  # template is returned as a single element list.
-            # Weights may be different for each exposure
-            template[weights > 0] /= weights[weights > 0]
-            template[weights == 0] = 0.0
+                print(" ... Done!")
             if add_noise:
-                variance_level = np.median(calexp.getMaskedImage().getVariance().getArray())
                 rand_gen = np.random
-                template += rand_gen.normal(scale=np.sqrt(variance_level), size=template.shape)
+                template += rand_gen.normal(scale=np.sqrt(variance), size=template.shape)
 
             if output_obsid_offset is not None:
                 obsid_out = obsid + output_obsid_offset
@@ -173,9 +153,25 @@ class DcrModel:
             if warp:
                 wrap_warpExposure(exposure, wcs_exp, bbox_exp)
             if output_repository is not None:
+                if butler_out is None:
+                    butler_out = daf_persistence.Butler(output_repository)
                 butler_out.put(exposure, "calexp", dataId=dataId_out)
             yield exposure
 
+    def build_matched_template(self, exposure, model=None, el=None, rotation_angle=None, return_weights=True):
+        """Sub-routine to calculate the sum of the model images shifted by DCR for a given exposure."""
+        if el is None:
+            el = exposure.getInfo().getVisitInfo().getBoresightAzAlt().getLatitude()
+        if rotation_angle is None:
+            rotation_angle = calculate_rotation_angle(exposure)
+        # img_use, inverse_var, dcr_gen = self.extract_image(exposure, el=el, az=az)
+        dcr_gen = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
+                                         elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
+        template = np.zeros((self.y_size, self.x_size))
+        if return_weights:
+            weights = np.zeros((self.y_size, self.x_size))
+        if model is None:
+            model_use = self.model
         else:
             model_use = model
         for f, dcr in enumerate(dcr_gen):
@@ -402,21 +398,28 @@ class DcrModel:
         wavelength_midpoint = bandpass.calc_eff_wavelen()
         delta = namedtuple("delta", ["start", "end"])
         dcr = namedtuple("dcr", ["dx", "dy"])
-        for wl_start, wl_end in DcrModel._wavelength_iterator(bandpass, use_midpoint=False):
-            # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
-            refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
-                                            zenith_angle=zenith_angle.asDegrees())
-            refract_end = diff_refraction(wavelength=wl_end, wavelength_ref=wavelength_midpoint,
-                                          zenith_angle=zenith_angle.asDegrees())
-            refract_start *= 3600.0 / pixel_scale  # Refraction initially in degrees, convert to pixels.
-            refract_end *= 3600.0 / pixel_scale
-            dx = delta(start=refract_start*np.sin(azimuth.asRadians()),
-                       end=refract_end*np.sin(azimuth.asRadians()))
-            dy = delta(start=refract_start*np.cos(azimuth.asRadians()),
-                       end=refract_end*np.cos(azimuth.asRadians()))
-            yield dcr(dx=dx, dy=dy)
-
+        if use_midpoint:
+            for wl in DcrModel._wavelength_iterator(bandpass, use_midpoint=True):
+                # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
+                refract_mid = diff_refraction(wavelength=wl, wavelength_ref=wavelength_midpoint,
+                                              zenith_angle=zenith_angle.asDegrees())
+                refract_mid *= 3600.0 / pixel_scale  # Refraction initially in degrees, convert to pixels.
+                yield dcr(dx=refract_mid*np.sin(rotation_angle.asRadians()),
+                          dy=refract_mid*np.cos(rotation_angle.asRadians()))
         else:
+            for wl_start, wl_end in DcrModel._wavelength_iterator(bandpass, use_midpoint=False):
+                # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
+                refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
+                                                zenith_angle=zenith_angle.asDegrees())
+                refract_end = diff_refraction(wavelength=wl_end, wavelength_ref=wavelength_midpoint,
+                                              zenith_angle=zenith_angle.asDegrees())
+                refract_start *= 3600.0 / pixel_scale  # Refraction initially in degrees, convert to pixels.
+                refract_end *= 3600.0 / pixel_scale
+                dx = delta(start=refract_start*np.sin(rotation_angle.asRadians()),
+                           end=refract_end*np.sin(rotation_angle.asRadians()))
+                dy = delta(start=refract_start*np.cos(rotation_angle.asRadians()),
+                           end=refract_end*np.cos(rotation_angle.asRadians()))
+                yield dcr(dx=dx, dy=dy)
 
     # NOTE: This function was copied from StarFast.py
     def create_exposure(self, array, variance=None, elevation=None, azimuth=None,
@@ -588,7 +591,6 @@ class DcrModel:
         phase_arr = np.hstack(phase_arr)
         return phase_arr
 
-
     def build_dcr_kernel(self, size, expand_intermediate=False, exposure=None,
                          bandpass=None, n_step=None):
         """!Calculate the DCR covariance matrix for a set of exposures, or a single exposure.
@@ -626,7 +628,7 @@ class DcrModel:
             az = visitInfo.getBoresightAzAlt().getLongitude()
             dcr_gen = DcrModel.dcr_generator(bandpass, pixel_scale=self.pixel_scale,
                                              elevation=el, rotation_angle=az)
-            kernel_single = DcrModel.calc_offset_phase(dcr_gen=dcr_gen, size=size_use,
+            kernel_single = DcrModel.calc_offset_phase(dcr_gen=dcr_gen, size=size,
                                                        size_out=kernel_size_intermediate)
             dcr_kernel[exp_i*n_pix_int: (exp_i + 1)*n_pix_int, :] = kernel_single
         return dcr_kernel
@@ -658,9 +660,7 @@ class DcrModel:
         dcr_shift = DcrModel.calc_offset_phase(exposure=exposure, dcr_gen=dcr_gen,
                                                size=psf_size_use)
         # Assume that the PSF does not change between sub-bands.
-        reg_weight = np.max(np.abs(dcr_shift))*100.
-        regularize_psf = DcrCorrection.build_regularization(psf_size_use, n_step=self.n_step,
-                                                            weight=reg_weight, frequency_regularization=True)
+        regularize_psf = None
         # Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images
         # If the original psf is much larger than the kernel, it may be trimmed slightly by fit_psf_size above
         psf_model_gen = solve_model(psf_size_use, np.ravel(psf_img), n_step=self.n_step,
@@ -675,7 +675,7 @@ class DcrCorrection(DcrModel):
     """!Class that loads LSST calibrated exposures and produces airmass-matched template images."""
 
     def __init__(self, repository=".", obsid_range=None, band_name='g', wavelength_step=10,
-                 n_step=None, debug_mode=False, kernel_size=None, exposures=None,
+                 n_step=None, kernel_size=None, exposures=None, detected_bit=32,
                  warp=False, instrument='lsstSim', **kwargs):
         """!Load images from the repository and set up parameters.
 
@@ -684,7 +684,6 @@ class DcrCorrection(DcrModel):
         @param band_name  Common name of the filter used. For LSST, use u, g, r, i, z, or y
         @param wavelength_step  Overridden by n_step. Sub-filter width, in nm.
         @param n_step  Number of sub-filter wavelength planes to model. Optional if wavelength_step supplied.
-        @param debug_mode  Flag. Set to True to run in debug mode, which may have unpredictable behavior.
         @param kernel_size  Size of the kernel to use for calculating the covariance matrix, in pixels.
                             Note that kernel_size must be odd, so even values will be increased by one.
                             Optional. If missing, will be calculated from the maximum shift predicted from DCR
@@ -756,8 +755,7 @@ class DcrCorrection(DcrModel):
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
                                                  bandpass=band_name)
 
-
-    def calc_psf_model(self):
+    def calc_psf_model(self, threshold=None):
         """!Calculate the fiducial psf from a given set of exposures, accounting for DCR."""
         n_step = 1
         bandpass = DcrModel.load_bandpass(band_name=self.photoParams.bandpass, wavelength_step=None)
@@ -774,11 +772,7 @@ class DcrCorrection(DcrModel):
             y1 = y0 + self.psf_size
             psf_mat[exp_i*n_pix: (exp_i + 1)*n_pix] = np.ravel(psf_img[y0:y1, x0:x1])
 
-        dcr_shift = self.build_dcr_kernel(size=self.psf_size)
-        # Assume that the PSF does not change between sub-bands.
-        reg_weight = np.max(np.abs(dcr_shift))*100.
-        regularize_psf = self.build_regularization(self.psf_size, n_step=self.n_step, weight=reg_weight,
-                                                   frequency_regularization=True)
+        dcr_shift = self.build_dcr_kernel(size=self.psf_size, bandpass=bandpass, n_step=n_step)
         # Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images
         # If the original psf is much larger than the kernel, it may be trimmed slightly by fit_psf_size above
 
@@ -794,12 +788,203 @@ class DcrCorrection(DcrModel):
         psfK = afwMath.FixedKernel(psf_image)
         self.psf = measAlg.KernelPsf(psfK)
 
+    def build_model(self, verbose=True, max_iter=10,
+                    frequency_regularization=True, gain=None, clamp=None, test_convergence=False):
+        """Complete re-write of build_model with a different approach."""
         if self.psf_avg is None:
             self.calc_psf_model()
-        for exp in self.exposures:
-
-            if verbose:
         if verbose:
+            print("Calculating initial solution...", end="")
+
+        # Set up an initial guess with all model planes equal as a starting point of the iterative solution
+        initial_solution = np.zeros((self.y_size, self.x_size))
+        initial_weights = np.zeros((self.y_size, self.x_size))
+        for exp in self.exposures:
+            img, inverse_var = self.extract_image(exp, airmass_weight=True, calculate_dcr_gen=False)
+            initial_solution += img*inverse_var
+            initial_weights += inverse_var
+
+        weight_inds = initial_weights > 0
+        self.model_base = [initial_solution]
+        self.weights_base = initial_weights
+        initial_solution[weight_inds] /= initial_weights[weight_inds]
+        if verbose:
+            print(" Done!")
+
+        self.build_model_subroutine(initial_solution, initial_weights, verbose=verbose, max_iter=max_iter,
+                                    frequency_regularization=frequency_regularization, gain=gain, clamp=clamp,
+                                    test_convergence=test_convergence)
+        if verbose:
+            print("\nFinished building model.")
+
+    def build_model_subroutine(self, initial_solution, initial_weights, verbose=True, max_iter=10,
+                               test_convergence=False, frequency_regularization=True,
+                               min_images=3, gain=None, clamp=None):
+        """Extract the math from building the model so it can be re-used."""
+        if gain is None:
+            gain = 1.
+        if clamp is None:
+            clamp = 10.
+        last_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        last_weights = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        for f in range(self.n_step):
+            last_solution[f] = np.abs(initial_solution/self.n_step)
+            last_weights[f] = np.abs(initial_weights/self.n_step)
+        inverse_var_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        for exp in self.exposures:
+            img, inverse_var, dcr_gen = self.extract_image(exp)
+            for f, dcr in enumerate(dcr_gen):
+                shift = (-dcr.dy, -dcr.dx)
+                inverse_var_arr[f] += scipy_shift(inverse_var, shift)
+        self.weights = np.sum(inverse_var_arr, axis=0)/self.n_step
+
+        if verbose:
+            print("Fractional change per iteration:")
+        if test_convergence:
+            last_convergence_metric_full = self.calc_model_metric(last_solution)
+            print("Full initial convergence metric: ", last_convergence_metric_full)
+            last_convergence_metric = np.mean(last_convergence_metric_full)
+        exp_cut = [False for exp_i in range(self.n_images)]
+        final_soln_iter = None
+        for sol_iter in range(int(max_iter)):
+            new_solution, new_weights = self._calculate_new_model(last_solution, last_weights, exp_cut)
+
+            if frequency_regularization:
+                self._regularize_model_solution(new_solution)
+            self._clamp_model_solution(new_solution, last_solution, clamp, inverse_var_arr)
+
+            inds_use = new_weights[-1] > 0
+            for f in range(self.n_step - 1):
+                inds_use *= new_weights[f] > 0
+            new_solution = [np.abs((last_solution[f] + gain*new_solution[f])/(1 + gain))
+                            for f in range(self.n_step)]
+            delta = (np.sum(np.abs([last_solution[f][inds_use] - new_solution[f][inds_use]
+                                    for f in range(self.n_step)])) /
+                     np.sum(np.abs([soln[inds_use] for soln in last_solution])))
+            if verbose:
+                print("Iteration %i: delta=%f" % (sol_iter, delta))
+                last_soln_use = [soln[inds_use] for soln in last_solution]
+                print("Stddev(last_solution): %f, mean(abs(last_solution)): %f"
+                      % (np.std(last_soln_use), np.mean(np.abs(last_soln_use))))
+                new_soln_use = [soln[inds_use] for soln in new_solution]
+                print("Stddev(new_solution): %f, mean(abs(new_solution)): %f"
+                      % (np.std(new_soln_use), np.mean(np.abs(new_soln_use))))
+            if test_convergence:
+                convergence_metric_full = self.calc_model_metric(new_solution)
+                if verbose:
+                    print("Full convergence metric:", convergence_metric_full)
+                exp_cut = convergence_metric_full > last_convergence_metric_full
+                n_exp_cut = np.sum(exp_cut)
+                if n_exp_cut > 0:
+                    print("%i exposure(s) cut from lack of convergence." % int(n_exp_cut))
+                if (self.n_images - n_exp_cut) < min_images:
+                    print("Exiting iterative solution: Too few images left.")
+                    final_soln_iter = sol_iter - 1
+                    break
+                last_convergence_metric_full = convergence_metric_full
+                convergence_metric = np.mean(convergence_metric_full[np.logical_not(exp_cut)])
+                if convergence_metric > last_convergence_metric:
+                    print("BREAK from lack of convergence")
+                    final_soln_iter = sol_iter - 1
+                    break
+                else:
+                    last_convergence_metric = convergence_metric
+            last_solution = new_solution
+        if final_soln_iter is None:
+            final_soln_iter = sol_iter
+        if verbose:
+            print("Final solution from iteration: %i" % final_soln_iter)
+        self.model = last_solution
+
+    def _calculate_new_model(self, last_solution, last_weights, exp_cut):
+        new_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        new_weights = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        for exp_i, exp in enumerate(self.exposures):
+            if exp_cut[exp_i]:
+                continue
+            img, inverse_var, dcr_gen = self.extract_image(exp)
+            dcr_list = [dcr for dcr in dcr_gen]
+            last_model_shift = []
+            last_weights_shift = []
+            for f, dcr in enumerate(dcr_list):
+                shift = (dcr.dy, dcr.dx)
+                last_model_shift.append(scipy_shift(last_solution[f], shift))
+                last_weights_shift.append(scipy_shift(last_weights[f], shift))
+            for f, dcr in enumerate(dcr_list):
+                inv_shift = (-dcr.dy, -dcr.dx)
+                last_model = np.zeros((self.y_size, self.x_size))
+                last_inv_var = np.zeros((self.y_size, self.x_size))
+                for f2 in range(self.n_step):
+                    if f2 != f:
+                        last_model += last_model_shift[f2]
+                        last_inv_var += last_weights_shift[f2]
+
+                img_residual = (img - last_model)
+                var_residual = (inverse_var - last_inv_var)
+                var_residual[img_residual < 0] = 0
+                residual_shift = scipy_shift(img_residual, inv_shift)
+                weights_shift = scipy_shift(var_residual, inv_shift)
+                inv_var_shift = scipy_shift(inverse_var, inv_shift)
+                neg_inds = weights_shift < 0
+                # ensure variance is positive (or zero), and set any solution values to zero if negative.
+                weights_shift[neg_inds] = 0
+                new_solution[f] += residual_shift*inv_var_shift  # *weights_shift
+                new_weights[f] += weights_shift
+
+        # for f in range(self.n_step):
+        #     new_weights[f] /= self.n_images
+        #     new_solution[f] /= self.n_images
+        #     # inds_use = new_weights[f] > 0
+        #     # inds_cut = np.bitwise_or(new_solution[f] <= 0, new_weights[f] <= 0)
+        #     # new_solution[f][inds_cut] = 0.
+        #     # new_solution[f][inds_use] /= (new_weights[f][inds_use]/self.n_step)
+        return (new_solution, new_weights)
+
+    @staticmethod
+    def _clamp_model_solution(new_solution, last_solution, clamp, inv_variance_arr):
+        for s_i, solution in enumerate(new_solution):
+            # Update the solution as the average of the previous and new solution.
+            inds_use = inv_variance_arr[s_i] > 0
+            weights_use = np.zeros_like(inv_variance_arr[s_i])
+            weights_use[inds_use] = 1./inv_variance_arr[s_i][inds_use]
+            solution *= weights_use
+            # Note: last_solution is always positive
+            clamp_high_i = new_solution[s_i] > clamp*last_solution[s_i]
+            solution[clamp_high_i] = clamp*last_solution[s_i][clamp_high_i]
+            clamp_low_i = solution < last_solution[s_i]/clamp
+            solution[clamp_low_i] = last_solution[s_i][clamp_low_i]/clamp
+
+    @staticmethod
+    def _regularize_model_solution(new_solution):
+        # Slightly down-weight outlier pixels.
+        # If the true solution is that large, it should converge there anyway.
+        n_step = len(new_solution)
+        y_size, x_size = new_solution[0].shape
+        solution_avg = np.abs(np.sum(new_solution, axis=0)/n_step)
+        slope_ratio = 1/(n_step - 1)
+        sum_x = np.sum(np.arange(n_step))
+        sum_y = np.zeros((y_size, x_size))
+        sum_xy = np.zeros((y_size, x_size))
+        sum_xx = np.sum(np.arange(n_step)**2)
+        for f, soln in enumerate(new_solution):
+            sum_y += soln - solution_avg
+            sum_xy += (soln - solution_avg)*f
+        slope = (n_step*sum_xy + sum_x*sum_y)/(n_step*sum_xx + sum_x**2)
+        slope_cut_high = slope > solution_avg*slope_ratio
+        slope_cut_low = slope < -solution_avg*slope_ratio
+        slope[slope_cut_high] = solution_avg[slope_cut_high]*slope_ratio
+        slope[slope_cut_low] = -solution_avg[slope_cut_low]*slope_ratio
+        new_solution = [solution_avg + slope*f for f in range(n_step)]
+
+    def calc_model_metric(self, model=None):
+        """Calculate a quality of fit metric for the DCR model given the set of exposures."""
+        metric = np.zeros(self.n_images)
+        for exp_i, exp in enumerate(self.exposures):
+            img_use, inverse_var = self.extract_image(exp, calculate_dcr_gen=False)
+            template = self.build_matched_template(exp, model=model, return_weights=False)
+            diff = np.abs(img_use - template)
+            metric[exp_i] = np.sum(diff*inverse_var)/np.sum(inverse_var)
+        return metric
 
     def _combine_masks(self):
         """!Compute the bitwise OR of the input masks."""
@@ -953,39 +1138,26 @@ def solve_model(kernel_size, img_vals, n_step=None, regularization=None,
     """
     x_size = kernel_size
     y_size = kernel_size
-    if use_nonnegative:
-        center_only = False
-        if (kernel_restore is None) or (kernel_ref is None):
-            vals_use = img_vals
-            kernel_use = kernel_dcr
-        else:
-            vals_use = kernel_restore.dot(img_vals)
-            kernel_use = kernel_ref.dot(kernel_dcr)
+    if (kernel_restore is None) or (kernel_ref is None):
+        vals_use = img_vals
+        kernel_use = kernel_dcr
+    else:
+        vals_use = kernel_restore.dot(img_vals)
+        kernel_use = kernel_ref.dot(kernel_dcr)
 
-        if regularization is not None:
-            regularize_dim = regularization.shape
-            vals_use = np.append(vals_use, np.zeros(regularize_dim[0]))
-            kernel_use = np.append(kernel_use, regularization, axis=0)
-        model_solution = scipy.optimize.nnls(kernel_use, vals_use)
-        model_vals = model_solution[0]
-    else:
-        if lstsq_kernel is None:
-            lstsq_kernel = build_lstsq_kernel(kernel_dcr=kernel_dcr, kernel_ref=kernel_ref,
-                                              kernel_restore=kernel_restore, regularization=regularization)
-        model_vals = lstsq_kernel.dot(img_vals)
+    if regularization is not None:
+        regularize_dim = regularization.shape
+        vals_use = np.append(vals_use, np.zeros(regularize_dim[0]))
+        kernel_use = np.append(kernel_use, regularization, axis=0)
+    model_solution = scipy.optimize.nnls(kernel_use, vals_use)
+    model_vals = model_solution[0]
     if n_step is None:
-        if center_only:
-            yield model_vals
-        else:
-            yield np.reshape(model_vals, (y_size, x_size))
+        yield np.reshape(model_vals, (y_size, x_size))
     else:
-        if center_only:
-            for model_val in model_vals:
-                yield model_val
-        else:
-            n_pix = x_size*y_size
-            for f in range(n_step):
-                yield np.reshape(model_vals[f*n_pix: (f + 1)*n_pix], (y_size, x_size))
+        n_pix = x_size*y_size
+        for f in range(n_step):
+            yield np.reshape(model_vals[f*n_pix: (f + 1)*n_pix], (y_size, x_size))
+
 
 def calculate_rotation_angle(exposure):
     visitInfo = exposure.getInfo().getVisitInfo()

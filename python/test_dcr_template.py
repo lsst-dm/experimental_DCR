@@ -63,7 +63,6 @@ class _BasicDcrModel(DcrModel):
         rand_gen = np.random
         rand_gen.seed(seed)
         self.butler = None
-        self.debug = False
         self.instrument = 'lsstSim'
 
         bandpass_init = basicBandpass(band_name=band_name, wavelength_step=wavelength_step)
@@ -110,6 +109,7 @@ class _BasicDcrCorrection(DcrCorrection):
         """
         self.butler = None
         self.debug = False
+        self.mask = None
         self.instrument = 'lsstSim'
 
         self.elevation_arr = []
@@ -414,21 +414,6 @@ class SolverTestCase(lsst.utils.tests.TestCase):
 
     def tearDown(self):
         del self.dcrCorr
-
-    def test_build_psf_kernel_full(self):
-        """Compare the result of _build_dcr_kernel to previously computed values."""
-        data_file = "test_data/build_psf_kernel_full_vals.npy"
-        kernel = self.dcrCorr.build_psf_kernel(use_full=True)
-        # np.save(data_file, kernel)
-        kernel_ref = np.load(data_file)
-        self.assertFloatsAlmostEqual(kernel, kernel_ref)
-
-    def test_build_psf_kernel(self):
-        """Compare the result of _build_dcr_kernel to previously computed values."""
-        data_file = "test_data/build_psf_kernel_vals.npy"
-        kernel = self.dcrCorr.build_psf_kernel(use_full=False)
-        kernel_ref = np.load(data_file)
-        self.assertFloatsAlmostEqual(kernel, kernel_ref)
 
     def test_build_dcr_kernel(self):
         """Compare the result of _build_dcr_kernel to previously computed values."""
