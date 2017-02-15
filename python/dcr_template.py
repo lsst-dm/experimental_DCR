@@ -886,12 +886,14 @@ class DcrCorrection(DcrModel):
                 if (self.n_images - n_exp_cut) < min_images:
                     print("Exiting iterative solution: Too few images left.")
                     final_soln_iter = sol_iter - 1
+                    converge_error = True
                     break
                 last_convergence_metric_full = convergence_metric_full
                 convergence_metric = np.mean(convergence_metric_full[np.logical_not(exp_cut)])
                 if convergence_metric > last_convergence_metric:
                     print("BREAK from lack of convergence")
                     final_soln_iter = sol_iter - 1
+                    converge_error = True
                     break
                 else:
                     last_convergence_metric = convergence_metric
@@ -901,6 +903,7 @@ class DcrCorrection(DcrModel):
         if verbose:
             print("Final solution from iteration: %i" % final_soln_iter)
         self.model = last_solution
+        return converge_error
 
     def _calculate_new_model(self, last_solution, last_weights, exp_cut):
         new_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
