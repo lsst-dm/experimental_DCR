@@ -147,7 +147,7 @@ class DcrModel:
                 obsid_out = obsid
             dataId_out = self._build_dataId(obsid_out, self.photoParams.bandpass, instrument=instrument)[0]
             exposure = self.create_exposure(template, variance=variance, snap=0,
-                                            boresightRotAngle=rotation_angle.asDegrees(),
+                                            boresightRotAngle=rotation_angle,
                                             elevation=el, azimuth=az, latitude=lat,
                                             longitude=lon, altitude=alt, obsid=obsid_out)
             if warp:
@@ -422,9 +422,9 @@ class DcrModel:
                 yield dcr(dx=dx, dy=dy)
 
     # NOTE: This function was copied from StarFast.py
-    def create_exposure(self, array, variance=None, elevation=None, azimuth=None,
+    def create_exposure(self, array, variance=None, elevation=None, azimuth=None, era=None,
                         latitude=lsst_lat, longitude=lsst_lon, altitude=lsst_alt, snap=0,
-                        exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanFloat, **kwargs):
+                        exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanAngle, **kwargs):
         """Convert a numpy array to an LSST exposure, and units of electron counts.
 
         @param array  numpy array to use as the data for the exposure
@@ -466,6 +466,8 @@ class DcrModel:
         hour_angle = np.arccos((ha_term1 - ha_term2) / ha_term3)
         mjd = 59000.0 + (latitude.asDegrees()/15.0 - hour_angle*180/np.pi)/24.0
         airmass = 1.0/np.sin(elevation.asRadians())
+        if era is None:
+            era = Angle(hour_angle - longitude.asRadians())
         meta = exposure.getMetadata()
         meta.add("CHIPID", "R22_S11")
         # Required! Phosim output stores the snap ID in "OUTFILE" as the last three characters in a string.
@@ -479,21 +481,23 @@ class DcrModel:
         meta.add("AIRMASS", airmass)
         meta.add("ZENITH", 90. - elevation.asDegrees())
         meta.add("AZIMUTH", azimuth.asDegrees())
+
         # Add all additional keyword arguments to the metadata.
         for add_item in kwargs:
             meta.add(add_item, kwargs[add_item])
 
-        visitInfo = afwImage.makeVisitInfo(
-            exposureId=int(exposureId),
-            exposureTime=self.photoParams.exptime,
-            darkTime=self.photoParams.exptime,
-            date=DateTime(mjd),
-            ut1=mjd,
-            boresightRaDec=IcrsCoord(ra, dec),
-            boresightAzAlt=Coord(azimuth, elevation),
-            boresightAirmass=airmass,
-            boresightRotAngle=Angle(np.radians(boresightRotAngle)),
-            observatory=Observatory(longitude, latitude, altitude),)
+        visitInfo = afwImage.makeVisitInfo(exposureId=int(exposureId),
+                                           exposureTime=self.photoParams.exptime,
+                                           darkTime=self.photoParams.exptime,
+                                           date=DateTime(mjd),
+                                           ut1=mjd,
+                                           era=era,
+                                           boresightRaDec=IcrsCoord(ra, dec),
+                                           boresightAzAlt=Coord(azimuth, elevation),
+                                           boresightAirmass=airmass,
+                                           boresightRotAngle=boresightRotAngle,
+                                           observatory=Observatory(longitude, latitude, altitude),
+                                           )
         exposure.getInfo().setVisitInfo(visitInfo)
         return exposure
 
