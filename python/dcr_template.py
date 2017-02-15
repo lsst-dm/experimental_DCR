@@ -518,6 +518,7 @@ class DcrModel:
             wl_start, wl_end = wave_gen.next()
             exp = self.create_exposure(self.model[f], variance=self.weights,
                                        elevation=Angle(np.pi/2), azimuth=Angle(0),
+                                       detectbit=self.detected_bit,
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
                                        wavestep=self.bandpass.wavelen_step, telescop=self.instrument)
             butler.put(exp, "dcrModel", dataId=self._build_model_dataId(self.photoParams.bandpass, f))
@@ -552,6 +553,7 @@ class DcrModel:
         self.wcs = dcrModel.getWcs()
         self.n_step = len(model_arr)
         wave_step = self._fetch_metadata(meta, "WAVESTEP")
+        self.detected_bit = self._fetch_metadata(meta, "DETECTBIT")
         self.y_size, self.x_size = dcrModel.getDimensions()
         self.pixel_scale = self.wcs.pixelScale().asArcseconds()
         exposure_time = dcrModel.getInfo().getVisitInfo().getExposureTime()
@@ -994,12 +996,21 @@ class DcrCorrection(DcrModel):
         """!Compute the bitwise OR of the input masks."""
         mask_arr = (exp.getMaskedImage().getMask().getArray() for exp in self.exposures)
 
-        # Flags a pixel if ANY image is flagged there.
+        # Sets the detected mask bit if any image has a detection,
+        #  and sets other bits only if set in all images.
+        detected_mask = None
+        mask_use = None
         for mask in mask_arr:
-            if self.mask is None:
-                self.mask = mask
+            if mask_use is None:
+                mask_use = mask
             else:
-                self.mask = np.bitwise_or(self.mask, mask)
+                mask_use = np.bitwise_and(mask_use, mask)
+
+            if detected_mask is None:
+                detected_mask = mask & self.detected_bit
+            else:
+                detected_mask = np.bitwise_or(detected_mask, (mask & self.detected_bit))
+        self.mask = np.bitwise_or(mask_use, detected_mask)
 
 
 def _calc_psf_kernel_subroutine(psf_img, size=None, size_out=None):
