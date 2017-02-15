@@ -20,6 +20,7 @@
 #
 
 from __future__ import print_function, division, absolute_import
+import copy
 import numpy as np
 
 import lsst.afw.geom as afwGeom
@@ -34,6 +35,15 @@ from .dcr_template import DcrModel
 from .dcr_template import DcrCorrection
 from .dcr_template import solve_model
 from .dcr_template import wrap_warpExposure
+from .dcr_template import calculate_rotation_angle
+from .dcr_template import parallactic_angle
+
+
+nanFloat = float("nan")
+nanAngle = Angle(nanFloat)
+lsst_lat = Angle(np.radians(-30.244639))
+lsst_lon = Angle(np.radians(-70.749417))
+lsst_alt = 2663.
 
 
 def basicBandpass(band_name='g', wavelength_step=1):
@@ -64,6 +74,7 @@ class _BasicDcrModel(DcrModel):
         rand_gen.seed(seed)
         self.butler = None
         self.instrument = 'lsstSim'
+        self.detected_bit = 32
 
         bandpass_init = basicBandpass(band_name=band_name, wavelength_step=wavelength_step)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
@@ -76,7 +87,6 @@ class _BasicDcrModel(DcrModel):
         self.y_size = size
         self.x_size = size
         self.pixel_scale = pixel_scale
-        self.kernel_size = kernel_size
         self.psf_size = kernel_size
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=pixel_scale,
                                                  bandpass=band_name)
@@ -111,6 +121,7 @@ class _BasicDcrCorrection(DcrCorrection):
         self.debug = False
         self.mask = None
         self.instrument = 'lsstSim'
+        self.detected_bit = 32
 
         self.elevation_arr = []
         self.azimuth_arr = []
@@ -129,7 +140,7 @@ class _BasicDcrCorrection(DcrCorrection):
         self.n_images = len(exposures)
         self.y_size, self.x_size = exposures[0].getDimensions()
         self.pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
-        self.kernel_size = kernel_size
+        # self.kernel_size = kernel_size
         exposure_time = visitInfo.getExposureTime()
         self.bbox = calexp.getBBox()
         self.wcs = calexp.getWcs()
@@ -144,14 +155,8 @@ class _BasicDcrCorrection(DcrCorrection):
             self.psf_size = psf_size_test
             self.psf_avg = psf
 
-        self.kernel_size = kernel_size
         self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
                                                  bandpass=band_name)
-        # Calculate slightly worse DCR than maximum.
-        elevation_min = np.min(self.elevation_arr) - Angle(np.radians(5.))
-        dcr_test = DcrModel.dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                          elevation=elevation_min, rotation_angle=Angle(0.))
-        self.dcr_max = int(np.ceil(np.max(dcr_test.next())) + 1)
 
 
 class DCRTestCase(lsst.utils.tests.TestCase):
@@ -239,21 +244,29 @@ class DcrModelTestBase:
         band_name = 'g'
         n_step = 3
         pixel_scale = 0.25
-        self.kernel_size = 5
+        kernel_size = 5
         self.size = 20
         # NOTE that this array is randomly generated with a new seed for each instance.
         self.array = np.random.random(size=(self.size, self.size))
-        self.dcrModel = _BasicDcrModel(size=self.size, kernel_size=self.kernel_size, band_name=band_name,
+        self.dcrModel = _BasicDcrModel(size=self.size, kernel_size=kernel_size, band_name=band_name,
                                        n_step=n_step, pixel_scale=pixel_scale)
-        rotation_angle = Angle(np.radians(0.0))
-        azimuth = Angle(np.radians(0.0))
-        elevation = Angle(np.radians(70.0))
+        dec = self.dcrModel.wcs.getSkyOrigin().getLatitude()
+        ra = self.dcrModel.wcs.getSkyOrigin().getLongitude()
+        self.azimuth = Angle(np.radians(140.0))
+        self.elevation = Angle(np.radians(50.0))
+        ha_term1 = np.sin(self.elevation.asRadians())
+        ha_term2 = np.sin(dec.asRadians())*np.sin(lsst_lat.asRadians())
+        ha_term3 = np.cos(dec.asRadians())*np.cos(lsst_lat.asRadians())
+        hour_angle = Angle(np.arccos((ha_term1 - ha_term2) / ha_term3))
+        p_angle = parallactic_angle(hour_angle, dec, lsst_lat)
+        self.rotation_angle = Angle(p_angle)
         self.dcr_gen = DcrModel.dcr_generator(self.dcrModel.bandpass, pixel_scale=self.dcrModel.pixel_scale,
-                                              elevation=elevation, rotation_angle=rotation_angle,
+                                              elevation=self.elevation, rotation_angle=self.rotation_angle,
                                               use_midpoint=False)
-        self.exposure = self.dcrModel.create_exposure(self.array, variance=None, elevation=elevation,
-                                                      rotation_angle=rotation_angle.asDegrees(),
-                                                      azimuth=azimuth)
+        self.exposure = self.dcrModel.create_exposure(self.array, variance=None, elevation=self.elevation,
+                                                      boresightRotAngle=self.rotation_angle,
+                                                      latitude=lsst_lat, longitude=lsst_lon,
+                                                      azimuth=self.azimuth, dec=dec, ra=ra)
 
     def tearDown(self):
         del self.dcrModel
@@ -270,7 +283,7 @@ class KernelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         psf = self.exposure.getPsf()
         psf_size = psf.computeKernelImage().getArray().shape[0]
         phase_arr = DcrModel.calc_offset_phase(exposure=self.exposure, dcr_gen=self.dcr_gen, size=psf_size)
-        # np.save(data_file, phase_arr)
+        np.save(data_file, phase_arr)
         phase_arr_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref)
 
@@ -293,6 +306,56 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         for i, id in enumerate(id_ref):
             ref_id = {'visit': id, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
             self.assertEqual(ref_id, dataId[i])
+
+    def test_model_dataId(self):
+        subfilter = 1
+        band_ref = 'g'
+        ref_id = {'filter': band_ref, 'tract': 0, 'patch': '0', 'subfilter': subfilter}
+        dataId = DcrModel._build_model_dataId(band_ref, subfilter=subfilter)
+        self.assertEqual(ref_id, dataId)
+
+    def test_fetch_metadata(self):
+        az = DcrModel._fetch_metadata(self.exposure.getMetadata(), "AZIMUTH")
+        self.assertFloatsAlmostEqual(az, self.azimuth.asDegrees())
+
+    def test_fetch_missing_metadata(self):
+        bogus_ref = 3.7
+        bogus = DcrModel._fetch_metadata(self.exposure.getMetadata(), "BOGUS", default_value=bogus_ref)
+        self.assertFloatsAlmostEqual(bogus, bogus_ref)
+
+    def test_generate_template(self):
+        """Compare the result of generate_templates_from_model to previously computed values."""
+        data_file = "test_data/template.npy"
+        elevation_arr = np.radians([50., 70., 85.])
+        az = Angle(0.)
+        # Note that self.array is randomly generated each call. That's okay, because the template should
+        # depend only on the metadata.
+        exposures = [self.dcrModel.create_exposure(self.array, variance=None, elevation=Angle(el), azimuth=az)
+                     for el in elevation_arr]
+        model_gen = self.dcrModel.generate_templates_from_model(exposures=exposures)
+        model_test = [model for model in model_gen]
+        # np.save(data_file, model_test)
+        model_ref = np.load(data_file)
+        for m_i in range(len(model_test)):
+            m_test = model_test[m_i].getMaskedImage().getImage().getArray()
+            m_ref = model_ref[m_i].getMaskedImage().getImage().getArray()
+            self.assertFloatsAlmostEqual(m_test, m_ref)
+
+    def test_warp_exposure(self):
+        wcs = self.exposure.getWcs()
+        bbox = self.exposure.getBBox()
+        wrap_warpExposure(self.exposure, wcs, bbox)
+        array_warped = self.exposure.getMaskedImage().getImage().getArray()
+        # For some reason the edges are all NAN.
+        valid_inds = np.isfinite(array_warped)
+        self.assertGreater(np.sum(valid_inds), (self.size/2)**2)
+        array_ref = self.array[valid_inds]
+        array_warped = array_warped[valid_inds]
+        self.assertFloatsAlmostEqual(array_ref, array_warped, rtol=1e-7)
+
+    def test_rotation_angle(self):
+        rotation_angle = calculate_rotation_angle(self.exposure)
+        self.assertFloatsAlmostEqual(self.rotation_angle.asDegrees(), rotation_angle.asDegrees())
 
 
 class PersistanceTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
@@ -330,36 +393,6 @@ class PersistanceTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         for key in param_ref.keys():
             self.assertIn(key, param_new)
 
-    def test_generate_template(self):
-        """Compare the result of generate_templates_from_model to previously computed values."""
-        data_file = "test_data/template.npy"
-        elevation_arr = np.radians([50., 70., 85.])
-        az = Angle(0.)
-        # Note that self.array is randomly generated each call. That's okay, because the template should
-        # depend only on the metadata.
-        exposures = [self.dcrModel.create_exposure(self.array, variance=None, elevation=Angle(el), azimuth=az)
-                     for el in elevation_arr]
-        model_gen = self.dcrModel.generate_templates_from_model(exposures=exposures, kernel_size=5)
-        model_test = [model for model in model_gen]
-        # np.save(data_file, model_test)
-        model_ref = np.load(data_file)
-        for m_i in range(len(model_test)):
-            m_test = model_test[m_i].getMaskedImage().getImage().getArray()
-            m_ref = model_ref[m_i].getMaskedImage().getImage().getArray()
-            self.assertFloatsAlmostEqual(m_test, m_ref)
-
-    def test_warp_exposure(self):
-        wcs = self.exposure.getWcs()
-        bbox = self.exposure.getBBox()
-        wrap_warpExposure(self.exposure, wcs, bbox)
-        array_warped = self.exposure.getMaskedImage().getImage().getArray()
-        # For some reason the edges are all NAN.
-        valid_inds = np.isfinite(array_warped)
-        self.assertGreater(np.sum(valid_inds), (self.size/2)**2)
-        array_ref = self.array[valid_inds]
-        array_warped = array_warped[valid_inds]
-        self.assertFloatsAlmostEqual(array_ref, array_warped, rtol=1e-7)
-
 
 class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
 
@@ -368,11 +401,11 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         self.n_step = 3
         self.n_images = 5
         pixel_scale = 0.25
-        self.kernel_size = 5
+        kernel_size = 5
         self.size = 20
         use_psf = False
 
-        dcrModel = _BasicDcrModel(size=self.size, kernel_size=self.kernel_size, band_name=band_name,
+        dcrModel = _BasicDcrModel(size=self.size, kernel_size=kernel_size, band_name=band_name,
                                   n_step=self.n_step, pixel_scale=pixel_scale)
 
         exposures = []
@@ -385,32 +418,35 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
             az = Angle(np.random.random()*2*np.pi)
             exposures.append(dcrModel.create_exposure(array, variance=None, elevation=el, azimuth=az))
         # Call the actual DcrCorrection class here, not just _BasicDcrCorrection
-        self.dcrCorr = DcrCorrection(kernel_size=self.kernel_size, band_name=band_name,
+        self.dcrCorr = DcrCorrection(kernel_size=kernel_size, band_name=band_name,
                                      n_step=self.n_step, exposures=exposures, use_psf=use_psf)
-        self.dcrCorr.calc_psf_model()
 
     def tearDown(self):
         del self.dcrCorr
 
-
     def test_calculate_psf(self):
         """Compare the result of calc_psf_model (run in setUp) to previously computed values."""
         data_file = "test_data/calculate_psf.npy"
-        psf_size = self.dcrCorr.psf.computeKernelImage().getArray().shape[0]
-        p0 = psf_size//2 - self.kernel_size//2
-        p1 = p0 + self.kernel_size
-        psf_new = self.dcrCorr.psf.computeKernelImage().getArray()[p0: p1, p0: p1]
+        self.dcrCorr.calc_psf_model()
+        psf_new = self.dcrCorr.psf.computeKernelImage().getArray()
         # np.save(data_file, psf_new)
         psf_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(psf_ref, psf_new)
+
+    def test_extract_image(self):
+        for exp_i, exp in enumerate(self.dcrCorr.exposures):
+            image, inverse_var = self.dcrCorr.extract_image(exp, calculate_dcr_gen=False)
+            self.assertFloatsAlmostEqual(self.ref_vals[exp_i], image)
 
 
 class SolverTestCase(lsst.utils.tests.TestCase):
     def setUp(self):
         data_file = "test_data/exposures.npy"
         exposures = np.load(data_file)
+        self.kernel_size = 5
         # Use _BasicDcrCorrection here to save execution time.
-        self.dcrCorr = _BasicDcrCorrection(band_name='g', n_step=3, kernel_size=5, exposures=exposures)
+        self.dcrCorr = _BasicDcrCorrection(band_name='g', n_step=3, kernel_size=self.kernel_size,
+                                           exposures=exposures)
 
     def tearDown(self):
         del self.dcrCorr
@@ -418,7 +454,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
     def test_build_dcr_kernel(self):
         """Compare the result of _build_dcr_kernel to previously computed values."""
         data_file = "test_data/build_dcr_kernel_vals.npy"
-        kernel = self.dcrCorr.build_dcr_kernel()
+        kernel = self.dcrCorr.build_dcr_kernel(self.kernel_size)
         # np.save(data_file, kernel)
         kernel_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(kernel, kernel_ref)
@@ -427,13 +463,95 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         """Call build_model with as many options as possible turned off."""
         """Compare the result of build_model to previously computed values."""
         data_file = "test_data/build_model_vals.npy"
-        self.dcrCorr.calc_psf_model()
         self.dcrCorr.build_model(verbose=False)
         model_vals = self.dcrCorr.model
         # np.save(data_file, model_vals)
         model_ref = np.load(data_file)
-        self.assertFloatsAlmostEqual(model_vals, model_ref)
+        for f, model in enumerate(model_vals):
+            self.assertFloatsAlmostEqual(model, model_ref[f])
 
+    def test_build_matched_template(self):
+        data_file = "test_data/build_matched_template_vals.npy"
+        exposure = self.dcrCorr.exposures[0]
+        self.dcrCorr.build_model(verbose=False)
+        template, variance = self.dcrCorr.build_matched_template(exposure)
+        # np.save(data_file, (template, variance))
+        template_ref, variance_ref = np.load(data_file)
+        self.assertFloatsAlmostEqual(template, template_ref)
+        self.assertFloatsAlmostEqual(variance, variance_ref)
+
+    def test_calculate_new_model(self):
+        data_file = "test_data/calculate_new_model_vals.npy"
+        rand_gen = np.random
+        rand_gen.seed(5)
+        n_step = self.dcrCorr.n_step
+        x_size = self.dcrCorr.x_size
+        y_size = self.dcrCorr.y_size
+        last_solution = [rand_gen.random((y_size, x_size)) for f in range(n_step)]
+        exp_cut = [False for exp_i in range(self.dcrCorr.n_images)]
+        new_solution, inverse_var_arr = self.dcrCorr._calculate_new_model(last_solution, exp_cut)
+        # np.save(data_file, (new_solution, inverse_var_arr))
+        new_solution_ref, inverse_var_arr_ref = np.load(data_file)
+        self.assertFloatsAlmostEqual(new_solution, new_solution_ref)
+        self.assertFloatsAlmostEqual(inverse_var_arr, inverse_var_arr_ref)
+
+    def test_clamp_model_solution(self):
+        clamp = 3.
+        rand_gen = np.random
+        rand_gen.seed(5)
+        n_step = self.dcrCorr.n_step
+        x_size = self.dcrCorr.x_size
+        y_size = self.dcrCorr.y_size
+        last_solution = [rand_gen.random((y_size, x_size)) for f in range(n_step)]
+        new_solution = [10.*(rand_gen.random((y_size, x_size)) - 0.5) for f in range(n_step)]
+        ref_solution = copy.deepcopy(new_solution)
+        DcrCorrection._clamp_model_solution(new_solution, last_solution, clamp)
+        ref_max = np.max(ref_solution)
+        ref_min = np.min(ref_solution)
+        last_max = np.max(last_solution)
+        last_min = np.min(last_solution)
+        clamp_max = np.max(new_solution)
+        clamp_min = np.min(new_solution)
+        self.assertLessEqual(ref_min, clamp_min)
+        self.assertGreaterEqual(ref_max, clamp_max)
+        self.assertGreaterEqual(clamp_min, last_min/clamp)
+        self.assertLessEqual(clamp_max, last_max*clamp)
+
+    def test_calc_model_metric(self):
+        model_file = "test_data/build_model_vals.npy"
+        metric_ref = np.array([155.09729901, 94.7928686143, 154.793647227,
+                               216.539400094, 260.593893983, 276.273657971])
+        model = np.load(model_file)
+        metric = self.dcrCorr.calc_model_metric(model=model)
+        self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)
+
+    def test_build_model_convergence_failure(self):
+        """Test that the iterative solver fails to converge if given a negative gain."""
+        converge_error = self.dcrCorr.build_model_subroutine(initial_solution=1, verbose=False, gain=-2,
+                                                             test_convergence=True)
+        self.assertTrue(converge_error)
+
+    def test_solve_model(self):
+        """Compare the result of _solve_model to previously computed values."""
+        data_file = "test_data/solve_model_vals.npy"
+        y_size, x_size = self.dcrCorr.exposures[0].getDimensions()
+        kernel_size = self.kernel_size
+        n_step = self.dcrCorr.n_step
+        pix_radius = kernel_size//2
+        # Make j and i different slightly so we can tell if the indices get swapped
+        i = x_size//2 + 1
+        j = y_size//2 - 1
+        slice_inds = np.s_[j - pix_radius: j + pix_radius + 1, i - pix_radius: i + pix_radius + 1]
+        image_arr = []
+        for exp in self.dcrCorr.exposures:
+            image_arr.append(np.ravel(exp.getMaskedImage().getImage().getArray()[slice_inds]))
+        image_vals = np.hstack(image_arr)
+        dcr_kernel = self.dcrCorr.build_dcr_kernel(kernel_size)
+        model_vals_gen = solve_model(kernel_size, image_vals, n_step=n_step, kernel_dcr=dcr_kernel)
+        model_arr = [model for model in model_vals_gen]
+        # np.save(data_file, model_arr)
+        model_ref = np.load(data_file)
+        self.assertFloatsAlmostEqual(model_arr, model_ref)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
