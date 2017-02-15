@@ -26,7 +26,6 @@ from collections import namedtuple
 
 import numpy as np
 from scipy import constants
-from scipy.ndimage import binary_dilation as scipy_dilation
 from scipy.ndimage.interpolation import shift as scipy_shift
 import scipy.optimize.nnls
 
@@ -817,32 +816,30 @@ class DcrCorrection(DcrModel):
         if verbose:
             print(" Done!")
 
-        self.build_model_subroutine(initial_solution, initial_weights, verbose=verbose, max_iter=max_iter,
+        self.build_model_subroutine(initial_solution, verbose=verbose, max_iter=max_iter,
                                     frequency_regularization=frequency_regularization, gain=gain, clamp=clamp,
                                     test_convergence=test_convergence)
         if verbose:
             print("\nFinished building model.")
 
-    def build_model_subroutine(self, initial_solution, initial_weights, verbose=True, max_iter=10,
+    def build_model_subroutine(self, initial_solution, verbose=True, max_iter=10,
                                test_convergence=False, frequency_regularization=True,
-                               min_images=3, gain=None, clamp=None):
+                               gain=None, clamp=None):
         """Extract the math from building the model so it can be re-used."""
         if gain is None:
             gain = 1.
         if clamp is None:
             clamp = 10.
+        min_images = self.n_step + 1
         last_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
-        last_weights = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
         for f in range(self.n_step):
-            last_solution[f] = np.abs(initial_solution/self.n_step)
-            last_weights[f] = np.abs(initial_weights/self.n_step)
-        inverse_var_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
-        for exp in self.exposures:
-            img, inverse_var, dcr_gen = self.extract_image(exp)
-            for f, dcr in enumerate(dcr_gen):
-                shift = (-dcr.dy, -dcr.dx)
-                inverse_var_arr[f] += scipy_shift(inverse_var, shift)
-        self.weights = np.sum(inverse_var_arr, axis=0)/self.n_step
+            last_solution[f] += np.abs(initial_solution/self.n_step)
+        # inverse_var_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        # for exp in self.exposures:
+        #     img_unused, inverse_var, dcr_gen = self.extract_image(exp)
+        #     for f, dcr in enumerate(dcr_gen):
+        #         shift = (-dcr.dy, -dcr.dx)
+        #         inverse_var_arr[f] += scipy_shift(inverse_var, shift)
 
         if verbose:
             print("Fractional change per iteration:")
@@ -852,16 +849,17 @@ class DcrCorrection(DcrModel):
             last_convergence_metric = np.mean(last_convergence_metric_full)
         exp_cut = [False for exp_i in range(self.n_images)]
         final_soln_iter = None
+        converge_error = False
         for sol_iter in range(int(max_iter)):
-            new_solution, new_weights = self._calculate_new_model(last_solution, last_weights, exp_cut)
+            new_solution, inverse_var_arr = self._calculate_new_model(last_solution, exp_cut)
 
             if frequency_regularization:
                 self._regularize_model_solution(new_solution)
-            self._clamp_model_solution(new_solution, last_solution, clamp, inverse_var_arr)
+            self._clamp_model_solution(new_solution, last_solution, clamp)
 
-            inds_use = new_weights[-1] > 0
+            inds_use = inverse_var_arr[-1] > 0
             for f in range(self.n_step - 1):
-                inds_use *= new_weights[f] > 0
+                inds_use *= inverse_var_arr[f] > 0
             new_solution = [np.abs((last_solution[f] + gain*new_solution[f])/(1 + gain))
                             for f in range(self.n_step)]
             delta = (np.sum(np.abs([last_solution[f][inds_use] - new_solution[f][inds_use]
@@ -903,60 +901,43 @@ class DcrCorrection(DcrModel):
         if verbose:
             print("Final solution from iteration: %i" % final_soln_iter)
         self.model = last_solution
+        self.weights = np.sum(inverse_var_arr, axis=0)/self.n_step
         return converge_error
 
-    def _calculate_new_model(self, last_solution, last_weights, exp_cut):
+    def _calculate_new_model(self, last_solution, exp_cut):
         new_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
-        new_weights = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        inverse_var_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
         for exp_i, exp in enumerate(self.exposures):
             if exp_cut[exp_i]:
                 continue
             img, inverse_var, dcr_gen = self.extract_image(exp)
             dcr_list = [dcr for dcr in dcr_gen]
             last_model_shift = []
-            last_weights_shift = []
             for f, dcr in enumerate(dcr_list):
                 shift = (dcr.dy, dcr.dx)
                 last_model_shift.append(scipy_shift(last_solution[f], shift))
-                last_weights_shift.append(scipy_shift(last_weights[f], shift))
             for f, dcr in enumerate(dcr_list):
                 inv_shift = (-dcr.dy, -dcr.dx)
                 last_model = np.zeros((self.y_size, self.x_size))
-                last_inv_var = np.zeros((self.y_size, self.x_size))
                 for f2 in range(self.n_step):
                     if f2 != f:
                         last_model += last_model_shift[f2]
-                        last_inv_var += last_weights_shift[f2]
 
                 img_residual = (img - last_model)
-                var_residual = (inverse_var - last_inv_var)
-                var_residual[img_residual < 0] = 0
                 residual_shift = scipy_shift(img_residual, inv_shift)
-                weights_shift = scipy_shift(var_residual, inv_shift)
                 inv_var_shift = scipy_shift(inverse_var, inv_shift)
-                neg_inds = weights_shift < 0
-                # ensure variance is positive (or zero), and set any solution values to zero if negative.
-                weights_shift[neg_inds] = 0
-                new_solution[f] += residual_shift*inv_var_shift  # *weights_shift
-                new_weights[f] += weights_shift
 
-        # for f in range(self.n_step):
-        #     new_weights[f] /= self.n_images
-        #     new_solution[f] /= self.n_images
-        #     # inds_use = new_weights[f] > 0
-        #     # inds_cut = np.bitwise_or(new_solution[f] <= 0, new_weights[f] <= 0)
-        #     # new_solution[f][inds_cut] = 0.
-        #     # new_solution[f][inds_use] /= (new_weights[f][inds_use]/self.n_step)
-        return (new_solution, new_weights)
+                new_solution[f] += residual_shift*inv_var_shift  # *weights_shift
+                inverse_var_arr[f] += inv_var_shift
+        final_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        for f in range(self.n_step):
+            inds_use = inverse_var_arr[f] > 0
+            final_solution[f][inds_use] = new_solution[f][inds_use]/inverse_var_arr[f][inds_use]
+        return (final_solution, inverse_var_arr)
 
     @staticmethod
-    def _clamp_model_solution(new_solution, last_solution, clamp, inv_variance_arr):
+    def _clamp_model_solution(new_solution, last_solution, clamp):
         for s_i, solution in enumerate(new_solution):
-            # Update the solution as the average of the previous and new solution.
-            inds_use = inv_variance_arr[s_i] > 0
-            weights_use = np.zeros_like(inv_variance_arr[s_i])
-            weights_use[inds_use] = 1./inv_variance_arr[s_i][inds_use]
-            solution *= weights_use
             # Note: last_solution is always positive
             clamp_high_i = new_solution[s_i] > clamp*last_solution[s_i]
             solution[clamp_high_i] = clamp*last_solution[s_i][clamp_high_i]
