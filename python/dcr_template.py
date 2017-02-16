@@ -824,22 +824,17 @@ class DcrCorrection(DcrModel):
 
     def build_model_subroutine(self, initial_solution, verbose=True, max_iter=10,
                                test_convergence=False, frequency_regularization=True,
-                               gain=None, clamp=None):
+                               gain=None, clamp=None, convergence_threshold=1e-2):
         """Extract the math from building the model so it can be re-used."""
         if gain is None:
             gain = 1.
         if clamp is None:
             clamp = 10.
         min_images = self.n_step + 1
+        min_iter = 2
         last_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
         for f in range(self.n_step):
             last_solution[f] += np.abs(initial_solution/self.n_step)
-        # inverse_var_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
-        # for exp in self.exposures:
-        #     img_unused, inverse_var, dcr_gen = self.extract_image(exp)
-        #     for f, dcr in enumerate(dcr_gen):
-        #         shift = (-dcr.dy, -dcr.dx)
-        #         inverse_var_arr[f] += scipy_shift(inverse_var, shift)
 
         if verbose:
             print("Fractional change per iteration:")
@@ -847,22 +842,29 @@ class DcrCorrection(DcrModel):
             last_convergence_metric_full = self.calc_model_metric(last_solution)
             print("Full initial convergence metric: ", last_convergence_metric_full)
             last_convergence_metric = np.mean(last_convergence_metric_full)
+
         exp_cut = [False for exp_i in range(self.n_images)]
         final_soln_iter = None
         converge_error = False
         for sol_iter in range(int(max_iter)):
             new_solution, inverse_var_arr = self._calculate_new_model(last_solution, exp_cut)
 
+            # Optionally restrict variations between frequency planes
             if frequency_regularization:
                 self._regularize_model_solution(new_solution)
+
+            # Restrict new solutions from being wildly different from the last solution
             self._clamp_model_solution(new_solution, last_solution, clamp)
 
             inds_use = inverse_var_arr[-1] > 0
             for f in range(self.n_step - 1):
                 inds_use *= inverse_var_arr[f] > 0
-            new_solution = [np.abs((last_solution[f] + gain*new_solution[f])/(1 + gain))
-                            for f in range(self.n_step)]
-            delta = (np.sum(np.abs([last_solution[f][inds_use] - new_solution[f][inds_use]
+
+            # Use the average of the new and last solution for the next iteration. This reduces oscillations.
+            new_solution_use = [np.abs((last_solution[f] + gain*new_solution[f])/(1 + gain))
+                                for f in range(self.n_step)]
+
+            delta = (np.sum(np.abs([last_solution[f][inds_use] - new_solution_use[f][inds_use]
                                     for f in range(self.n_step)])) /
                      np.sum(np.abs([soln[inds_use] for soln in last_solution])))
             if verbose:
@@ -870,11 +872,11 @@ class DcrCorrection(DcrModel):
                 last_soln_use = [soln[inds_use] for soln in last_solution]
                 print("Stddev(last_solution): %f, mean(abs(last_solution)): %f"
                       % (np.std(last_soln_use), np.mean(np.abs(last_soln_use))))
-                new_soln_use = [soln[inds_use] for soln in new_solution]
+                new_soln_use = [soln[inds_use] for soln in new_solution_use]
                 print("Stddev(new_solution): %f, mean(abs(new_solution)): %f"
                       % (np.std(new_soln_use), np.mean(np.abs(new_soln_use))))
             if test_convergence:
-                convergence_metric_full = self.calc_model_metric(new_solution)
+                convergence_metric_full = self.calc_model_metric(new_solution_use)
                 if verbose:
                     print("Full convergence metric:", convergence_metric_full)
                 exp_cut = convergence_metric_full > last_convergence_metric_full
@@ -888,14 +890,21 @@ class DcrCorrection(DcrModel):
                     break
                 last_convergence_metric_full = convergence_metric_full
                 convergence_metric = np.mean(convergence_metric_full[np.logical_not(exp_cut)])
+                print("Convergence metric: %f" % convergence_metric)
                 if convergence_metric > last_convergence_metric:
                     print("BREAK from lack of convergence")
                     final_soln_iter = sol_iter - 1
                     converge_error = True
                     break
+                convergence_check = (1 - convergence_threshold)*last_convergence_metric
+                if (convergence_metric > convergence_check) and (sol_iter > min_iter):
+                    print("BREAK after reaching convergence threshold")
+                    final_soln_iter = sol_iter
+                    last_solution = new_solution_use
+                    break
                 else:
                     last_convergence_metric = convergence_metric
-            last_solution = new_solution
+            last_solution = new_solution_use
         if final_soln_iter is None:
             final_soln_iter = sol_iter
         if verbose:
