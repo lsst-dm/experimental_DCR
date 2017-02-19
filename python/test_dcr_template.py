@@ -83,6 +83,7 @@ class _BasicDcrModel(DcrModel):
         self.model = [rand_gen.random(size=(size, size)) for f in range(n_step)]
         self.weights = np.ones((size, size))
         self.mask = np.zeros((size, size), dtype=np.int32)
+        self.model_base = None
 
         self.n_step = n_step
         self.y_size = size
@@ -121,6 +122,7 @@ class _BasicDcrCorrection(DcrCorrection):
         self.butler = None
         self.debug = False
         self.mask = None
+        self.model_base = None
         self.instrument = 'lsstSim'
         self.detected_bit = 32
 
@@ -520,8 +522,8 @@ class SolverTestCase(lsst.utils.tests.TestCase):
 
     def test_calc_model_metric(self):
         model_file = "test_data/build_model_vals.npy"
-        metric_ref = np.array([155.09729901, 94.7928686143, 154.793647227,
-                               216.539400094, 260.593893983, 276.273657971])
+        metric_ref = np.array([127.962191286, 118.032111041, 165.288144737,
+                               204.071081167, 234.698022211, 247.949131707])
         model = np.load(model_file)
         metric = self.dcrCorr.calc_model_metric(model=model)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)

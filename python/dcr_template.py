@@ -758,6 +758,7 @@ class DcrModel:
         psf_avg = self.psf.computeKernelImage().getArray()
         self.psf_size = psf_avg.shape[0]
         self.psf_avg = psf_avg
+        self.model_base = None
         self.debug = False
 
     @staticmethod
@@ -1022,7 +1023,8 @@ class DcrCorrection(DcrModel):
         self.psf = measAlg.KernelPsf(psfK)
 
     def build_model(self, verbose=True, max_iter=10, gain=None, clamp=None,
-                    frequency_regularization=True, test_convergence=False, convergence_threshold=None):
+                    frequency_regularization=True, max_slope=None,
+                    test_convergence=False, convergence_threshold=None):
         """Build a model of the sky in multiple sub-bands.
 
         Parameters
@@ -1038,6 +1040,8 @@ class DcrCorrection(DcrModel):
             Restrict new solutions from being more than a factor of `clamp` different from the last solution.
         frequency_regularization : bool, optional
             Set to restrict variations between frequency planes
+        max_slope : float, optional
+            Maximum slope to allow between sub-band model planes.
         test_convergence : bool, optional
             If True, then matched templates will be generated for each image for every iteration,
             and the difference with the image will be checked to see if it is less than the previous iteration
@@ -1067,14 +1071,15 @@ class DcrCorrection(DcrModel):
             print(" Done!")
 
         self.build_model_subroutine(initial_solution, verbose=verbose, max_iter=max_iter,
-                                    frequency_regularization=frequency_regularization, gain=gain, clamp=clamp,
+                                    frequency_regularization=frequency_regularization, max_slope=None,
+                                    gain=gain, clamp=clamp,
                                     test_convergence=test_convergence,
                                     convergence_threshold=convergence_threshold)
         if verbose:
             print("\nFinished building model.")
 
     def build_model_subroutine(self, initial_solution, verbose=True, max_iter=10,
-                               test_convergence=False, frequency_regularization=True,
+                               test_convergence=False, frequency_regularization=True, max_slope=None,
                                gain=None, clamp=None, convergence_threshold=None):
         """Extract the math from building the model so it can be re-used.
 
@@ -1093,6 +1098,8 @@ class DcrCorrection(DcrModel):
             Any images where the difference is increasing will be excluded from the next iteration.
         frequency_regularization : bool, optional
             Set to restrict variations between frequency planes
+        max_slope : float, optional
+            Maximum slope to allow between sub-band model planes.
         gain : float, optional
             The weight of the new solution when calculating the model to use for the next iteration.
             The defualt value is 1.0, and should only be changed if you know what you are doing.
@@ -1137,10 +1144,10 @@ class DcrCorrection(DcrModel):
 
             # Optionally restrict variations between frequency planes
             if frequency_regularization:
-                self._regularize_model_solution(new_solution)
+                self._regularize_model_solution(new_solution, self.bandpass, max_slope=max_slope)
 
             # Restrict new solutions from being wildly different from the last solution
-            self._clamp_model_solution(new_solution, last_solution, clamp)
+            self._clamp_model_solution(new_solution, last_solution, clamp, model_base=self.model_base)
 
             inds_use = inverse_var_arr[-1] > 0
             for f in range(self.n_step - 1):
@@ -1165,7 +1172,8 @@ class DcrCorrection(DcrModel):
                 convergence_metric_full = self.calc_model_metric(new_solution_use)
                 if verbose:
                     print("Full convergence metric:", convergence_metric_full)
-                exp_cut = convergence_metric_full > last_convergence_metric_full
+                if sol_iter >= min_iter:
+                    exp_cut = convergence_metric_full > last_convergence_metric_full
                 n_exp_cut = np.sum(exp_cut)
                 if n_exp_cut > 0:
                     print("%i exposure(s) cut from lack of convergence." % int(n_exp_cut))
@@ -1177,19 +1185,20 @@ class DcrCorrection(DcrModel):
                 last_convergence_metric_full = convergence_metric_full
                 convergence_metric = np.mean(convergence_metric_full[np.logical_not(exp_cut)])
                 print("Convergence metric: %f" % convergence_metric)
-                if convergence_metric > last_convergence_metric:
-                    print("BREAK from lack of convergence")
-                    final_soln_iter = sol_iter - 1
-                    converge_error = True
-                    break
-                convergence_check = (1 - convergence_threshold)*last_convergence_metric
-                if (convergence_metric > convergence_check) and (sol_iter > min_iter):
-                    print("BREAK after reaching convergence threshold")
-                    final_soln_iter = sol_iter
-                    last_solution = new_solution_use
-                    break
-                else:
-                    last_convergence_metric = convergence_metric
+
+                if sol_iter > min_iter:
+                    if convergence_metric > last_convergence_metric:
+                        print("BREAK from lack of convergence")
+                        final_soln_iter = sol_iter - 1
+                        converge_error = True
+                        break
+                    convergence_check2 = (1 - convergence_threshold)*last_convergence_metric
+                    if convergence_metric > convergence_check2:
+                        print("BREAK after reaching convergence threshold")
+                        final_soln_iter = sol_iter
+                        last_solution = new_solution_use
+                        break
+                last_convergence_metric = convergence_metric
             last_solution = new_solution_use
         if final_soln_iter is None:
             final_soln_iter = sol_iter
@@ -1246,7 +1255,7 @@ class DcrCorrection(DcrModel):
         return (final_solution, inverse_var_arr)
 
     @staticmethod
-    def _clamp_model_solution(new_solution, last_solution, clamp):
+    def _clamp_model_solution(new_solution, last_solution, clamp, model_base=None):
         """Restrict new solutions from being wildly different from the last solution.
 
         Parameters
@@ -1265,20 +1274,25 @@ class DcrCorrection(DcrModel):
         """
         for s_i, solution in enumerate(new_solution):
             # Note: last_solution is always positive
-            clamp_high_i = new_solution[s_i] > clamp*last_solution[s_i]
+            clamp_high_i = solution > clamp*last_solution[s_i]
             solution[clamp_high_i] = clamp*last_solution[s_i][clamp_high_i]
             clamp_low_i = solution < last_solution[s_i]/clamp
             solution[clamp_low_i] = last_solution[s_i][clamp_low_i]/clamp
+            if model_base is not None:
+                noise_threshold = np.std(solution)
+                # if set, model_base is a list with a single element
+                clamp_high_i2 = solution > (model_base[0] + 3.*noise_threshold)
+                solution[clamp_high_i2] = model_base[0][clamp_high_i2]
 
     @staticmethod
-    def _regularize_model_solution(new_solution, frequency_slope_threshold=1.):
+    def _regularize_model_solution(new_solution, bandpass, max_slope=None):
         """Calculate a slope across sub-band model planes, and clip outlier values beyond a given threshold.
 
         Parameters
         ----------
         new_solution : list of np.ndarrays
             The model solution from the current iteration.
-        frequency_slope_threshold : float, optional
+        max_slope : float, optional
             Maximum slope to allow between sub-band model planes.
 
         Returns
@@ -1286,23 +1300,30 @@ class DcrCorrection(DcrModel):
         None
             Modifies new_solution in place.
         """
+        if max_slope is None:
+            max_slope = 1.
         n_step = len(new_solution)
         y_size, x_size = new_solution[0].shape
-        solution_avg = np.abs(np.sum(new_solution, axis=0)/n_step)
-        slope_ratio = frequency_slope_threshold/(n_step - 1)
-        sum_x = np.sum(np.arange(n_step))
+        solution_avg = np.sum(new_solution, axis=0)/n_step
+        slope_ratio = max_slope
+        sum_x = 0.
         sum_y = np.zeros((y_size, x_size))
         sum_xy = np.zeros((y_size, x_size))
-        sum_xx = np.sum(np.arange(n_step)**2)
-        for f, soln in enumerate(new_solution):
-            sum_y += soln - solution_avg
-            sum_xy += (soln - solution_avg)*f
-        slope = (n_step*sum_xy + sum_x*sum_y)/(n_step*sum_xx + sum_x**2)
-        slope_cut_high = slope > solution_avg*slope_ratio
-        slope_cut_low = slope < -solution_avg*slope_ratio
-        slope[slope_cut_high] = solution_avg[slope_cut_high]*slope_ratio
-        slope[slope_cut_low] = -solution_avg[slope_cut_low]*slope_ratio
-        new_solution = [solution_avg + slope*f for f in range(n_step)]
+        sum_xx = 0.
+        wl_cen = bandpass.calc_eff_wavelen()
+        for f, wl in enumerate(DcrModel._wavelength_iterator(bandpass, use_midpoint=True)):
+            sum_x += wl - wl_cen
+            sum_xx += (wl - wl_cen)**2
+            sum_xy += (wl - wl_cen)*(new_solution[f] - solution_avg)
+            sum_y += new_solution[f] - solution_avg
+        slope = (n_step*sum_xy - sum_x*sum_y)/(n_step*sum_xx + sum_x**2)
+        slope_cut_high = slope*bandpass.wavelen_step > solution_avg*slope_ratio
+        slope_cut_low = slope*bandpass.wavelen_step < -solution_avg*slope_ratio
+        slope[slope_cut_high] = solution_avg[slope_cut_high]*slope_ratio/bandpass.wavelen_step
+        slope[slope_cut_low] = -solution_avg[slope_cut_low]*slope_ratio/bandpass.wavelen_step
+        offset = solution_avg
+        for f, wl in enumerate(DcrModel._wavelength_iterator(bandpass, use_midpoint=True)):
+            new_solution[f] = offset + slope*(wl - wl_cen)
 
     def calc_model_metric(self, model=None):
         """Calculate a quality of fit metric for the DCR model given the set of exposures.
