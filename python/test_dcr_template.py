@@ -73,6 +73,7 @@ class _BasicDcrModel(DcrModel):
         rand_gen = np.random
         rand_gen.seed(seed)
         self.butler = None
+        self.debug = False
         self.instrument = 'lsstSim'
         self.detected_bit = 32
 

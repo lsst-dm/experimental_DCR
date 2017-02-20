@@ -53,6 +53,11 @@ lsst_lat = Angle(np.radians(-30.244639))
 lsst_lon = Angle(np.radians(-70.749417))
 lsst_alt = 2663.
 
+x0 = 300
+dx = 200
+y0 = 500
+dy = 200
+
 
 class DcrModel:
     """!Lightweight object with only the minimum needed to generate DCR-matched template exposures."""
@@ -256,6 +261,12 @@ class DcrModel:
         mask = exposure.getMaskedImage().getMask().getArray()
         ind_cut = (mask | self.detected_bit) != self.detected_bit
         inverse_var[ind_cut] = 0
+
+        if self.debug:
+            slice_inds = np.s_[y0: y0 + dy, x0: x0 + dx]
+            img_vals = img_vals[slice_inds]
+            inverse_var = inverse_var[slice_inds]
+
         visitInfo = exposure.getInfo().getVisitInfo()
         if airmass_weight:
             inverse_var /= visitInfo.getBoresightAirmass()
@@ -612,6 +623,14 @@ class DcrModel:
             # Need to reset afwImage.Filter to prevent an error in future calls to daf_persistence.Butler
             afwImage.FilterProperty_reset()
         exposure.setPsf(self.psf)
+        if self.debug:
+            array_temp = array
+            array = np.zeros_like(exposure.getMaskedImage().getImage().getArray())
+            array[y0: y0 + dy, x0: x0 + dx] = array_temp
+            if variance is not None:
+                variance_temp = variance
+                variance = np.zeros_like(array)
+                variance[y0: y0 + dy, x0: x0 + dx] = variance_temp
         exposure.getMaskedImage().getImage().getArray()[:, :] = array
         if variance is None:
             variance = np.abs(array)
@@ -739,6 +758,7 @@ class DcrModel:
         psf_avg = self.psf.computeKernelImage().getArray()
         self.psf_size = psf_avg.shape[0]
         self.psf_avg = psf_avg
+        self.debug = False
 
     @staticmethod
     def calc_offset_phase(dcr_gen, exposure=None, size=None, size_out=None, center_only=False):
@@ -882,7 +902,7 @@ class DcrCorrection(DcrModel):
 
     def __init__(self, obsid_range=None, repository=".", band_name='g', wavelength_step=10.,
                  n_step=None, exposures=None, detected_bit=32,
-                 warp=False, instrument='lsstSim', **kwargs):
+                 warp=False, instrument='lsstSim', debug_mode=False, **kwargs):
         """!Load images from the repository and set up parameters.
 
         Parameters
@@ -920,6 +940,7 @@ class DcrCorrection(DcrModel):
         else:
             self.exposures = exposures
 
+        self.debug = debug_mode
         self.instrument = instrument
         self.n_images = len(self.exposures)
         self.detected_bit = detected_bit
@@ -1027,6 +1048,9 @@ class DcrCorrection(DcrModel):
         if verbose:
             print("Calculating initial solution...", end="")
 
+        if self.debug:
+            self.x_size = dx
+            self.y_size = dy
         # Set up an initial guess with all model planes equal as a starting point of the iterative solution
         initial_solution = np.zeros((self.y_size, self.x_size))
         initial_weights = np.zeros((self.y_size, self.x_size))
