@@ -27,6 +27,7 @@ from collections import namedtuple
 import numpy as np
 from scipy import constants
 from scipy.ndimage.interpolation import shift as scipy_shift
+from scipy.ndimage.morphology import binary_dilation
 import scipy.optimize.nnls
 
 from lsst.daf.base import DateTime
@@ -260,7 +261,10 @@ class DcrModel:
 
         mask = exposure.getMaskedImage().getMask().getArray()
         ind_cut = (mask | self.detected_bit) != self.detected_bit
-        inverse_var[ind_cut] = 0
+        inverse_var[ind_cut] = 0.
+        # Create a buffer of lower-weight pixels surrounding masked pixels.
+        ind_cut2 = binary_dilation(ind_cut, iterations=2)
+        inverse_var[ind_cut2] /= 2.
 
         if self.debug:
             slice_inds = np.s_[y0: y0 + dy, x0: x0 + dx]
@@ -1224,7 +1228,7 @@ class DcrCorrection(DcrModel):
         Tuple of two lists of np.ndarrays
             One np.ndarray for each model sub-band, and the associated inverse variance array.
         """
-        new_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        residual_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
         inverse_var_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
         for exp_i, exp in enumerate(self.exposures):
             if exp_cut[exp_i]:
@@ -1241,18 +1245,17 @@ class DcrCorrection(DcrModel):
                 for f2 in range(self.n_step):
                     if f2 != f:
                         last_model += last_model_shift[f2]
-
-                img_residual = (img - last_model)
+                img_residual = img - last_model
                 residual_shift = scipy_shift(img_residual, inv_shift)
                 inv_var_shift = scipy_shift(inverse_var, inv_shift)
 
-                new_solution[f] += residual_shift*inv_var_shift  # *weights_shift
+                residual_arr[f] += residual_shift*inv_var_shift  # *weights_shift
                 inverse_var_arr[f] += inv_var_shift
-        final_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        new_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
         for f in range(self.n_step):
             inds_use = inverse_var_arr[f] > 0
-            final_solution[f][inds_use] = new_solution[f][inds_use]/inverse_var_arr[f][inds_use]
-        return (final_solution, inverse_var_arr)
+            new_solution[f][inds_use] = residual_arr[f][inds_use]/inverse_var_arr[f][inds_use]
+        return (new_solution, inverse_var_arr)
 
     @staticmethod
     def _clamp_model_solution(new_solution, last_solution, clamp, model_base=None):
