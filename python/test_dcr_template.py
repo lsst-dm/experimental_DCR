@@ -286,7 +286,7 @@ class KernelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         psf = self.exposure.getPsf()
         psf_size = psf.computeKernelImage().getArray().shape[0]
         phase_arr = DcrModel.calc_offset_phase(exposure=self.exposure, dcr_gen=self.dcr_gen, size=psf_size)
-        np.save(data_file, phase_arr)
+        # np.save(data_file, phase_arr)
         phase_arr_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref)
 
@@ -495,8 +495,10 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         new_solution, inverse_var_arr = self.dcrCorr._calculate_new_model(last_solution, exp_cut)
         # np.save(data_file, (new_solution, inverse_var_arr))
         new_solution_ref, inverse_var_arr_ref = np.load(data_file)
-        self.assertFloatsAlmostEqual(new_solution, new_solution_ref)
-        self.assertFloatsAlmostEqual(inverse_var_arr, inverse_var_arr_ref)
+        for f, soln in enumerate(new_solution):
+            self.assertFloatsAlmostEqual(soln, new_solution_ref[f])
+        for f, var in enumerate(inverse_var_arr):
+            self.assertFloatsAlmostEqual(var, inverse_var_arr_ref[f])
 
     def test_clamp_model_solution(self):
         clamp = 3.
@@ -554,7 +556,8 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         model_arr = [model for model in model_vals_gen]
         # np.save(data_file, model_arr)
         model_ref = np.load(data_file)
-        self.assertFloatsAlmostEqual(model_arr, model_ref)
+        for f, model in enumerate(model_arr):
+            self.assertFloatsAlmostEqual(model, model_ref[f])
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):

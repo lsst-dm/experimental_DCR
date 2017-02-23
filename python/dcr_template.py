@@ -552,23 +552,21 @@ class DcrModel:
             for wl in DcrModel._wavelength_iterator(bandpass, use_midpoint=True):
                 # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
                 refract_mid = diff_refraction(wavelength=wl, wavelength_ref=wavelength_midpoint,
-                                              zenith_angle=zenith_angle.asDegrees())
-                refract_mid *= 3600.0 / pixel_scale  # Refraction initially in degrees, convert to pixels.
-                yield dcr(dx=refract_mid*np.sin(rotation_angle.asRadians()),
-                          dy=refract_mid*np.cos(rotation_angle.asRadians()))
+                                              zenith_angle=zenith_angle, latitude=lsst_lat, altitude=lsst_alt)
+                yield dcr(dx=refract_mid.asArcseconds()*np.sin(rotation_angle.asRadians())/pixel_scale,
+                          dy=refract_mid.asArcseconds()*np.cos(rotation_angle.asRadians())/pixel_scale)
         else:
             for wl_start, wl_end in DcrModel._wavelength_iterator(bandpass, use_midpoint=False):
                 # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
                 refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
-                                                zenith_angle=zenith_angle.asDegrees())
+                                                zenith_angle=zenith_angle, latitude=lsst_lat,
+                                                altitude=lsst_alt)
                 refract_end = diff_refraction(wavelength=wl_end, wavelength_ref=wavelength_midpoint,
-                                              zenith_angle=zenith_angle.asDegrees())
-                refract_start *= 3600.0 / pixel_scale  # Refraction initially in degrees, convert to pixels.
-                refract_end *= 3600.0 / pixel_scale
-                dx = delta(start=refract_start*np.sin(rotation_angle.asRadians()),
-                           end=refract_end*np.sin(rotation_angle.asRadians()))
-                dy = delta(start=refract_start*np.cos(rotation_angle.asRadians()),
-                           end=refract_end*np.cos(rotation_angle.asRadians()))
+                                              zenith_angle=zenith_angle, latitude=lsst_lat, altitude=lsst_alt)
+                dx = delta(start=refract_start.asArcseconds()*np.sin(rotation_angle.asRadians())/pixel_scale,
+                           end=refract_end.asArcseconds()*np.sin(rotation_angle.asRadians())/pixel_scale)
+                dy = delta(start=refract_start.asArcseconds()*np.cos(rotation_angle.asRadians())/pixel_scale,
+                           end=refract_end.asArcseconds()*np.cos(rotation_angle.asRadians())/pixel_scale)
                 yield dcr(dx=dx, dy=dy)
 
     # NOTE: This function was copied from StarFast.py
