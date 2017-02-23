@@ -3,3 +3,10 @@ dmtn-012
 test_data/calexp/
 .ipynb_checkpoints/
 *.cache/
+test_data/dcrModel/g0/0/0.fits
+test_data/dcrModel/g1/0/0.fits
+test_data/dcrModel/g2/0/0.fits
+DCR_template-debug-gband-profiler.ipynb
+DcrCorr.profile
+profiling.py
+profiling.py.lprof

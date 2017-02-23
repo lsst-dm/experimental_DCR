@@ -28,7 +28,6 @@ from lsst.afw.geom import Angle
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
-from lsst.sims.photUtils import PhotometricParameters
 import unittest
 import lsst.utils.tests
 from .dcr_template import DcrModel
@@ -83,15 +82,14 @@ class _BasicDcrModel(DcrModel):
         self.model = [rand_gen.random(size=(size, size)) for f in range(n_step)]
         self.weights = np.ones((size, size))
         self.mask = np.zeros((size, size), dtype=np.int32)
-        self.model_base = None
 
         self.n_step = n_step
         self.y_size = size
         self.x_size = size
         self.pixel_scale = pixel_scale
         self.psf_size = kernel_size
-        self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=pixel_scale,
-                                                 bandpass=band_name)
+        self.exposure_time = exposure_time
+        self.filter_name = band_name
         self.bbox = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(size, size))
         self.wcs = DcrModel.create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=Angle(0.),
                                        dec=Angle(0.), sky_rotation=Angle(0.))
@@ -104,8 +102,6 @@ class _BasicDcrModel(DcrModel):
         psf_image.getArray()[:, :] = psf_vals
         psfK = afwMath.FixedKernel(psf_image)
         self.psf = measAlg.KernelPsf(psfK)
-
-        self.psf_avg = psf_vals
 
 
 class _BasicDcrCorrection(DcrCorrection):
@@ -125,6 +121,7 @@ class _BasicDcrCorrection(DcrCorrection):
         self.model_base = None
         self.instrument = 'lsstSim'
         self.detected_bit = 32
+        self.filter_name = band_name
 
         self.elevation_arr = []
         self.azimuth_arr = []
@@ -144,22 +141,11 @@ class _BasicDcrCorrection(DcrCorrection):
         self.y_size, self.x_size = exposures[0].getDimensions()
         self.pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
         # self.kernel_size = kernel_size
-        exposure_time = visitInfo.getExposureTime()
+        self.exposure_time = visitInfo.getExposureTime()
         self.bbox = calexp.getBBox()
         self.wcs = calexp.getWcs()
         psf = calexp.getPsf().computeKernelImage().getArray()
-        psf_size_test = psf.shape[0]
-        if psf_size_test > 2*kernel_size:
-            self.psf_size = 2*kernel_size
-            p0 = psf_size_test//2 - self.psf_size//2
-            p1 = p0 + self.psf_size
-            self.psf_avg = psf[p0:p1, p0:p1]
-        else:
-            self.psf_size = psf_size_test
-            self.psf_avg = psf
-
-        self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
-                                                 bandpass=band_name)
+        self.psf_size = psf.shape[0]
 
 
 class DCRTestCase(lsst.utils.tests.TestCase):
@@ -406,7 +392,6 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         pixel_scale = 0.25
         kernel_size = 5
         self.size = 20
-        use_psf = False
 
         dcrModel = _BasicDcrModel(size=self.size, kernel_size=kernel_size, band_name=band_name,
                                   n_step=self.n_step, pixel_scale=pixel_scale)
@@ -421,8 +406,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
             az = Angle(np.random.random()*2*np.pi)
             exposures.append(dcrModel.create_exposure(array, variance=None, elevation=el, azimuth=az))
         # Call the actual DcrCorrection class here, not just _BasicDcrCorrection
-        self.dcrCorr = DcrCorrection(kernel_size=kernel_size, band_name=band_name,
-                                     n_step=self.n_step, exposures=exposures, use_psf=use_psf)
+        self.dcrCorr = DcrCorrection(band_name=band_name, n_step=self.n_step, exposures=exposures)
 
     def tearDown(self):
         del self.dcrCorr

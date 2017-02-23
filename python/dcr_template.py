@@ -40,7 +40,7 @@ import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
 import lsst.pex.exceptions
 import lsst.pex.policy as pexPolicy
-from lsst.sims.photUtils import Bandpass, PhotometricParameters
+from lsst.sims.photUtils import Bandpass
 from lsst.utils import getPackageDir
 
 from .calc_refractive_index import diff_refraction
@@ -54,6 +54,7 @@ lsst_lat = Angle(np.radians(-30.244639))
 lsst_lon = Angle(np.radians(-70.749417))
 lsst_alt = 2663.
 
+# Temporary debugging parameters, used if debug_mode=True or self.debug=True is set.
 x0 = 300
 dx = 200
 y0 = 500
@@ -61,7 +62,49 @@ dy = 200
 
 
 class DcrModel:
-    """!Lightweight object with only the minimum needed to generate DCR-matched template exposures."""
+    """!Lightweight object with only the minimum needed to generate DCR-matched template exposures.
+
+    A model must first be generated with DcrCorrection (below). That model can then be used directly, or
+    persisted and later read back in needing only this more lightweight class that doesn't need to carry
+    around the input exposures. This class will generate template exposures suitable for
+    image differencing that are matched to existing exposures in a repository.
+
+    Attributes
+    ----------
+    bandpass : lsst.sims.photUtils.Bandpass object
+        Bandpass object returned by load_bandpass
+    bbox : lsst.afw.geom.Box2I object
+        A bounding box.
+    butler : lsst.daf.persistence Butler object
+        The butler handles persisting and depersisting data to and from a repository.
+    debug : bool
+        Temporary debugging option.
+        If set, calculations are performed on only a small region of the full images.
+    detected_bit : int
+        Value of the detected bit in the bit plane mask.
+    exposure_time : float
+        Length of the exposure, in seconds.
+    filter_name : str
+        Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
+    instrument : str
+        Name of the observatory. Used to format dataIds for the butler.
+    mask : np.ndarray
+        Combined bit plane mask of the model, which is used as the mask plane for generated templates.
+    model : list of np.ndarrays
+        The DCR model to be used to generate templates. Contains one array for each wavelength step.
+    n_step : int
+        Number of sub-filter wavelength planes to model.
+    pixel_scale : float
+        Plate scale, in arcseconds.
+    psf : lsst.meas.algorithms KernelPsf object
+        Representation of the point spread function (PSF) of the model.
+    psf_size : int
+        Dimension of the PSF, in pixels.
+    wcs : lsst.afw.image Wcs object
+        World Coordinate System of the model.
+    weights : np.ndarray
+        Weights of the model, calculated from the combined inverse variance of the input exposures.
+    """
 
     def __init__(self, model_repository=None, band_name='g', **kwargs):
         """!Restore a persisted DcrModel.
@@ -133,14 +176,14 @@ class DcrModel:
             else:
                 raise ValueError("Either repository or exposures must be set.")
             if obsid_range is not None:
-                dataId_gen = self._build_dataId(obsid_range, self.photoParams.bandpass, instrument=instrument)
+                dataId_gen = self._build_dataId(obsid_range, self.filter_name, instrument=instrument)
                 exposures = (calexp for calexp in
                              (butler.get("calexp", dataId=dataId) for dataId in dataId_gen))
             else:
                 raise ValueError("One of obsid_range or exposures must be set.")
 
         self.instrument = instrument
-        if self.psf_avg is None:
+        if self.psf is None:
             self.calc_psf_model()
 
         if obsid_range is not None:
@@ -174,7 +217,7 @@ class DcrModel:
                 obsid_out = obsid + output_obsid_offset
             else:
                 obsid_out = obsid
-            dataId_out = self._build_dataId(obsid_out, self.photoParams.bandpass, instrument=instrument)[0]
+            dataId_out = self._build_dataId(obsid_out, self.filter_name, instrument=instrument)[0]
             exposure = self.create_exposure(template, variance=variance, snap=0,
                                             boresightRotAngle=rotation_angle,
                                             elevation=el, azimuth=az, latitude=lat,
@@ -394,10 +437,9 @@ class DcrModel:
         cd2_2 = (pixel_scale * afwGeom.arcseconds * np.cos(sky_rotation.asRadians())).asDegrees()
         return(afwImage.makeWcs(crval, crpix, cd1_1, cd1_2, cd2_1, cd2_2))
 
-    # NOTE: This function was copied from StarFast.py
     @staticmethod
     def load_bandpass(band_name='g', wavelength_step=None, use_mirror=True, use_lens=True, use_atmos=True,
-                      use_filter=True, use_detector=True, **kwargs):
+                      use_filter=True, use_detector=True):
         """!Load in Bandpass object from sims_photUtils.
 
         Parameters
@@ -417,9 +459,6 @@ class DcrModel:
             Set to use the LSST filters in the filter throughput calculation.
         use_detector : bool, optional
             Set to use the LSST detector efficiency in the filter throughput calculation.
-        **kwargs : TYPE
-            The `use_*` keywords may be passed in through **kwargs,
-            so this function must accept arbitrary kwargs
 
         Returns
         -------
@@ -492,7 +531,6 @@ class DcrModel:
             bandpass.sbTophi()
         return bandpass
 
-    # NOTE: This function was copied from StarFast.py
     @staticmethod
     def _wavelength_iterator(bandpass, use_midpoint=False):
         """!Define iterator to ensure that loops over wavelength are consistent.
@@ -521,7 +559,6 @@ class DcrModel:
                 yield (wave_start, wave_end)
             wave_start = wave_end
 
-    # NOTE: This function was modified from StarFast.py
     @staticmethod
     def dcr_generator(bandpass, pixel_scale, elevation, rotation_angle, use_midpoint=False):
         """!Call the functions that compute Differential Chromatic Refraction (relative to mid-band).
@@ -569,7 +606,6 @@ class DcrModel:
                            end=refract_end.asArcseconds()*np.cos(rotation_angle.asRadians())/pixel_scale)
                 yield dcr(dx=dx, dy=dy)
 
-    # NOTE: This function was copied from StarFast.py
     def create_exposure(self, array, elevation, azimuth, variance=None, era=None,
                         latitude=lsst_lat, longitude=lsst_lon, altitude=lsst_alt, snap=0,
                         exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanAngle, **kwargs):
@@ -616,12 +652,12 @@ class DcrModel:
         exposure.setWcs(self.wcs)
         # We need the filter name in the exposure metadata, and it can't just be set directly
         try:
-            exposure.setFilter(afwImage.Filter(self.photoParams.bandpass))
+            exposure.setFilter(afwImage.Filter(self.filter_name))
         except:
             filterPolicy = pexPolicy.Policy()
             filterPolicy.add("lambdaEff", self.bandpass.calc_eff_wavelen())
-            afwImage.Filter.define(afwImage.FilterProperty(self.photoParams.bandpass, filterPolicy))
-            exposure.setFilter(afwImage.Filter(self.photoParams.bandpass))
+            afwImage.Filter.define(afwImage.FilterProperty(self.filter_name, filterPolicy))
+            exposure.setFilter(afwImage.Filter(self.filter_name))
             # Need to reset afwImage.Filter to prevent an error in future calls to daf_persistence.Butler
             afwImage.FilterProperty_reset()
         exposure.setPsf(self.psf)
@@ -657,7 +693,7 @@ class DcrModel:
         meta.add("MJD-OBS", mjd)
 
         meta.add("EXTTYPE", "IMAGE")
-        meta.add("EXPTIME", self.photoParams.exptime)
+        meta.add("EXPTIME", self.exposure_time)
         meta.add("AIRMASS", airmass)
         meta.add("ZENITH", 90. - elevation.asDegrees())
         meta.add("AZIMUTH", azimuth.asDegrees())
@@ -667,8 +703,8 @@ class DcrModel:
             meta.add(add_item, kwargs[add_item])
 
         visitInfo = afwImage.makeVisitInfo(exposureId=int(exposureId),
-                                           exposureTime=self.photoParams.exptime,
-                                           darkTime=self.photoParams.exptime,
+                                           exposureTime=self.exposure_time,
+                                           darkTime=self.exposure_time,
                                            date=DateTime(mjd),
                                            ut1=mjd,
                                            era=era,
@@ -705,7 +741,7 @@ class DcrModel:
                                        detectbit=self.detected_bit,
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
                                        wavestep=self.bandpass.wavelen_step, telescop=self.instrument)
-            butler.put(exp, "dcrModel", dataId=self._build_model_dataId(self.photoParams.bandpass, f))
+            butler.put(exp, "dcrModel", dataId=self._build_model_dataId(self.filter_name, f))
 
     def load_model(self, model_repository=None, band_name='g', **kwargs):
         """!Depersist a DcrModel from a repository and set up the metadata.
@@ -749,9 +785,8 @@ class DcrModel:
         self.detected_bit = self._fetch_metadata(meta, "DETECTBIT")
         self.y_size, self.x_size = dcrModel.getDimensions()
         self.pixel_scale = self.wcs.pixelScale().asArcseconds()
-        exposure_time = dcrModel.getInfo().getVisitInfo().getExposureTime()
-        self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
-                                                 bandpass=band_name)
+        self.exposure_time = dcrModel.getInfo().getVisitInfo().getExposureTime()
+        self.filter_name = band_name
         self.bbox = dcrModel.getBBox()
         self.instrument = self._fetch_metadata(meta, "TELESCOP", default_value='lsstSim')
         self.bandpass = DcrModel.load_bandpass(band_name=band_name, wavelength_step=wave_step, **kwargs)
@@ -759,8 +794,6 @@ class DcrModel:
         self.psf = dcrModel.getPsf()
         psf_avg = self.psf.computeKernelImage().getArray()
         self.psf_size = psf_avg.shape[0]
-        self.psf_avg = psf_avg
-        self.model_base = None
         self.debug = False
 
     @staticmethod
@@ -901,7 +934,79 @@ class DcrModel:
 
 
 class DcrCorrection(DcrModel):
-    """!Class that loads LSST calibrated exposures and produces airmass-matched template images."""
+    """!Class that loads LSST calibrated exposures and produces airmass-matched template images.
+
+    Input exposures are read with a butler, and an initial model is made by coadding the images.
+    An improved model of the sky is built for a series of sub-bands within the full bandwidth of the filter
+    used for the observations by iteratively forward-modeling the template using the calculated
+    Differential Chromatic Refration for the exposures in each sub-band.
+
+    Attributes
+    ----------
+    bandpass : lsst.sims.photUtils.Bandpass object
+        Bandpass object returned by load_bandpass
+    bbox : lsst.afw.geom.Box2I object
+        A bounding box.
+    butler : lsst.daf.persistence Butler object
+        The butler handles persisting and depersisting data to and from a repository.
+    debug : bool
+        Temporary debugging option.
+        If set, calculations are performed on only a small region of the full images.
+    detected_bit : int
+        Value of the detected bit in the bit plane mask.
+    exposure_time : float
+        Length of the exposure, in seconds.
+    exposures : list
+        Description
+    filter_name : str
+        Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
+    instrument : str
+        Name of the observatory. Used to format dataIds for the butler.
+    mask : np.ndarray
+        Combined bit plane mask of the model, which is used as the mask plane for generated templates.
+    model : list of np.ndarrays
+        The DCR model to be used to generate templates. Contains one array for each wavelength step.
+    model_base : np.ndarray
+        Coadded model built from the input exposures, without accounting for DCR.
+        Used as the starting point for the iterative solution.
+    n_images : int
+        Number of input images used to calculate the model.
+    n_step : int
+        Number of sub-filter wavelength planes to model.
+    pixel_scale : float
+        Plate scale, in arcseconds.
+    psf : lsst.meas.algorithms KernelPsf object
+        Representation of the point spread function (PSF) of the model.
+    psf_size : int
+        Dimension of the PSF, in pixels.
+    sky_rotation_arr : list
+        Description
+    wcs : lsst.afw.image Wcs object
+        World Coordinate System of the model.
+    weights : np.ndarray
+        Weights of the model, calculated from the combined inverse variance of the input exposures.
+    x_size : int
+        Width of the model, in pixels.
+    y_size : int
+        Height of the model, in pixels.
+
+    Example
+    -------
+
+    Set up:
+    dcrCorr = DcrCorrection(n_step=3, repository="./test_data/",
+                            obsid_range=np.arange(100, 124, 3), band_name='g')
+
+    Generate the model:
+    dcrCorr.build_model(max_iter=10)
+
+    Use the model to make matched templates for several observations:
+    template_exposure_gen = dcrCorr.generate_templates_from_model(obsid_range=[108, 109, 110],
+                                                                  output_repository="./test_data_templates/")
+    im_arr = []
+    for exp in template_exposure_gen:
+        im_arr.append(exp.getMaskedImage().getImage().getArray())
+    """
 
     def __init__(self, obsid_range=None, repository=".", band_name='g', wavelength_step=10.,
                  n_step=None, exposures=None, detected_bit=32,
@@ -943,29 +1048,24 @@ class DcrCorrection(DcrModel):
         else:
             self.exposures = exposures
 
+        if len(self.exposures) == 0:
+            raise ValueError("No valid exposures found.")
+
         self.debug = debug_mode
         self.instrument = instrument
         self.n_images = len(self.exposures)
         self.detected_bit = detected_bit
+        self.filter_name = band_name
         psf_size_arr = np.zeros(self.n_images)
-        self.airmass_arr = np.zeros(self.n_images, dtype=np.float64)
-        self.elevation_arr = []
-        self.azimuth_arr = []
         self.sky_rotation_arr = []
         ref_exp_i = 0
         self.bbox = self.exposures[ref_exp_i].getBBox()
         self.wcs = self.exposures[ref_exp_i].getWcs()
 
         for i, calexp in enumerate(self.exposures):
-            visitInfo = calexp.getInfo().getVisitInfo()
-            self.airmass_arr[i] = visitInfo.getBoresightAirmass()
             psf_size_arr[i] = calexp.getPsf().computeKernelImage().getArray().shape[0]
 
-            el = visitInfo.getBoresightAzAlt().getLatitude()
-            az = visitInfo.getBoresightAzAlt().getLongitude()
             rotation_angle = calculate_rotation_angle(calexp)
-            self.elevation_arr.append(el)
-            self.azimuth_arr.append(az)
             self.sky_rotation_arr.append(rotation_angle)
 
             if (i != ref_exp_i) & warp:
@@ -973,9 +1073,9 @@ class DcrCorrection(DcrModel):
 
         self.x_size, self.y_size = self.exposures[ref_exp_i].getDimensions()
         self.pixel_scale = self.exposures[ref_exp_i].getWcs().pixelScale().asArcseconds()
-        exposure_time = self.exposures[ref_exp_i].getInfo().getVisitInfo().getExposureTime()
+        self.exposure_time = self.exposures[ref_exp_i].getInfo().getVisitInfo().getExposureTime()
         self.psf_size = int(np.min(psf_size_arr))
-        self.psf_avg = None
+        self.psf = None
         self.mask = self._combine_masks()
 
         bandpass = DcrModel.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
@@ -991,13 +1091,11 @@ class DcrCorrection(DcrModel):
             n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
         self.n_step = n_step
         self.bandpass = bandpass
-        self.photoParams = PhotometricParameters(exptime=exposure_time, nexp=1, platescale=self.pixel_scale,
-                                                 bandpass=band_name)
 
     def calc_psf_model(self, threshold=None):
         """!Calculate the fiducial psf from a given set of exposures, accounting for DCR."""
         n_step = 1
-        bandpass = DcrModel.load_bandpass(band_name=self.photoParams.bandpass, wavelength_step=None)
+        bandpass = DcrModel.load_bandpass(band_name=self.filter_name, wavelength_step=None)
         n_pix = self.psf_size**2
         psf_mat = np.zeros(self.n_images*self.psf_size**2)
         for exp_i, exp in enumerate(self.exposures):
@@ -1018,7 +1116,6 @@ class DcrCorrection(DcrModel):
         # After solving for the (potentially) large psf, store only the central portion of size kernel_size.
 
         psf_vals = np.sum(psf_model_gen)/n_step
-        self.psf_avg = psf_vals
         psf_image = afwImage.ImageD(self.psf_size, self.psf_size)
         psf_image.getArray()[:, :] = psf_vals
         psfK = afwMath.FixedKernel(psf_image)
@@ -1066,8 +1163,7 @@ class DcrCorrection(DcrModel):
             initial_weights += inverse_var
 
         weight_inds = initial_weights > 0
-        self.model_base = [initial_solution]
-        self.weights_base = initial_weights
+        self.model_base = initial_solution
         initial_solution[weight_inds] /= initial_weights[weight_inds]
         if verbose:
             print(" Done!")
@@ -1281,9 +1377,8 @@ class DcrCorrection(DcrModel):
             solution[clamp_low_i] = last_solution[s_i][clamp_low_i]/clamp
             if model_base is not None:
                 noise_threshold = np.std(solution)
-                # if set, model_base is a list with a single element
-                clamp_high_i2 = solution > (model_base[0] + 3.*noise_threshold)
-                solution[clamp_high_i2] = model_base[0][clamp_high_i2]
+                clamp_high_i2 = solution > (model_base + 3.*noise_threshold)
+                solution[clamp_high_i2] = model_base[clamp_high_i2]
 
     @staticmethod
     def _regularize_model_solution(new_solution, bandpass, max_slope=None):
