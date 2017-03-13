@@ -90,8 +90,8 @@ class _BasicDcrModel(DcrModel):
         self.filter_name = band_name
         self.observatory = lsst_observatory
         self.bbox = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(size, size))
-        self.wcs = DcrModel.create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=Angle(0.),
-                                       dec=Angle(0.), sky_rotation=Angle(0.))
+        self.wcs = DcrModel._create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=Angle(0.),
+                                        dec=Angle(0.), sky_rotation=Angle(0.))
 
         psf_vals = np.zeros((kernel_size, kernel_size))
         psf_vals[kernel_size//2 - 1: kernel_size//2 + 1,
@@ -168,8 +168,8 @@ class DCRTestCase(lsst.utils.tests.TestCase):
         elevation = Angle(np.pi/2)
         zenith_dcr = 0.
         bp = self.bandpass
-        dcr_gen = DcrModel.dcr_generator(bp, pixel_scale=self.pixel_scale,
-                                         elevation=elevation, rotation_angle=rotation_angle)
+        dcr_gen = DcrModel._dcr_generator(bp, pixel_scale=self.pixel_scale,
+                                          elevation=elevation, rotation_angle=rotation_angle)
         n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
         for f in range(n_step):
             dcr = next(dcr_gen)
@@ -201,8 +201,8 @@ class DCRTestCase(lsst.utils.tests.TestCase):
                         (-1.03946222947, -1.18027985272),
                         (-1.18027985272, -1.2741430827)]
         bp = self.bandpass
-        dcr_gen = DcrModel.dcr_generator(bp, pixel_scale=self.pixel_scale, elevation=elevation,
-                                         rotation_angle=rotation_angle)
+        dcr_gen = DcrModel._dcr_generator(bp, pixel_scale=self.pixel_scale, elevation=elevation,
+                                          rotation_angle=rotation_angle)
         n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
         for f in range(n_step):
             dcr = next(dcr_gen)
@@ -250,9 +250,9 @@ class DcrModelTestBase:
         hour_angle = Angle(np.arccos((ha_term1 - ha_term2) / ha_term3))
         p_angle = parallactic_angle(hour_angle, dec, lsst_lat)
         self.rotation_angle = Angle(p_angle)
-        self.dcr_gen = DcrModel.dcr_generator(self.dcrModel.bandpass, pixel_scale=self.dcrModel.pixel_scale,
-                                              elevation=self.elevation, rotation_angle=self.rotation_angle,
-                                              use_midpoint=False)
+        self.dcr_gen = DcrModel._dcr_generator(self.dcrModel.bandpass, pixel_scale=self.dcrModel.pixel_scale,
+                                               elevation=self.elevation, rotation_angle=self.rotation_angle,
+                                               use_midpoint=False)
         self.exposure = self.dcrModel.create_exposure(self.array, variance=None, elevation=self.elevation,
                                                       azimuth=self.azimuth,
                                                       boresightRotAngle=self.rotation_angle, dec=dec, ra=ra)
@@ -271,7 +271,7 @@ class KernelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         data_file = "test_data/simple_phase_kernel.npy"
         psf = self.exposure.getPsf()
         psf_size = psf.computeKernelImage().getArray().shape[0]
-        phase_arr = DcrModel.calc_offset_phase(exposure=self.exposure, dcr_gen=self.dcr_gen, size=psf_size)
+        phase_arr = DcrModel._calc_offset_phase(exposure=self.exposure, dcr_gen=self.dcr_gen, size=psf_size)
         # np.save(data_file, phase_arr)
         phase_arr_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref)
@@ -422,7 +422,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
 
     def test_extract_image(self):
         for exp_i, exp in enumerate(self.dcrCorr.exposures):
-            image, inverse_var = self.dcrCorr.extract_image(exp, calculate_dcr_gen=False)
+            image, inverse_var = self.dcrCorr._extract_image(exp, calculate_dcr_gen=False)
             self.assertFloatsAlmostEqual(self.ref_vals[exp_i], image)
 
 
@@ -441,7 +441,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
     def test_build_dcr_kernel(self):
         """Compare the result of _build_dcr_kernel to previously computed values."""
         data_file = "test_data/build_dcr_kernel_vals.npy"
-        kernel = self.dcrCorr.build_dcr_kernel(self.kernel_size)
+        kernel = self.dcrCorr._build_dcr_kernel(self.kernel_size)
         # np.save(data_file, kernel)
         kernel_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(kernel, kernel_ref)
@@ -516,8 +516,8 @@ class SolverTestCase(lsst.utils.tests.TestCase):
 
     def test_build_model_convergence_failure(self):
         """Test that the iterative solver fails to converge if given a negative gain."""
-        converge_error = self.dcrCorr.build_model_subroutine(initial_solution=1, verbose=False, gain=-2,
-                                                             test_convergence=True)
+        converge_error = self.dcrCorr._build_model_subroutine(initial_solution=1, verbose=False, gain=-2,
+                                                              test_convergence=True)
         self.assertTrue(converge_error)
 
     def test_solve_model(self):
@@ -535,7 +535,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         for exp in self.dcrCorr.exposures:
             image_arr.append(np.ravel(exp.getMaskedImage().getImage().getArray()[slice_inds]))
         image_vals = np.hstack(image_arr)
-        dcr_kernel = self.dcrCorr.build_dcr_kernel(kernel_size)
+        dcr_kernel = self.dcrCorr._build_dcr_kernel(kernel_size)
         model_vals_gen = solve_model(kernel_size, image_vals, n_step=n_step, kernel_dcr=dcr_kernel)
         model_arr = [model for model in model_vals_gen]
         # np.save(data_file, model_arr)
