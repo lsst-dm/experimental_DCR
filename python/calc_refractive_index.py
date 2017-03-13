@@ -24,18 +24,16 @@ from __future__ import print_function, division, absolute_import
 import numpy as np
 
 from lsst.afw.geom import Angle
-
+from .lsst_defaults import lsst_observatory, lsst_temperature, lsst_humidity
 __all__ = ("refraction", "diff_refraction")
 
 lsst_lat = Angle(np.radians(-30.244639))
 lsst_alt = 2663.
-lsst_temperature = 20.  # in degrees Celcius
-lsst_humidity = 10.  # in percent
 
 
 def refraction(wavelength, zenith_angle, atmospheric_pressure=1.,
                temperature=lsst_temperature, humidity=lsst_humidity,
-               latitude=lsst_lat, altitude=lsst_alt):
+               observatory=lsst_observatory):
     """Calculate overall refraction under atmospheric and observing conditions.
 
     Parameters
@@ -49,17 +47,16 @@ def refraction(wavelength, zenith_angle, atmospheric_pressure=1.,
     temperature : float
         Observatory site temperature in Celcius (valid for -20 < T < 50)
     humidity : float, optional
-        Observatory site humidity, in percent (0-100)
-    latitude : lsst.afw.geom Angle, optional
-        Observatory site latitude, as an Angle.
-    altitude : float, optional
-        Observatory site altitude in meters.
+    observatory : lsst.afw.coord.coordLib.Observatory, optional
+        Class containing the longitude, latitude, and altitude of the observatory.
 
     Returns
     -------
     lsst.afw.geom Angle
         The angular refraction for light of the given wavelength, under the given observing conditions.
     """
+    latitude = observatory.getLatitude()
+    altitude = observatory.getElevation()
     temperature_Kelvin = temperature + 273.15
     water_vapor_pressure = humidity_to_pressure(humidity=humidity, temperature=temperature)
 
@@ -84,7 +81,7 @@ def refraction(wavelength, zenith_angle, atmospheric_pressure=1.,
 
 def diff_refraction(wavelength, wavelength_ref, zenith_angle, atmospheric_pressure=1.,
                     temperature=lsst_temperature, humidity=lsst_humidity,
-                    latitude=lsst_lat, altitude=lsst_alt):
+                    observatory=lsst_observatory):
     """Calculate the differential refraction between two wavelengths.
 
     Parameters
@@ -101,10 +98,8 @@ def diff_refraction(wavelength, wavelength_ref, zenith_angle, atmospheric_pressu
         Observatory site temperature in Celcius (valid for -20 < T < 50)
     humidity : float, optional
         Observatory site humidity, in percent (0-100)
-    latitude : lsst.afw.geom Angle, optional
-        Observatory site latitude, as an Angle.
-    altitude : float, optional
-        Observatory site altitude in meters.
+    observatory : lsst.afw.coord.coordLib.Observatory, optional
+        Class containing the longitude, latitude, and altitude of the observatory.
 
     Returns
     -------
@@ -113,9 +108,9 @@ def diff_refraction(wavelength, wavelength_ref, zenith_angle, atmospheric_pressu
         under the given observing conditions
     """
     refraction_start = refraction(wavelength, zenith_angle, atmospheric_pressure, temperature,
-                                  humidity=humidity, latitude=latitude, altitude=altitude)
+                                  humidity=humidity, observatory=observatory)
     refraction_end = refraction(wavelength_ref, zenith_angle, atmospheric_pressure, temperature,
-                                humidity=humidity, latitude=latitude, altitude=altitude)
+                                humidity=humidity, observatory=observatory)
     return refraction_start - refraction_end
 
 

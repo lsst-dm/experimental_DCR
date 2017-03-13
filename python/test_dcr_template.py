@@ -36,13 +36,11 @@ from .dcr_template import solve_model
 from .dcr_template import wrap_warpExposure
 from .dcr_template import calculate_rotation_angle
 from .dcr_template import parallactic_angle
+from .lsst_defaults import lsst_observatory
 
 
 nanFloat = float("nan")
 nanAngle = Angle(nanFloat)
-lsst_lat = Angle(np.radians(-30.244639))
-lsst_lon = Angle(np.radians(-70.749417))
-lsst_alt = 2663.
 
 
 def basicBandpass(band_name='g', wavelength_step=1):
@@ -90,6 +88,7 @@ class _BasicDcrModel(DcrModel):
         self.psf_size = kernel_size
         self.exposure_time = exposure_time
         self.filter_name = band_name
+        self.observatory = lsst_observatory
         self.bbox = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(size, size))
         self.wcs = DcrModel.create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=Angle(0.),
                                        dec=Angle(0.), sky_rotation=Angle(0.))
@@ -145,6 +144,7 @@ class _BasicDcrCorrection(DcrCorrection):
         self.bbox = calexp.getBBox()
         self.wcs = calexp.getWcs()
         psf = calexp.getPsf().computeKernelImage().getArray()
+        self.observatory = exposures[0].getInfo().getVisitInfo().getObservatory()
         self.psf_size = psf.shape[0]
 
 
@@ -235,6 +235,7 @@ class DcrModelTestBase:
         pixel_scale = 0.25
         kernel_size = 5
         self.size = 20
+        lsst_lat = lsst_observatory.getLatitude()
         # NOTE that this array is randomly generated with a new seed for each instance.
         self.array = np.random.random(size=(self.size, self.size))
         self.dcrModel = _BasicDcrModel(size=self.size, kernel_size=kernel_size, band_name=band_name,
@@ -253,9 +254,8 @@ class DcrModelTestBase:
                                               elevation=self.elevation, rotation_angle=self.rotation_angle,
                                               use_midpoint=False)
         self.exposure = self.dcrModel.create_exposure(self.array, variance=None, elevation=self.elevation,
-                                                      boresightRotAngle=self.rotation_angle,
-                                                      latitude=lsst_lat, longitude=lsst_lon,
-                                                      azimuth=self.azimuth, dec=dec, ra=ra)
+                                                      azimuth=self.azimuth,
+                                                      boresightRotAngle=self.rotation_angle, dec=dec, ra=ra)
 
     def tearDown(self):
         del self.dcrModel
