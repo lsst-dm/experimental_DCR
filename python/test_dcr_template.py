@@ -145,6 +145,7 @@ class _BasicDcrCorrection(DcrCorrection):
         self.wcs = calexp.getWcs()
         psf = calexp.getPsf().computeKernelImage().getArray()
         self.observatory = exposures[0].getInfo().getVisitInfo().getObservatory()
+        psf = exposures[0].getPsf().computeKernelImage().getArray()
         self.psf_size = psf.shape[0]
 
 

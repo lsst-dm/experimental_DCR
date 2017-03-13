@@ -273,6 +273,38 @@ class DcrModel:
             return template
 
     def extract_image(self, exposure, airmass_weight=False, calculate_dcr_gen=True):
+    def build_matched_psf(self, el, rotation_angle):
+        """Sub-routine to calculate the PSF as elongated by DCR for a given exposure.
+
+        Once the matched templates incorporate variable seeing, this function should also match the seeing.
+
+        Parameters
+        ----------
+        el : lsst.afw.geom.Angle
+            Elevation angle of the observation. If not set, it is read from the exposure.
+        rotation_angle : lsst.afw.geom.Angle
+            Sky rotation angle of the observation. If not set it is calculated from the exposure metadata.
+
+        Returns
+        -------
+        lsst.meas.algorithms KernelPsf object
+            Designed to be passed to a lsst.afw.image ExposureD through the method setPsf()
+        """
+        dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
+                                          observatory=self.observatory,
+                                          elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
+        psf_vals = self.psf.computeKernelImage().getArray()
+        psf_vals_out = np.zeros((self.psf_size, self.psf_size))
+
+        for f, dcr in enumerate(dcr_gen):
+            shift = (dcr.dy, dcr.dx)
+            psf_vals_out += scipy_shift(psf_vals, shift)
+        psf_image = afwImage.ImageD(self.psf_size, self.psf_size)
+        psf_image.getArray()[:, :] = psf_vals_out
+        psfK = afwMath.FixedKernel(psf_image)
+        psf = measAlg.KernelPsf(psfK)
+        return psf
+
         """Helper function to extract image array values from an exposure.
 
         Parameters
@@ -657,7 +689,6 @@ class DcrModel:
             exposure.setFilter(afwImage.Filter(self.filter_name))
             # Need to reset afwImage.Filter to prevent an error in future calls to daf_persistence.Butler
             afwImage.FilterProperty_reset()
-        exposure.setPsf(self.psf)
         if self.debug:
             array_temp = array
             array = np.zeros_like(exposure.getMaskedImage().getImage().getArray())
@@ -712,6 +743,10 @@ class DcrModel:
                                            observatory=self.observatory,
                                            )
         exposure.getInfo().setVisitInfo(visitInfo)
+
+        #Set the DCR-matched PSF
+        psf_single = self.build_matched_psf(elevation, calculate_rotation_angle(exposure))
+        exposure.setPsf(psf_single)
         return exposure
 
     def export_model(self, model_repository=None):
