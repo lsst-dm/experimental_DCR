@@ -1124,22 +1124,23 @@ class DcrCorrection(DcrModel):
         self.n_images = len(self.exposures)
         self.detected_bit = detected_bit
         self.filter_name = band_name
-        psf_size_arr = np.zeros(self.n_images)
-        self.sky_rotation_arr = []
+        psf_size_arr = []
+        hour_angle_arr = []
         ref_exp_i = 0
         self.bbox = self.exposures[ref_exp_i].getBBox()
         self.wcs = self.exposures[ref_exp_i].getWcs()
         self.observatory = self.exposures[ref_exp_i].getInfo().getVisitInfo().getObservatory()
 
         for i, calexp in enumerate(self.exposures):
-            psf_size_arr[i] = calexp.getPsf().computeKernelImage().getArray().shape[0]
+            psf_size_arr.append(calexp.getPsf().computeKernelImage().getArray().shape[0])
 
-            rotation_angle = calculate_rotation_angle(calexp)
-            self.sky_rotation_arr.append(rotation_angle)
+            hour_angle_arr.append(calexp.getInfo().getVisitInfo().getBoresightHourAngle().asRadians())
 
             if (i != ref_exp_i) & warp:
                 wrap_warpExposure(calexp, self.wcs, self.bbox)
 
+        if np.any(np.isnan(hour_angle_arr)):
+            print("Warning: invalid hour angle in metadata. Azimuth will be used instead.")
         self.x_size, self.y_size = self.exposures[ref_exp_i].getDimensions()
         self.pixel_scale = self.exposures[ref_exp_i].getWcs().pixelScale()
         self.exposure_time = self.exposures[ref_exp_i].getInfo().getVisitInfo().getExposureTime()
@@ -1770,6 +1771,7 @@ def calculate_rotation_angle(exposure):
 
     az = visitInfo.getBoresightAzAlt().getLongitude()
     hour_angle = visitInfo.getBoresightHourAngle()
+    # Some simulated data contains invalid hour_angle metadata.
     if np.isfinite(hour_angle.asRadians()):
         dec = visitInfo.getBoresightRaDec().getDec()
         lat = visitInfo.getObservatory().getLatitude()
