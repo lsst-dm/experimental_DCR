@@ -97,8 +97,8 @@ class DcrModel:
         Number of sub-filter wavelength planes to model.
     observatory : lsst.afw.coord.coordLib.Observatory
         Class containing the longitude, latitude, and altitude of the observatory.
-    pixel_scale : float
-        Plate scale, in arcseconds.
+    pixel_scale : lsst.afw.geom.Angle
+            Plate scale, as an Angle.
     psf : lsst.meas.algorithms KernelPsf object
         Representation of the point spread function (PSF) of the model.
     psf_size : int
@@ -457,8 +457,8 @@ class DcrModel:
         ----------
         bbox : lsst.afw.geom.Box2I object
             A bounding box.
-        pixel_scale : float
-            Plate scale, in arcseconds.
+        pixel_scale : lsst.afw.geom.Angle
+            Plate scale, as an Angle.
         ra : lsst.afw.geom.Angle
             Right Ascension of the reference pixel, as an Angle.
         dec : lsst.afw.geom.Angle
@@ -472,10 +472,10 @@ class DcrModel:
         """
         crval = IcrsCoord(ra, dec)
         crpix = afwGeom.Box2D(bbox).getCenter()
-        cd1_1 = (pixel_scale * afwGeom.arcseconds * np.cos(sky_rotation.asRadians())).asDegrees()
-        cd1_2 = (-pixel_scale * afwGeom.arcseconds * np.sin(sky_rotation.asRadians())).asDegrees()
-        cd2_1 = (pixel_scale * afwGeom.arcseconds * np.sin(sky_rotation.asRadians())).asDegrees()
-        cd2_2 = (pixel_scale * afwGeom.arcseconds * np.cos(sky_rotation.asRadians())).asDegrees()
+        cd1_1 = np.cos(sky_rotation.asRadians())*pixel_scale.asDegrees()
+        cd1_2 = -np.sin(sky_rotation.asRadians())*pixel_scale.asDegrees()
+        cd2_1 = np.sin(sky_rotation.asRadians())*pixel_scale.asDegrees()
+        cd2_2 = np.cos(sky_rotation.asRadians())*pixel_scale.asDegrees()
         return(afwImage.makeWcs(crval, crpix, cd1_1, cd1_2, cd2_1, cd2_2))
 
     @staticmethod
@@ -610,8 +610,8 @@ class DcrModel:
         ----------
         bandpass : lsst.sims.photUtils.Bandpass object
             Bandpass object returned by load_bandpass
-        pixel_scale : float
-            Plate scale in arcsec/pixel
+        pixel_scale : lsst.afw.geom.Angle
+            Plate scale, as an Angle.
         elevation : lsst.afw.geom.Angle
             Elevation angle of the observation
         rotation_angle : lsst.afw.geom.Angle
@@ -641,8 +641,9 @@ class DcrModel:
                 refract_mid = diff_refraction(wavelength=wl, wavelength_ref=wavelength_midpoint,
                                               zenith_angle=zenith_angle,
                                               observatory=observatory, weather=weather)
-                yield dcr(dx=refract_mid.asArcseconds()*np.sin(rotation_angle.asRadians())/pixel_scale,
-                          dy=refract_mid.asArcseconds()*np.cos(rotation_angle.asRadians())/pixel_scale)
+                refract_mid_pixels = refract_mid.asArcseconds()/pixel_scale.asArcseconds()
+                yield dcr(dx=refract_mid_pixels*np.sin(rotation_angle.asRadians()),
+                          dy=refract_mid_pixels*np.cos(rotation_angle.asRadians()))
         else:
             for wl_start, wl_end in DcrModel._wavelength_iterator(bandpass, use_midpoint=False):
                 # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
@@ -652,10 +653,12 @@ class DcrModel:
                 refract_end = diff_refraction(wavelength=wl_end, wavelength_ref=wavelength_midpoint,
                                               zenith_angle=zenith_angle,
                                               observatory=observatory, weather=weather)
-                dx = delta(start=refract_start.asArcseconds()*np.sin(rotation_angle.asRadians())/pixel_scale,
-                           end=refract_end.asArcseconds()*np.sin(rotation_angle.asRadians())/pixel_scale)
-                dy = delta(start=refract_start.asArcseconds()*np.cos(rotation_angle.asRadians())/pixel_scale,
-                           end=refract_end.asArcseconds()*np.cos(rotation_angle.asRadians())/pixel_scale)
+                refract_start_pixels = refract_start.asArcseconds()/pixel_scale.asArcseconds()
+                refract_end_pixels = refract_end.asArcseconds()/pixel_scale.asArcseconds()
+                dx = delta(start=refract_start_pixels*np.sin(rotation_angle.asRadians()),
+                           end=refract_end_pixels*np.sin(rotation_angle.asRadians()))
+                dy = delta(start=refract_start_pixels*np.cos(rotation_angle.asRadians()),
+                           end=refract_end_pixels*np.cos(rotation_angle.asRadians()))
                 yield dcr(dx=dx, dy=dy)
 
     def create_exposure(self, array, elevation, azimuth, variance=None, era=None, snap=0,
@@ -839,7 +842,7 @@ class DcrModel:
         wave_step = self._fetch_metadata(meta, "WAVESTEP")
         self.detected_bit = self._fetch_metadata(meta, "DETECTBIT")
         self.y_size, self.x_size = dcrModel.getDimensions()
-        self.pixel_scale = self.wcs.pixelScale().asArcseconds()
+        self.pixel_scale = self.wcs.pixelScale()
         self.exposure_time = dcrModel.getInfo().getVisitInfo().getExposureTime()
         self.observatory = dcrModel.getInfo().getVisitInfo().getObservatory()
         self.filter_name = band_name
@@ -1033,14 +1036,12 @@ class DcrCorrection(DcrModel):
         Number of sub-filter wavelength planes to model.
     observatory : lsst.afw.coord.coordLib.Observatory
         Class containing the longitude, latitude, and altitude of the observatory.
-    pixel_scale : float
-        Plate scale, in arcseconds.
+    pixel_scale : lsst.afw.geom.Angle
+            Plate scale, as an Angle.
     psf : lsst.meas.algorithms KernelPsf object
         Representation of the point spread function (PSF) of the model.
     psf_size : int
         Dimension of the PSF, in pixels.
-    sky_rotation_arr : list
-        Description
     wcs : lsst.afw.image Wcs object
         World Coordinate System of the model.
     weights : np.ndarray
@@ -1140,7 +1141,7 @@ class DcrCorrection(DcrModel):
                 wrap_warpExposure(calexp, self.wcs, self.bbox)
 
         self.x_size, self.y_size = self.exposures[ref_exp_i].getDimensions()
-        self.pixel_scale = self.exposures[ref_exp_i].getWcs().pixelScale().asArcseconds()
+        self.pixel_scale = self.exposures[ref_exp_i].getWcs().pixelScale()
         self.exposure_time = self.exposures[ref_exp_i].getInfo().getVisitInfo().getExposureTime()
         self.psf_size = int(np.min(psf_size_arr))
         self.psf = None

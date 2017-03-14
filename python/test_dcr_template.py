@@ -55,7 +55,7 @@ class _BasicDcrModel(DcrModel):
     """Dummy DcrModel object for testing without a repository."""
 
     def __init__(self, size=None, kernel_size=5, n_step=3, band_name='g', exposure_time=30.,
-                 pixel_scale=0.25, wavelength_step=None):
+                 pixel_scale=Angle(afwGeom.arcsecToRad(0.25)), wavelength_step=None):
         """
         @param size  Number of pixels on a side of the image and model.
         @param kernel_size  size, in pixels, of the region surrounding each image pixel that DCR
@@ -63,7 +63,7 @@ class _BasicDcrModel(DcrModel):
         @param n_step  Number of sub-filter wavelength planes to model. Optional if wavelength_step supplied.
         @param band_name  Common name of the filter used. For LSST, use u, g, r, i, z, or y
         @param exposure_time  Length of the exposure, in seconds. Needed only for exporting to FITS.
-        @param pixel_scale  Plate scale of the images, in arcseconds
+        @param pixel_scale  Plate scale of the images, as an Angle
         @param wavelength_step  Overridden by n_step. Sub-filter width, in nm.
         """
         seed = 5
@@ -138,12 +138,12 @@ class _BasicDcrCorrection(DcrCorrection):
         self.n_step = n_step
         self.n_images = len(exposures)
         self.y_size, self.x_size = exposures[0].getDimensions()
-        self.pixel_scale = calexp.getWcs().pixelScale().asArcseconds()
         # self.kernel_size = kernel_size
         self.exposure_time = visitInfo.getExposureTime()
         self.bbox = calexp.getBBox()
         self.wcs = calexp.getWcs()
         psf = calexp.getPsf().computeKernelImage().getArray()
+        self.pixel_scale = exposures[0].getWcs().pixelScale()
         self.observatory = exposures[0].getInfo().getVisitInfo().getObservatory()
         psf = exposures[0].getPsf().computeKernelImage().getArray()
         self.psf_size = psf.shape[0]
@@ -156,7 +156,7 @@ class DCRTestCase(lsst.utils.tests.TestCase):
         """Define parameters used by every test."""
         band_name = 'g'
         wavelength_step = 10.0  # nanometers
-        self.pixel_scale = 0.25  # arcseconds/pixel
+        self.pixel_scale = Angle(afwGeom.arcsecToRad(0.25))  # angle/pixel
         self.bandpass = basicBandpass(band_name=band_name, wavelength_step=wavelength_step)
 
     def tearDown(self):
@@ -234,7 +234,7 @@ class DcrModelTestBase:
     def setUp(self):
         band_name = 'g'
         n_step = 3
-        pixel_scale = 0.25
+        pixel_scale = Angle(afwGeom.arcsecToRad(0.25))
         kernel_size = 5
         self.size = 20
         lsst_lat = lsst_observatory.getLatitude()
@@ -391,7 +391,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         band_name = 'g'
         self.n_step = 3
         self.n_images = 5
-        pixel_scale = 0.25
+        pixel_scale = Angle(afwGeom.arcsecToRad(0.25))
         kernel_size = 5
         self.size = 20
 
