@@ -21,19 +21,16 @@
 #
 """Calculate atmospheric refraction under different observing conditions."""
 from __future__ import print_function, division, absolute_import
+from astropy import units as u
+from astropy.units import cds as u_cds
 import numpy as np
 
 from lsst.afw.geom import Angle
-from .lsst_defaults import lsst_observatory, lsst_temperature, lsst_humidity
+from .lsst_defaults import lsst_observatory, lsst_weather
 __all__ = ("refraction", "diff_refraction")
 
-lsst_lat = Angle(np.radians(-30.244639))
-lsst_alt = 2663.
 
-
-def refraction(wavelength, zenith_angle, atmospheric_pressure=1.,
-               temperature=lsst_temperature, humidity=lsst_humidity,
-               observatory=lsst_observatory):
+def refraction(wavelength, zenith_angle, weather=lsst_weather, observatory=lsst_observatory):
     """Calculate overall refraction under atmospheric and observing conditions.
 
     Parameters
@@ -42,12 +39,10 @@ def refraction(wavelength, zenith_angle, atmospheric_pressure=1.,
         wavelength is in nm (valid for 230.2 < wavelength < 2058.6)
     zenith_angle : lsst.afw.geom Angle
         Zenith angle of the observation, as an Angle.
-    atmospheric_pressure : float, optional
-        Atmospheric pressure is in atmospheres.
-    temperature : float
-        Observatory site temperature in Celcius (valid for -20 < T < 50)
-    humidity : float, optional
-    observatory : lsst.afw.coord.coordLib.Observatory, optional
+    weather : lsst.afw.coord Weather, optional
+        Class containing the measured temperature, pressure, and humidity
+        at the observatory during an observation
+    observatory : lsst.afw.coord Observatory, optional
         Class containing the longitude, latitude, and altitude of the observatory.
 
     Returns
@@ -57,15 +52,11 @@ def refraction(wavelength, zenith_angle, atmospheric_pressure=1.,
     """
     latitude = observatory.getLatitude()
     altitude = observatory.getElevation()
-    temperature_Kelvin = temperature + 273.15
-    water_vapor_pressure = humidity_to_pressure(humidity=humidity, temperature=temperature)
 
-    atm_to_millibar = 760.*1.333224
-    dry_pressure = atm_to_millibar*atmospheric_pressure - water_vapor_pressure
+    reduced_n = n_delta(wavelength, weather)*1E-8
 
-    reduced_n = n_delta(wavelength, dry_pressure, water_vapor_pressure, temperature_Kelvin)*1E-8
-
-    atmos_scaleheight_ratio = 4.5908E-6*temperature_Kelvin
+    temperature_Kelvin = _extract_temperature(weather, units_kelvin=True)
+    atmos_scaleheight_ratio = 4.5908E-6*temperature_Kelvin.value
 
     # Account for oblate Earth
     relative_gravity = (1. + 0.005302*np.sin(latitude.asRadians())**2. -
@@ -79,62 +70,55 @@ def refraction(wavelength, zenith_angle, atmospheric_pressure=1.,
     return result
 
 
-def diff_refraction(wavelength, wavelength_ref, zenith_angle, atmospheric_pressure=1.,
-                    temperature=lsst_temperature, humidity=lsst_humidity,
-                    observatory=lsst_observatory):
+def diff_refraction(wavelength, wavelength_ref, zenith_angle,
+                    weather=lsst_weather, observatory=lsst_observatory):
     """Calculate the differential refraction between two wavelengths.
 
     Parameters
     ----------
     wavelength : float
         wavelength is in nm (valid for 230.2 < wavelength < 2058.6)
-    wavelength_ref : TYPE
-        Description
+    wavelength_ref : float
+        Reference wavelength, typically the effective wavelength of a filter.
     zenith_angle : lsst.afw.geom Angle
         Zenith angle of the observation, as an Angle.
-    atmospheric_pressure : float, optional
-        Atmospheric pressure is in atmospheres.
-    temperature : float, optional
-        Observatory site temperature in Celcius (valid for -20 < T < 50)
-    humidity : float, optional
-        Observatory site humidity, in percent (0-100)
-    observatory : lsst.afw.coord.coordLib.Observatory, optional
+    weather : lsst.afw.coord Weather, optional
+        Class containing the measured temperature, pressure, and humidity
+        at the observatory during an observation
+    observatory : lsst.afw.coord Observatory, optional
         Class containing the longitude, latitude, and altitude of the observatory.
 
     Returns
     -------
     lsst.afw.geom Angle
-        The differential angular refraction of light between the two given wavelengths,
-        under the given observing conditions
+        The refraction at `wavelength` - the refraction at `wavelength_ref`.
     """
-    refraction_start = refraction(wavelength, zenith_angle, atmospheric_pressure, temperature,
-                                  humidity=humidity, observatory=observatory)
-    refraction_end = refraction(wavelength_ref, zenith_angle, atmospheric_pressure, temperature,
-                                humidity=humidity, observatory=observatory)
+    refraction_start = refraction(wavelength, zenith_angle, weather=weather, observatory=observatory)
+    refraction_end = refraction(wavelength_ref, zenith_angle, weather=weather, observatory=observatory)
     return refraction_start - refraction_end
 
 
-def n_delta(wavelength, dry_pressure, water_vapor_pressure, temperature):
+def n_delta(wavelength, weather):
     """Calculate the differential refractive index of air.
 
     The differential refractive index is the difference of the refractive index from 1.,
     multiplied by 1E8 to simplify the notation and equations.
+    Calculated as (n_air - 1)*10^8
+
+    This replicates equation 14 of Stone 1996 "An Accurate Method for Computing Atmospheric Refraction"
 
     Parameters
     ----------
     wavelength : float
         wavelength is in nanometers
-    dry_pressure : float
-        Atmospheric pressure, excluding water vapor. In millibar.
-    water_vapor_pressure : float
-        Pressure of the water vapor component of the atmosphere, in millibar.
-    temperature : float
-        Observatory site temperature in Kelvin
+    weather : lsst.afw.coord Weather
+        Class containing the measured temperature, pressure, and humidity
+        at the observatory during an observation
 
     Returns
     -------
     float
-        The difference of the refractive index of air from 1., multiplied by 1E8.
+        The difference of the refractive index of air from 1., calculated as (n_air - 1)*10^8
     """
     wave_num = 1E3/wavelength  # want wave number in units 1/micron
 
@@ -142,69 +126,149 @@ def n_delta(wavelength, dry_pressure, water_vapor_pressure, temperature):
 
     wet_air_term = 6487.31 + 58.058*wave_num**2. - 0.71150*wave_num**4. + 0.08851*wave_num**6.
 
-    return (dry_air_term * density_factor_dry(dry_pressure, temperature) +
-            wet_air_term * density_factor_water(water_vapor_pressure, temperature))
+    return (dry_air_term * density_factor_dry(weather) +
+            wet_air_term * density_factor_water(weather))
 
 
-def density_factor_dry(dry_pressure, temperature):
+def density_factor_dry(weather):
     """Calculate dry air pressure term to refractive index calculation.
+
+    This replicates equation 15 of Stone 1996 "An Accurate Method for Computing Atmospheric Refraction"
 
     Parameters
     ----------
-    dry_pressure : float
-        Atmospheric pressure, excluding water vapor. In millibar.
-    temperature : float
-        Observatory site temperature in Kelvin
+    weather : lsst.afw.coord Weather, optional
+        Class containing the measured temperature, pressure, and humidity
+        at the observatory during an observation
 
     Returns
     -------
     float
         Returns the relative density of dry air at the given pressure and temperature.
     """
-    eqn_1 = 1. + dry_pressure*(57.90E-8 - 9.3250E-4/temperature + 0.25844/temperature**2.)
+    temperature_Kelvin = _extract_temperature(weather, units_kelvin=True)
+    water_vapor_pressure = humidity_to_pressure(weather)
+    water_vapor_pressure_mbar = water_vapor_pressure.to(u_cds.mbar)
+    air_pressure_mbar = _extract_pressure(weather, units_mbar=True)
+    dry_pressure_mbar = air_pressure_mbar - water_vapor_pressure_mbar
 
-    return eqn_1*dry_pressure/temperature
+    eqn_1 = dry_pressure_mbar.value*(57.90E-8 - 9.3250E-4/temperature_Kelvin.value +
+                                     0.25844/temperature_Kelvin.value**2.)
+
+    density_factor = (1. + eqn_1)*dry_pressure_mbar.value/temperature_Kelvin.value
+
+    return density_factor
 
 
-def density_factor_water(water_vapor_pressure, temperature):
+def density_factor_water(weather):
     """Calculate water vapor pressure term to refractive index calculation.
+
+    This replicates equation 16 of Stone 1996 "An Accurate Method for Computing Atmospheric Refraction"
 
     Parameters
     ----------
-    water_vapor_pressure : float
-        Pressure of the water vapor component of the atmosphere, in millibar.
-    temperature : float
-        Observatory site temperature in Kelvin
+    weather : lsst.afw.coord Weather, optional
+        Class containing the measured temperature, pressure, and humidity
+        at the observatory during an observation
 
     Returns
     -------
     float
         Returns the relative density of water vapor at the given pressure and temperature.
     """
-    eqn_1 = -2.37321E-3 + 2.23366/temperature - 710.792/temperature**2. + 7.75141E-4/temperature**3.
+    temperature_Kelvin = _extract_temperature(weather, units_kelvin=True)
+    water_vapor_pressure = humidity_to_pressure(weather)
+    water_vapor_pressure_mbar = water_vapor_pressure.to(u_cds.mbar)
 
-    eqn_2 = 1. + water_vapor_pressure*(1. + 3.7E-4*water_vapor_pressure)*eqn_1
+    eqn_1 = (-2.37321E-3 + 2.23366/temperature_Kelvin.value -
+             710.792/temperature_Kelvin.value**2. + 7.75141E-4/temperature_Kelvin.value**3.)
 
-    return eqn_2*water_vapor_pressure/temperature
+    eqn_2 = water_vapor_pressure_mbar.value*(1. + 3.7E-4*water_vapor_pressure_mbar.value)
+
+    density_factor = (1 + eqn_2*eqn_1)*water_vapor_pressure_mbar.value/temperature_Kelvin.value
+
+    return density_factor
 
 
-def humidity_to_pressure(humidity, temperature):
+def humidity_to_pressure(weather):
     """Simple function that converts humidity and temperature to water vapor pressure.
+
+    This replicates equations 18 & 20 of Stone 1996 "An Accurate Method for Computing Atmospheric Refraction"
 
     Parameters
     ----------
-    humidity : float
-        Observatory site humidity, in percent (0-100)
-    temperature : float
-        Observatory site temperature in Celcius
+    weather : lsst.afw.coord Weather
+        Class containing the measured temperature, pressure, and humidity
+        at the observatory during an observation
 
     Returns
     -------
     float
         The water vapor pressure in millibar, calculated from the given humidity and temperature.
     """
-    pascals_to_mbar = 60.*1.333224/101325.0
-    temperature_Kelvin = temperature + 273.15
-    exponent_term = 77.3450 + 0.0057*temperature_Kelvin - 7235.0/temperature_Kelvin
-    saturation_pressure = (pascals_to_mbar*np.exp(exponent_term)/temperature_Kelvin**8.2)
-    return (humidity/100.0)*saturation_pressure
+    if np.isnan(weather.getHumidity()):
+        humidity = lsst_weather.getHumidity()
+    else:
+        humidity = weather.getHumidity()
+    x = np.log(humidity/100.0)
+    t_celsius = _extract_temperature(weather)
+    eqn_1 = (t_celsius.value + 238.3)*x + 17.2694*t_celsius.value
+    eqn_2 = (t_celsius.value + 238.3)*(17.2694 - x) - 17.2694*t_celsius.value
+    dew_point = 238.3*eqn_1/eqn_2
+
+    water_vapor_pressure = (4.50874 + 0.341724*dew_point + 0.0106778*dew_point**2 + 0.184889E-3*dew_point**3 +
+                            0.238294E-5*dew_point**4 + 0.203447E-7*dew_point**5)*133.32239*u.pascal
+
+    return water_vapor_pressure
+
+
+def _extract_temperature(weather, units_kelvin=False):
+    """Thin wrapper to return the measured temperature from an observation with astropy units attached.
+
+    Parameters
+    ----------
+    weather : lsst.afw.coord Weather
+        Class containing the measured temperature, pressure, and humidity
+        at the observatory during an observation
+    units_kelvin : bool, optional
+        Set to True to return the temperature in Kelvin instead of Celsius
+
+    Returns
+    -------
+    astropy.units
+        The temperature in Celsius, unless `unit_kelvin` is set.
+    """
+    temperature = weather.getAirTemperature()
+    if np.isnan(temperature):
+        temperature = lsst_weather.getAirTemperature()*u.Celsius
+    else:
+        temperature *= u.Celsius
+    if units_kelvin:
+        temperature = temperature.to(u.Kelvin, equivalencies=u.temperature())
+    return temperature
+
+
+def _extract_pressure(weather, units_mbar=False):
+    """Thin wrapper to return the measured pressure from an observation with astropy units attached.
+
+    Parameters
+    ----------
+    weather : lsst.afw.coord Weather
+        Class containing the measured temperature, pressure, and humidity
+        at the observatory during an observation
+    units_mbar : bool, optional
+        Set to True to return the pressure in millibar instead of pascals.
+
+    Returns
+    -------
+    astropy.units
+        The air pressure in pascals, unless `units_mbar` is set.
+    """
+    pressure = weather.getAirPressure()
+    if np.isnan(pressure):
+        pressure = lsst_weather.getAirPressure()*u.pascal
+    else:
+        pressure *= u.pascal
+    if units_mbar:
+        pressure = pressure.to(u_cds.mbar)
+    return pressure

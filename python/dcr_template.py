@@ -44,7 +44,7 @@ from lsst.sims.photUtils import Bandpass
 from lsst.utils import getPackageDir
 
 from .calc_refractive_index import diff_refraction
-from .lsst_defaults import lsst_observatory
+from .lsst_defaults import lsst_observatory, lsst_weather
 
 # lsst_lat = -30.244639*lsst.afw.geom.degrees
 # lsst_lon = -70.749417*lsst.afw.geom.degrees
@@ -187,23 +187,19 @@ class DcrModel:
         if self.psf is None:
             self.calc_psf_model()
 
-        if obsid_range is not None:
-            if not hasattr(obsid_range, '__iter__'):
-                obsid_range = [obsid_range]
         for exp_i, calexp in enumerate(exposures):
-            if obsid_range is not None:
-                obsid = obsid_range[exp_i]
-            else:
-                obsid = self._fetch_metadata(calexp.getMetadata(), "OBSID", default_value=0)
+            visitInfo = calexp.getInfo().getVisitInfo()
+            obsid = visitInfo.getExposureId()
             if verbose:
                 print("Working on observation %s" % obsid, end="")
-            visitInfo = calexp.getInfo().getVisitInfo()
             bbox_exp = calexp.getBBox()
             wcs_exp = calexp.getInfo().getWcs()
             el = visitInfo.getBoresightAzAlt().getLatitude()
             az = visitInfo.getBoresightAzAlt().getLongitude()
             rotation_angle = calculate_rotation_angle(calexp)
-            template, variance = self.build_matched_template(calexp, el=el, rotation_angle=rotation_angle)
+            weather = visitInfo.getWeather()
+            template, variance = self.build_matched_template(calexp, el=el, rotation_angle=rotation_angle,
+                                                             weather=weather)
 
             if verbose:
                 print(" ... Done!")
@@ -214,7 +210,7 @@ class DcrModel:
                 obsid_out = obsid
             dataId_out = self._build_dataId(obsid_out, self.filter_name, instrument=instrument)[0]
             exposure = self.create_exposure(template, variance=variance, snap=0,
-                                            boresightRotAngle=rotation_angle,
+                                            boresightRotAngle=rotation_angle, weather=weather,
                                             elevation=el, azimuth=az, obsid=obsid_out)
             if warp:
                 wrap_warpExposure(exposure, wcs_exp, bbox_exp)
@@ -224,7 +220,8 @@ class DcrModel:
                 butler_out.put(exposure, "calexp", dataId=dataId_out)
             yield exposure
 
-    def build_matched_template(self, exposure, model=None, el=None, rotation_angle=None, return_weights=True):
+    def build_matched_template(self, exposure, model=None, el=None, rotation_angle=None,
+                               return_weights=True, weather=None):
         """Sub-routine to calculate the sum of the model images shifted by DCR for a given exposure.
 
         Parameters
@@ -239,18 +236,25 @@ class DcrModel:
             Sky rotation angle of the observation. If not set it is calculated from the exposure metadata.
         return_weights : bool, optional
             Set to True to return the variance plane, as well as the image.
+        weather : lsst.afw.coord Weather, optional
+            Class containing the measured temperature, pressure, and humidity
+            at the observatory during an observation
+            Weather data is read from the exposure metadata if not supplied.
 
         Returns
         -------
-        Returns a numpy ndarray of the image values for the template.
-        If `return_weights` is set, then it returns a tuple of the image and variance arrays.
+        np.ndarrary or (np.ndarray, np.ndarray)
+            Returns a numpy ndarray of the image values for the template.
+            If `return_weights` is set, then it returns a tuple of the image and variance arrays.
         """
         if el is None:
             el = exposure.getInfo().getVisitInfo().getBoresightAzAlt().getLatitude()
         if rotation_angle is None:
             rotation_angle = calculate_rotation_angle(exposure)
+        if weather is None:
+            weather = exposure.getInfo().getVisitInfo().getWeather()
         dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                      observatory=self.observatory,
+                                      observatory=self.observatory, weather=weather,
                                       elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
         template = np.zeros((self.y_size, self.x_size))
         if return_weights:
@@ -273,7 +277,7 @@ class DcrModel:
             return template
 
     def extract_image(self, exposure, airmass_weight=False, calculate_dcr_gen=True):
-    def build_matched_psf(self, el, rotation_angle):
+    def build_matched_psf(self, el, rotation_angle, weather):
         """Sub-routine to calculate the PSF as elongated by DCR for a given exposure.
 
         Once the matched templates incorporate variable seeing, this function should also match the seeing.
@@ -284,6 +288,9 @@ class DcrModel:
             Elevation angle of the observation. If not set, it is read from the exposure.
         rotation_angle : lsst.afw.geom.Angle
             Sky rotation angle of the observation. If not set it is calculated from the exposure metadata.
+        weather : lsst.afw.coord Weather
+            Class containing the measured temperature, pressure, and humidity
+            at the observatory during an observation
 
         Returns
         -------
@@ -291,7 +298,7 @@ class DcrModel:
             Designed to be passed to a lsst.afw.image ExposureD through the method setPsf()
         """
         dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                          observatory=self.observatory,
+                                          observatory=self.observatory, weather=weather,
                                           elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
         psf_vals = self.psf.computeKernelImage().getArray()
         psf_vals_out = np.zeros((self.psf_size, self.psf_size))
@@ -352,8 +359,9 @@ class DcrModel:
         if calculate_dcr_gen:
             el = visitInfo.getBoresightAzAlt().getLatitude()
             rotation_angle = calculate_rotation_angle(exposure)
+            weather = visitInfo.getWeather()
             dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                              observatory=self.observatory,
+                                              observatory=self.observatory, weather=weather,
                                               elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
             return (img_vals, inverse_var, dcr_gen)
         else:
@@ -594,6 +602,7 @@ class DcrModel:
 
     @staticmethod
     def _dcr_generator(bandpass, pixel_scale, elevation, rotation_angle,
+                       weather=lsst_weather,
                        observatory=lsst_observatory, use_midpoint=False):
         """Call the functions that compute Differential Chromatic Refraction (relative to mid-band).
 
@@ -607,6 +616,10 @@ class DcrModel:
             Elevation angle of the observation
         rotation_angle : lsst.afw.geom.Angle
             Sky rotation angle of the observation
+        weather : lsst.afw.coord Weather, optional
+            Class containing the measured temperature, pressure, and humidity
+            at the observatory during an observation
+            Weather data is read from the exposure metadata if not supplied.
         observatory : lsst.afw.coord.coordLib.Observatory, optional
             Class containing the longitude, latitude, and altitude of the observatory.
         use_midpoint : bool, optional
@@ -626,16 +639,19 @@ class DcrModel:
             for wl in DcrModel._wavelength_iterator(bandpass, use_midpoint=True):
                 # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
                 refract_mid = diff_refraction(wavelength=wl, wavelength_ref=wavelength_midpoint,
-                                              zenith_angle=zenith_angle, observatory=observatory)
+                                              zenith_angle=zenith_angle,
+                                              observatory=observatory, weather=weather)
                 yield dcr(dx=refract_mid.asArcseconds()*np.sin(rotation_angle.asRadians())/pixel_scale,
                           dy=refract_mid.asArcseconds()*np.cos(rotation_angle.asRadians())/pixel_scale)
         else:
             for wl_start, wl_end in DcrModel._wavelength_iterator(bandpass, use_midpoint=False):
                 # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
                 refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
-                                                zenith_angle=zenith_angle, observatory=observatory)
+                                                zenith_angle=zenith_angle,
+                                                observatory=observatory, weather=weather)
                 refract_end = diff_refraction(wavelength=wl_end, wavelength_ref=wavelength_midpoint,
-                                              zenith_angle=zenith_angle, observatory=observatory)
+                                              zenith_angle=zenith_angle,
+                                              observatory=observatory, weather=weather)
                 dx = delta(start=refract_start.asArcseconds()*np.sin(rotation_angle.asRadians())/pixel_scale,
                            end=refract_end.asArcseconds()*np.sin(rotation_angle.asRadians())/pixel_scale)
                 dy = delta(start=refract_start.asArcseconds()*np.cos(rotation_angle.asRadians())/pixel_scale,
@@ -643,7 +659,8 @@ class DcrModel:
                 yield dcr(dx=dx, dy=dy)
 
     def create_exposure(self, array, elevation, azimuth, variance=None, era=None, snap=0,
-                        exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanAngle, **kwargs):
+                        exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanAngle,
+                        weather=lsst_weather, **kwargs):
         """Convert a numpy array to an LSST exposure, and units of electron counts.
 
         Parameters
@@ -670,6 +687,10 @@ class DcrModel:
             The declination of the boresight of the target field
         boresightRotAngle : lsst.afw.geom Angle, optional
             The rotation angle of the field around the boresight.
+        weather : lsst.afw.coord Weather, optional
+            Class containing the measured temperature, pressure, and humidity
+            at the observatory during an observation
+            Weather data is read from the exposure metadata if not supplied.
         **kwargs : TYPE
             Any additional keyword arguments will be added to the metadata of the exposure.
 
@@ -741,11 +762,12 @@ class DcrModel:
                                            boresightAirmass=airmass,
                                            boresightRotAngle=boresightRotAngle,
                                            observatory=self.observatory,
+                                           weather=weather
                                            )
         exposure.getInfo().setVisitInfo(visitInfo)
 
         #Set the DCR-matched PSF
-        psf_single = self.build_matched_psf(elevation, calculate_rotation_angle(exposure))
+        psf_single = self.build_matched_psf(elevation, calculate_rotation_angle(exposure), weather)
         exposure.setPsf(psf_single)
         return exposure
 
@@ -915,10 +937,11 @@ class DcrModel:
             visitInfo = exp.getInfo().getVisitInfo()
             el = visitInfo.getBoresightAzAlt().getLatitude()
             az = visitInfo.getBoresightAzAlt().getLongitude()
-            dcr_gen = DcrModel._dcr_generator(bandpass, pixel_scale=self.pixel_scale,
+            weather = visitInfo.getWeather()
+            dcr_gen = DcrModel._dcr_generator(bandpass, pixel_scale=self.pixel_scale, weather=weather,
                                               observatory=self.observatory, elevation=el, rotation_angle=az)
-            kernel_single = DcrModel._calc_offset_phase(dcr_gen=dcr_gen, size=size,
-                                                        size_out=kernel_size_intermediate)
+            kernel_single = self._calc_offset_phase(dcr_gen=dcr_gen, size=size,
+                                                    size_out=kernel_size_intermediate)
             dcr_kernel[exp_i*n_pix_int: (exp_i + 1)*n_pix_int, :] = kernel_single
         return dcr_kernel
 
@@ -938,6 +961,7 @@ class DcrModel:
         visitInfo = exposure.getInfo().getVisitInfo()
         el = visitInfo.getBoresightAzAlt().getLatitude()
         az = visitInfo.getBoresightAzAlt().getLongitude()
+        weather = visitInfo.getWeather()
 
         # Take the measured PSF as the true PSF, smeared out by DCR.
         psf_img = exposure.getPsf().computeKernelImage().getArray()
@@ -951,10 +975,10 @@ class DcrModel:
             psf_size_use = psf_size_test
 
         # Calculate the expected shift (with no psf) due to DCR
-        dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
+        dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, weather=weather,
                                           observatory=self.observatory, elevation=el, azimuth=az)
-        dcr_shift = DcrModel._calc_offset_phase(exposure=exposure, dcr_gen=dcr_gen,
-                                                size=psf_size_use)
+        dcr_shift = self._calc_offset_phase(exposure=exposure, dcr_gen=dcr_gen,
+                                            size=psf_size_use)
         # Assume that the PSF does not change between sub-bands.
         regularize_psf = None
         # Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images
@@ -1104,6 +1128,7 @@ class DcrCorrection(DcrModel):
         ref_exp_i = 0
         self.bbox = self.exposures[ref_exp_i].getBBox()
         self.wcs = self.exposures[ref_exp_i].getWcs()
+        self.observatory = self.exposures[ref_exp_i].getInfo().getVisitInfo().getObservatory()
 
         for i, calexp in enumerate(self.exposures):
             psf_size_arr[i] = calexp.getPsf().computeKernelImage().getArray().shape[0]

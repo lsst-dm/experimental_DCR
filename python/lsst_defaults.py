@@ -21,13 +21,17 @@
 # see <http://www.lsstcorp.org/LegalNotices/>.
 #
 
-from lsst.afw.coord import Observatory
+from astropy import units as u
+
+from lsst.afw.coord import Observatory, Weather
 from lsst.afw.geom import degrees
 
 lsst_lat = -30.244639*degrees
 lsst_lon = -70.749417*degrees
 lsst_alt = 2663.
-lsst_temperature = 20.  # in degrees Celcius
+lsst_temperature = 20.*u.Celsius  # in degrees Celcius
 lsst_humidity = 10.  # in percent
+lsst_pressure = 101325.*u.pascal  # 1 atmosphere.
 
+lsst_weather = Weather(lsst_temperature.value, lsst_pressure.value, lsst_humidity)
 lsst_observatory = Observatory(lsst_lon, lsst_lat, lsst_alt)
