@@ -436,6 +436,8 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         # Use _BasicDcrCorrection here to save execution time.
         self.dcrCorr = _BasicDcrCorrection(band_name='g', n_step=3, kernel_size=self.kernel_size,
                                            exposures=exposures)
+        for exp in self.dcrCorr.exposures:
+            exp.getMaskedImage().getMask().getArray()[:, :] = self.dcrCorr.detected_bit
 
     def tearDown(self):
         del self.dcrCorr
@@ -471,6 +473,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
 
     def test_calculate_new_model(self):
         data_file = "test_data/calculate_new_model_vals.npy"
+        use_variance = True
         rand_gen = np.random
         rand_gen.seed(5)
         n_step = self.dcrCorr.n_step
@@ -478,7 +481,8 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         y_size = self.dcrCorr.y_size
         last_solution = [rand_gen.random((y_size, x_size)) for f in range(n_step)]
         exp_cut = [False for exp_i in range(self.dcrCorr.n_images)]
-        new_solution, inverse_var_arr = self.dcrCorr._calculate_new_model(last_solution, exp_cut)
+        new_solution, inverse_var_arr = self.dcrCorr._calculate_new_model(last_solution, exp_cut,
+                                                                          use_variance)
         # np.save(data_file, (new_solution, inverse_var_arr))
         new_solution_ref, inverse_var_arr_ref = np.load(data_file)
         for f, soln in enumerate(new_solution):
@@ -510,8 +514,8 @@ class SolverTestCase(lsst.utils.tests.TestCase):
 
     def test_calc_model_metric(self):
         model_file = "test_data/build_model_vals.npy"
-        metric_ref = np.array([127.962191286, 118.032111041, 165.288144737,
-                               204.071081167, 234.698022211, 247.949131707])
+        metric_ref = np.array([0.0326935547581, 0.0299110561613, 0.0312179049219,
+                               0.0347479538541, 0.0391646266206, 0.0421978090644])
         model = np.load(model_file)
         metric = self.dcrCorr.calc_model_metric(model=model)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)

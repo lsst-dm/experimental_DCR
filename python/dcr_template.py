@@ -276,7 +276,6 @@ class DcrModel:
         else:
             return template
 
-    def extract_image(self, exposure, airmass_weight=False, calculate_dcr_gen=True):
     def build_matched_psf(self, el, rotation_angle, weather):
         """Sub-routine to calculate the PSF as elongated by DCR for a given exposure.
 
@@ -312,6 +311,8 @@ class DcrModel:
         psf = measAlg.KernelPsf(psfK)
         return psf
 
+    def _extract_image(self, exposure, airmass_weight=False, calculate_dcr_gen=True,
+                       use_only_detected=False, use_variance=True):
         """Helper function to extract image array values from an exposure.
 
         Parameters
@@ -339,7 +340,10 @@ class DcrModel:
         variance = exposure.getMaskedImage().getVariance().getArray()
         variance[nan_inds] = 0
         inverse_var = np.zeros_like(variance)
-        inverse_var[variance > 0] = 1./variance[variance > 0]
+        if use_variance:
+            inverse_var[variance > 0] = 1./variance[variance > 0]
+        else:
+            inverse_var[variance > 0] = 1.
 
         mask = exposure.getMaskedImage().getMask().getArray()
         ind_cut = (mask | self.detected_bit) != self.detected_bit
@@ -347,6 +351,9 @@ class DcrModel:
         # Create a buffer of lower-weight pixels surrounding masked pixels.
         ind_cut2 = binary_dilation(ind_cut, iterations=2)
         inverse_var[ind_cut2] /= 2.
+        if use_only_detected:
+            ind_cut3 = (mask & self.detected_bit) != self.detected_bit
+            inverse_var[ind_cut3] = 0.
 
         if self.debug:
             slice_inds = np.s_[y0: y0 + dy, x0: x0 + dx]
@@ -1193,9 +1200,9 @@ class DcrCorrection(DcrModel):
         psfK = afwMath.FixedKernel(psf_image)
         self.psf = measAlg.KernelPsf(psfK)
 
-    def build_model(self, verbose=True, max_iter=10, gain=None, clamp=None,
+    def build_model(self, verbose=True, max_iter=10, min_iter=None, gain=None, clamp=None,
                     frequency_regularization=True, max_slope=None,
-                    test_convergence=False, convergence_threshold=None):
+                    test_convergence=False, convergence_threshold=None, use_variance=True):
         """Build a model of the sky in multiple sub-bands.
 
         Parameters
@@ -1240,7 +1247,8 @@ class DcrCorrection(DcrModel):
         initial_solution = np.zeros((self.y_size, self.x_size))
         initial_weights = np.zeros((self.y_size, self.x_size))
         for exp in self.exposures:
-            img, inverse_var = self.extract_image(exp, airmass_weight=True, calculate_dcr_gen=False)
+            img, inverse_var = self._extract_image(exp, airmass_weight=True, calculate_dcr_gen=False,
+                                                   use_variance=use_variance)
             initial_solution += img*inverse_var
             initial_weights += inverse_var
 
@@ -1250,17 +1258,19 @@ class DcrCorrection(DcrModel):
         if verbose:
             print(" Done!")
 
-        self.build_model_subroutine(initial_solution, verbose=verbose, max_iter=max_iter,
-                                    frequency_regularization=frequency_regularization, max_slope=None,
-                                    gain=gain, clamp=clamp,
-                                    test_convergence=test_convergence,
-                                    convergence_threshold=convergence_threshold)
+        self._build_model_subroutine(initial_solution, verbose=verbose, max_iter=max_iter, min_iter=min_iter,
+                                     frequency_regularization=frequency_regularization, max_slope=None,
+                                     gain=gain, clamp=clamp,
+                                     test_convergence=test_convergence,
+                                     convergence_threshold=convergence_threshold,
+                                     use_variance=use_variance,
+                                     )
         if verbose:
             print("\nFinished building model.")
 
-    def build_model_subroutine(self, initial_solution, verbose=True, max_iter=10,
-                               test_convergence=False, frequency_regularization=True, max_slope=None,
-                               gain=None, clamp=None, convergence_threshold=None):
+    def _build_model_subroutine(self, initial_solution, verbose=True, max_iter=10, min_iter=None,
+                                test_convergence=False, frequency_regularization=True, max_slope=None,
+                                gain=None, clamp=None, convergence_threshold=None, use_variance=True):
         """Extract the math from building the model so it can be re-used.
 
         Parameters
@@ -1308,7 +1318,8 @@ class DcrCorrection(DcrModel):
         if convergence_threshold is None:
             convergence_threshold = 1e-3
         min_images = self.n_step + 1
-        min_iter = 2
+        if min_iter is None:
+            min_iter = 2
         last_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
         for f in range(self.n_step):
             last_solution[f] += np.abs(initial_solution/self.n_step)
@@ -1324,7 +1335,8 @@ class DcrCorrection(DcrModel):
         final_soln_iter = None
         converge_error = False
         for sol_iter in range(int(max_iter)):
-            new_solution, inverse_var_arr = self._calculate_new_model(last_solution, exp_cut)
+            new_solution, inverse_var_arr = self._calculate_new_model(last_solution, exp_cut,
+                                                                      use_variance=use_variance)
 
             # Optionally restrict variations between frequency planes
             if frequency_regularization:
@@ -1366,6 +1378,7 @@ class DcrCorrection(DcrModel):
                     final_soln_iter = sol_iter - 1
                     converge_error = True
                     break
+                last_convergence_metric = np.mean(last_convergence_metric_full[np.logical_not(exp_cut)])
                 last_convergence_metric_full = convergence_metric_full
                 convergence_metric = np.mean(convergence_metric_full[np.logical_not(exp_cut)])
                 print("Convergence metric: %f" % convergence_metric)
@@ -1524,8 +1537,13 @@ class DcrCorrection(DcrModel):
         for exp_i, exp in enumerate(self.exposures):
             img_use, inverse_var = self._extract_image(exp, calculate_dcr_gen=False, use_only_detected=True)
             template = self.build_matched_template(exp, model=model, return_weights=False)
-            diff = np.abs(img_use - template)
-            metric[exp_i] = np.sum(diff*inverse_var)/np.sum(inverse_var)
+            inds_use = inverse_var > 0
+            diff_vals = np.abs(img_use - template)
+            ref_vals = np.abs(img_use)
+            if np.sum(inds_use) == 0:
+                metric[exp_i] = float("inf")
+            else:
+                metric[exp_i] = np.sum(diff_vals[inds_use])/np.sum(ref_vals[inds_use])
         return metric
 
     def _combine_masks(self):
