@@ -55,8 +55,8 @@ def refraction(wavelength, zenith_angle, weather=lsst_weather, observatory=lsst_
 
     reduced_n = n_delta(wavelength, weather)*1E-8
 
-    temperature_Kelvin = _extract_temperature(weather, units_kelvin=True)
-    atmos_scaleheight_ratio = float(4.5908E-6/u.Kelvin*temperature_Kelvin)
+    temperature = _extract_temperature(weather, units_kelvin=True)
+    atmos_scaleheight_ratio = float(4.5908E-6*temperature/u.Kelvin)
 
     # Account for oblate Earth
     relative_gravity = (1. + 0.005302*np.sin(latitude.asRadians())**2. -
@@ -66,7 +66,7 @@ def refraction(wavelength, zenith_angle, weather=lsst_weather, observatory=lsst_
 
     atmos_term_1 = reduced_n*relative_gravity*(1. - atmos_scaleheight_ratio)
     atmos_term_2 = reduced_n*relative_gravity*(atmos_scaleheight_ratio - reduced_n/2.)
-    result = Angle(atmos_term_1*tanZ + atmos_term_2*tanZ**3.)
+    result = Angle(float(atmos_term_1*tanZ + atmos_term_2*tanZ**3.))
     return result
 
 
@@ -146,16 +146,15 @@ def density_factor_dry(weather):
     float
         Returns the relative density of dry air at the given pressure and temperature.
     """
-    temperature_Kelvin = _extract_temperature(weather, units_kelvin=True)
+    temperature = _extract_temperature(weather, units_kelvin=True)
     water_vapor_pressure = humidity_to_pressure(weather)
-    water_vapor_pressure_mbar = water_vapor_pressure.to(u_cds.mbar)
-    air_pressure_mbar = _extract_pressure(weather, units_mbar=True)
-    dry_pressure_mbar = air_pressure_mbar - water_vapor_pressure_mbar
+    air_pressure = _extract_pressure(weather)
+    dry_pressure = air_pressure - water_vapor_pressure
 
-    eqn_1 = (dry_pressure_mbar/u_cds.mbar)*(57.90E-8 - 9.3250E-4*u.Kelvin/temperature_Kelvin +
-                                            0.25844*u.Kelvin**2/temperature_Kelvin**2.)
+    eqn_1 = (dry_pressure/u_cds.mbar)*(57.90E-8 - 9.3250E-4*u.Kelvin/temperature +
+                                       0.25844*u.Kelvin**2/temperature**2.)
 
-    density_factor = float((1. + eqn_1)*(dry_pressure_mbar/u_cds.mbar)/(temperature_Kelvin/u.Kelvin))
+    density_factor = float((1. + eqn_1)*(dry_pressure/u_cds.mbar)/(temperature/u.Kelvin))
 
     return density_factor
 
@@ -176,16 +175,17 @@ def density_factor_water(weather):
     float
         Returns the relative density of water vapor at the given pressure and temperature.
     """
-    temperature_Kelvin = _extract_temperature(weather, units_kelvin=True)
+    temperature = _extract_temperature(weather, units_kelvin=True)
     water_vapor_pressure = humidity_to_pressure(weather)
-    water_vapor_pressure_mbar = water_vapor_pressure.to(u_cds.mbar)
 
-    eqn_1 = (-2.37321E-3 + 2.23366/temperature_Kelvin.value -
-             710.792/temperature_Kelvin.value**2. + 7.75141E-4/temperature_Kelvin.value**3.)
+    eqn_1 = float(-2.37321E-3 + 2.23366*u.Kelvin/temperature -
+                  710.792*u.Kelvin**2/temperature**2. +
+                  7.75141E-4*u.Kelvin**3/temperature**3.)
 
-    eqn_2 = water_vapor_pressure_mbar.value*(1. + 3.7E-4*water_vapor_pressure_mbar.value)
+    eqn_2 = float(water_vapor_pressure/u_cds.mbar)*(1. + 3.7E-4*water_vapor_pressure/u_cds.mbar)
 
-    density_factor = (1 + eqn_2*eqn_1)*water_vapor_pressure_mbar.value/temperature_Kelvin.value
+    relative_density = float(water_vapor_pressure*u.Kelvin/(temperature*u_cds.mbar))
+    density_factor = (1 + eqn_2*eqn_1)*relative_density
 
     return density_factor
 
@@ -211,10 +211,10 @@ def humidity_to_pressure(weather):
     else:
         humidity = weather.getHumidity()
     x = np.log(humidity/100.0)
-    t_celsius = _extract_temperature(weather)
-    eqn_1 = (t_celsius.value + 238.3)*x + 17.2694*t_celsius.value
-    eqn_2 = (t_celsius.value + 238.3)*(17.2694 - x) - 17.2694*t_celsius.value
-    dew_point = 238.3*eqn_1/eqn_2
+    temperature = _extract_temperature(weather)
+    eqn_1 = (temperature + 238.3*u.Celsius)*x + 17.2694*temperature
+    eqn_2 = (temperature + 238.3*u.Celsius)*(17.2694 - x) - 17.2694*temperature
+    dew_point = 238.3*float(eqn_1/eqn_2)
 
     water_vapor_pressure = (4.50874 + 0.341724*dew_point + 0.0106778*dew_point**2 + 0.184889E-3*dew_point**3 +
                             0.238294E-5*dew_point**4 + 0.203447E-7*dew_point**5)*133.32239*u.pascal
@@ -232,6 +232,7 @@ def _extract_temperature(weather, units_kelvin=False):
         at the observatory during an observation
     units_kelvin : bool, optional
         Set to True to return the temperature in Kelvin instead of Celsius
+        This is needed because Astropy can't easily convert between Kelvin and Celsius.
 
     Returns
     -------
@@ -248,7 +249,7 @@ def _extract_temperature(weather, units_kelvin=False):
     return temperature
 
 
-def _extract_pressure(weather, units_mbar=False):
+def _extract_pressure(weather):
     """Thin wrapper to return the measured pressure from an observation with astropy units attached.
 
     Parameters
@@ -256,19 +257,15 @@ def _extract_pressure(weather, units_mbar=False):
     weather : lsst.afw.coord Weather
         Class containing the measured temperature, pressure, and humidity
         at the observatory during an observation
-    units_mbar : bool, optional
-        Set to True to return the pressure in millibar instead of pascals.
 
     Returns
     -------
     astropy.units
-        The air pressure in pascals, unless `units_mbar` is set.
+        The air pressure in pascals.
     """
     pressure = weather.getAirPressure()
     if np.isnan(pressure):
         pressure = lsst_weather.getAirPressure()*u.pascal
     else:
         pressure *= u.pascal
-    if units_mbar:
-        pressure = pressure.to(u_cds.mbar)
     return pressure
