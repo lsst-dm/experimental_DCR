@@ -122,14 +122,6 @@ class _BasicDcrCorrection(DcrCorrection):
         self.detected_bit = 32
         self.filter_name = band_name
 
-        self.elevation_arr = []
-        self.azimuth_arr = []
-        self.airmass_arr = []
-        for calexp in exposures:
-            visitInfo = calexp.getInfo().getVisitInfo()
-            self.elevation_arr.append(visitInfo.getBoresightAzAlt().getLatitude())
-            self.azimuth_arr.append(visitInfo.getBoresightAzAlt().getLongitude())
-            self.airmass_arr.append(visitInfo.getBoresightAirmass())
         self.exposures = exposures
 
         bandpass_init = basicBandpass(band_name=band_name, wavelength_step=None)
@@ -138,12 +130,10 @@ class _BasicDcrCorrection(DcrCorrection):
         self.n_step = n_step
         self.n_images = len(exposures)
         self.y_size, self.x_size = exposures[0].getDimensions()
-        # self.kernel_size = kernel_size
-        self.exposure_time = visitInfo.getExposureTime()
-        self.bbox = calexp.getBBox()
-        self.wcs = calexp.getWcs()
-        psf = calexp.getPsf().computeKernelImage().getArray()
         self.pixel_scale = exposures[0].getWcs().pixelScale()
+        self.exposure_time = exposures[0].getInfo().getVisitInfo().getExposureTime()
+        self.bbox = exposures[0].getBBox()
+        self.wcs = exposures[0].getWcs()
         self.observatory = exposures[0].getInfo().getVisitInfo().getObservatory()
         psf = exposures[0].getPsf().computeKernelImage().getArray()
         self.psf_size = psf.shape[0]
