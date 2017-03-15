@@ -56,7 +56,7 @@ def refraction(wavelength, zenith_angle, weather=lsst_weather, observatory=lsst_
     reduced_n = n_delta(wavelength, weather)*1E-8
 
     temperature_Kelvin = _extract_temperature(weather, units_kelvin=True)
-    atmos_scaleheight_ratio = 4.5908E-6*temperature_Kelvin.value
+    atmos_scaleheight_ratio = float(4.5908E-6/u.Kelvin*temperature_Kelvin)
 
     # Account for oblate Earth
     relative_gravity = (1. + 0.005302*np.sin(latitude.asRadians())**2. -
@@ -152,10 +152,10 @@ def density_factor_dry(weather):
     air_pressure_mbar = _extract_pressure(weather, units_mbar=True)
     dry_pressure_mbar = air_pressure_mbar - water_vapor_pressure_mbar
 
-    eqn_1 = dry_pressure_mbar.value*(57.90E-8 - 9.3250E-4/temperature_Kelvin.value +
-                                     0.25844/temperature_Kelvin.value**2.)
+    eqn_1 = (dry_pressure_mbar/u_cds.mbar)*(57.90E-8 - 9.3250E-4*u.Kelvin/temperature_Kelvin +
+                                            0.25844*u.Kelvin**2/temperature_Kelvin**2.)
 
-    density_factor = (1. + eqn_1)*dry_pressure_mbar.value/temperature_Kelvin.value
+    density_factor = float((1. + eqn_1)*(dry_pressure_mbar/u_cds.mbar)/(temperature_Kelvin/u.Kelvin))
 
     return density_factor
 
