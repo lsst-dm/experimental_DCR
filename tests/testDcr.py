@@ -21,13 +21,14 @@
 
 from __future__ import print_function, division, absolute_import
 import numpy as np
+import unittest
 
 import lsst.afw.geom as afwGeom
 from lsst.afw.geom import Angle
-import unittest
 import lsst.utils.tests
+
 from python.test_utils import BasicBandpass
-from python.test_utils import BasicDcrModel
+from python.test_utils import BasicGenerateTemplate
 
 
 class DCRTestCase(lsst.utils.tests.TestCase):
@@ -50,8 +51,8 @@ class DCRTestCase(lsst.utils.tests.TestCase):
         elevation = Angle(np.pi/2)
         zenith_dcr = 0.
         bp = self.bandpass
-        dcr_gen = BasicDcrModel._dcr_generator(bp, pixel_scale=self.pixel_scale,
-                                               elevation=elevation, rotation_angle=rotation_angle)
+        dcr_gen = BasicGenerateTemplate._dcr_generator(bp, pixel_scale=self.pixel_scale,
+                                                       elevation=elevation, rotation_angle=rotation_angle)
         n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
         for f in range(n_step):
             dcr = next(dcr_gen)
@@ -84,8 +85,8 @@ class DCRTestCase(lsst.utils.tests.TestCase):
                         (-1.18073068133, -1.27463093578),
                         ]
         bp = self.bandpass
-        dcr_gen = BasicDcrModel._dcr_generator(bp, pixel_scale=self.pixel_scale, elevation=elevation,
-                                               rotation_angle=rotation_angle)
+        dcr_gen = BasicGenerateTemplate._dcr_generator(bp, pixel_scale=self.pixel_scale, elevation=elevation,
+                                                       rotation_angle=rotation_angle)
         n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
         for f in range(n_step):
             dcr = next(dcr_gen)

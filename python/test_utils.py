@@ -27,11 +27,12 @@ from lsst.afw.geom import Angle
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
-from .dcr_template import DcrModel
-from .dcr_template import DcrCorrection
-from .dcr_template import parallactic_angle
+from .generateTemplate import GenerateTemplate
+from .buildDcrModel import BuildDcrModel
+from .dcr_utils import parallactic_angle
 from .lsst_defaults import lsst_observatory
 
+__all__ = ("BasicBandpass", "BasicGenerateTemplate", "BasicBuildDcrModel", "DcrModelTestBase")
 
 nanFloat = float("nan")
 nanAngle = Angle(nanFloat)
@@ -39,13 +40,13 @@ nanAngle = Angle(nanFloat)
 
 def BasicBandpass(band_name='g', wavelength_step=1):
     """Return a dummy bandpass object for testing."""
-    bandpass = DcrModel.load_bandpass(band_name=band_name, wavelength_step=wavelength_step,
-                                      use_mirror=False, use_lens=False, use_atmos=False,
-                                      use_filter=False, use_detector=False)
+    bandpass = GenerateTemplate.load_bandpass(band_name=band_name, wavelength_step=wavelength_step,
+                                              use_mirror=False, use_lens=False, use_atmos=False,
+                                              use_filter=False, use_detector=False)
     return(bandpass)
 
 
-class BasicDcrModel(DcrModel):
+class BasicGenerateTemplate(GenerateTemplate):
     """Dummy DcrModel object for testing without a repository."""
 
     def __init__(self, size=None, kernel_size=5, n_step=3, band_name='g', exposure_time=30.,
@@ -84,8 +85,8 @@ class BasicDcrModel(DcrModel):
         self.filter_name = band_name
         self.observatory = lsst_observatory
         self.bbox = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(size, size))
-        self.wcs = DcrModel._create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=Angle(0.),
-                                        dec=Angle(0.), sky_rotation=Angle(0.))
+        self.wcs = self._create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=Angle(0.),
+                                    dec=Angle(0.), sky_rotation=Angle(0.))
 
         psf_vals = np.zeros((kernel_size, kernel_size))
         psf_vals[kernel_size//2 - 1: kernel_size//2 + 1,
@@ -97,8 +98,8 @@ class BasicDcrModel(DcrModel):
         self.psf = measAlg.KernelPsf(psfK)
 
 
-class BasicDcrCorrection(DcrCorrection):
-    """Dummy DcrCorrection object for testing without a repository."""
+class BasicBuildDcrModel(BuildDcrModel):
+    """Dummy BuildDcrModel object for testing without a repository."""
 
     def __init__(self, band_name='g', n_step=3, kernel_size=5, exposures=None):
         """
@@ -144,10 +145,10 @@ class DcrModelTestBase:
         lsst_lat = lsst_observatory.getLatitude()
         # NOTE that this array is randomly generated with a new seed for each instance.
         self.array = np.random.random(size=(self.size, self.size))
-        self.dcrModel = BasicDcrModel(size=self.size, kernel_size=kernel_size, band_name=band_name,
-                                      n_step=n_step, pixel_scale=pixel_scale)
-        dec = self.dcrModel.wcs.getSkyOrigin().getLatitude()
-        ra = self.dcrModel.wcs.getSkyOrigin().getLongitude()
+        self.dcrTemplate = BasicGenerateTemplate(size=self.size, kernel_size=kernel_size, band_name=band_name,
+                                                 n_step=n_step, pixel_scale=pixel_scale)
+        dec = self.dcrTemplate.wcs.getSkyOrigin().getLatitude()
+        ra = self.dcrTemplate.wcs.getSkyOrigin().getLongitude()
         self.azimuth = Angle(np.radians(140.0))
         self.elevation = Angle(np.radians(50.0))
         ha_term1 = np.sin(self.elevation.asRadians())
@@ -156,16 +157,17 @@ class DcrModelTestBase:
         hour_angle = Angle(np.arccos((ha_term1 - ha_term2) / ha_term3))
         p_angle = parallactic_angle(hour_angle, dec, lsst_lat)
         self.rotation_angle = Angle(p_angle)
-        self.dcr_gen = BasicDcrModel._dcr_generator(self.dcrModel.bandpass,
-                                                    pixel_scale=self.dcrModel.pixel_scale,
-                                                    elevation=self.elevation,
-                                                    rotation_angle=self.rotation_angle,
-                                                    use_midpoint=False)
-        self.exposure = self.dcrModel.create_exposure(self.array, variance=None, elevation=self.elevation,
-                                                      azimuth=self.azimuth,
-                                                      boresightRotAngle=self.rotation_angle, dec=dec, ra=ra)
+        self.dcr_gen = self.dcrTemplate._dcr_generator(self.dcrTemplate.bandpass,
+                                                       pixel_scale=self.dcrTemplate.pixel_scale,
+                                                       elevation=self.elevation,
+                                                       rotation_angle=self.rotation_angle,
+                                                       use_midpoint=False)
+        self.exposure = self.dcrTemplate.create_exposure(self.array, variance=None, elevation=self.elevation,
+                                                         azimuth=self.azimuth,
+                                                         boresightRotAngle=self.rotation_angle,
+                                                         dec=dec, ra=ra)
 
     def tearDown(self):
-        del self.dcrModel
+        del self.dcrTemplate
         del self.exposure
         del self.dcr_gen

@@ -21,13 +21,14 @@
 
 from __future__ import print_function, division, absolute_import
 import numpy as np
+import unittest
 
 import lsst.afw.geom as afwGeom
 from lsst.afw.geom import Angle
-import unittest
 import lsst.utils.tests
-from python.dcr_template import DcrCorrection
-from python.test_utils import BasicDcrModel
+
+from python.buildDcrModel import BuildDcrModel
+from python.test_utils import BasicGenerateTemplate
 
 
 class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
@@ -40,8 +41,8 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         kernel_size = 5
         self.size = 20
 
-        dcrModel = BasicDcrModel(size=self.size, kernel_size=kernel_size, band_name=band_name,
-                                 n_step=self.n_step, pixel_scale=pixel_scale)
+        dcrTemplate = BasicGenerateTemplate(size=self.size, kernel_size=kernel_size, band_name=band_name,
+                                            n_step=self.n_step, pixel_scale=pixel_scale)
 
         exposures = []
         self.ref_vals = []
@@ -51,25 +52,25 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
             self.ref_vals.append(array)
             el = Angle(np.radians(np.random.random()*50. + 40.))
             az = Angle(np.random.random()*2*np.pi)
-            exposures.append(dcrModel.create_exposure(array, variance=None, elevation=el, azimuth=az))
-        # Call the actual DcrCorrection class here, not just _BasicDcrCorrection
-        self.dcrCorr = DcrCorrection(band_name=band_name, n_step=self.n_step, exposures=exposures)
+            exposures.append(dcrTemplate.create_exposure(array, variance=None, elevation=el, azimuth=az))
+        # Call the actual BuildDcrModel class here, not just _BasicDcrCorrection
+        self.dcrModel = BuildDcrModel(band_name=band_name, n_step=self.n_step, exposures=exposures)
 
     def tearDown(self):
-        del self.dcrCorr
+        del self.dcrModel
 
     def test_calculate_psf(self):
         """Compare the result of calc_psf_model (run in setUp) to previously computed values."""
         data_file = "test_data/calculate_psf.npy"
-        self.dcrCorr.calc_psf_model()
-        psf_new = self.dcrCorr.psf.computeKernelImage().getArray()
+        self.dcrModel.calc_psf_model()
+        psf_new = self.dcrModel.psf.computeKernelImage().getArray()
         # np.save(data_file, psf_new)
         psf_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(psf_ref, psf_new)
 
     def test_extract_image(self):
-        for exp_i, exp in enumerate(self.dcrCorr.exposures):
-            image, inverse_var = self.dcrCorr._extract_image(exp, calculate_dcr_gen=False)
+        for exp_i, exp in enumerate(self.dcrModel.exposures):
+            image, inverse_var = self.dcrModel._extract_image(exp, calculate_dcr_gen=False)
             self.assertFloatsAlmostEqual(self.ref_vals[exp_i], image)
 
 

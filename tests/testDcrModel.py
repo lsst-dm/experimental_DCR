@@ -21,19 +21,15 @@
 
 from __future__ import print_function, division, absolute_import
 import numpy as np
+import unittest
 
 from lsst.afw.geom import Angle
-import unittest
 import lsst.utils.tests
-from python.dcr_template import wrap_warpExposure
-from python.dcr_template import calculate_rotation_angle
 
-from python.test_utils import BasicDcrModel
+from python.dcr_utils import wrap_warpExposure
+from python.dcr_utils import calculate_rotation_angle
+from python.test_utils import BasicGenerateTemplate
 from python.test_utils import DcrModelTestBase
-
-
-nanFloat = float("nan")
-nanAngle = Angle(nanFloat)
 
 
 class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
@@ -43,14 +39,14 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         id_ref = 100
         band_ref = 'g'
         ref_id = {'visit': id_ref, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
-        dataId = BasicDcrModel._build_dataId(id_ref, band_ref)
+        dataId = BasicGenerateTemplate._build_dataId(id_ref, band_ref)
         self.assertEqual(ref_id, dataId[0])
 
     def test_dataId_list(self):
         id_ref = [100, 103]
         band_ref = 'g'
         ref_id = {'visit': id_ref, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
-        dataId = BasicDcrModel._build_dataId(id_ref, band_ref)
+        dataId = BasicGenerateTemplate._build_dataId(id_ref, band_ref)
         for i, id in enumerate(id_ref):
             ref_id = {'visit': id, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
             self.assertEqual(ref_id, dataId[i])
@@ -59,16 +55,17 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         subfilter = 1
         band_ref = 'g'
         ref_id = {'filter': band_ref, 'tract': 0, 'patch': '0', 'subfilter': subfilter}
-        dataId = BasicDcrModel._build_model_dataId(band_ref, subfilter=subfilter)
+        dataId = BasicGenerateTemplate._build_model_dataId(band_ref, subfilter=subfilter)
         self.assertEqual(ref_id, dataId)
 
     def test_fetch_metadata(self):
-        az = BasicDcrModel._fetch_metadata(self.exposure.getMetadata(), "AZIMUTH")
+        az = BasicGenerateTemplate._fetch_metadata(self.exposure.getMetadata(), "AZIMUTH")
         self.assertFloatsAlmostEqual(az, self.azimuth.asDegrees())
 
     def test_fetch_missing_metadata(self):
         bogus_ref = 3.7
-        bogus = BasicDcrModel._fetch_metadata(self.exposure.getMetadata(), "BOGUS", default_value=bogus_ref)
+        bogus = BasicGenerateTemplate._fetch_metadata(self.exposure.getMetadata(),
+                                                      "BOGUS", default_value=bogus_ref)
         self.assertFloatsAlmostEqual(bogus, bogus_ref)
 
     def test_generate_template(self):
@@ -78,9 +75,10 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         az = Angle(0.)
         # Note that self.array is randomly generated each call. That's okay, because the template should
         # depend only on the metadata.
-        exposures = [self.dcrModel.create_exposure(self.array, variance=None, elevation=Angle(el), azimuth=az)
+        exposures = [self.dcrTemplate.create_exposure(self.array, variance=None,
+                                                      elevation=Angle(el), azimuth=az)
                      for el in elevation_arr]
-        model_gen = self.dcrModel.generate_templates_from_model(exposures=exposures)
+        model_gen = self.dcrTemplate.generate_templates_from_model(exposures=exposures)
         model_test = [model for model in model_gen]
         # np.save(data_file, model_test)
         model_ref = np.load(data_file)

@@ -28,7 +28,6 @@ import numpy as np
 from scipy import constants
 from scipy.ndimage.interpolation import shift as scipy_shift
 from scipy.ndimage.morphology import binary_dilation
-import scipy.optimize.nnls
 
 from lsst.daf.base import DateTime
 import lsst.daf.persistence as daf_persistence
@@ -43,31 +42,31 @@ import lsst.pex.policy as pexPolicy
 from lsst.sims.photUtils import Bandpass
 from lsst.utils import getPackageDir
 
-from .calc_refractive_index import diff_refraction
 from .lsst_defaults import lsst_observatory, lsst_weather
+from .dcr_utils import calculate_rotation_angle
+from .dcr_utils import diff_refraction
+from .dcr_utils import solve_model
+from .dcr_utils import wrap_warpExposure
 
-# lsst_lat = -30.244639*lsst.afw.geom.degrees
-# lsst_lon = -70.749417*lsst.afw.geom.degrees
-# lsst_alt = 2663.
-
-__all__ = ("DcrModel", "DcrCorrection")
+__all__ = ("GenerateTemplate")
 
 nanFloat = float("nan")
 nanAngle = Angle(nanFloat)
 
 # Temporary debugging parameters, used if debug_mode=True or self.debug=True is set.
+# In debug mode, the DCR model is only calculated for pixels within [y0: y0 + dy, x0: x0 + dx]
 x0 = 300
 dx = 200
 y0 = 500
 dy = 200
 
 
-class DcrModel:
+class GenerateTemplate:
     """Lightweight object with only the minimum needed to generate DCR-matched template exposures.
 
     A model must first be generated with DcrCorrection (below). That model can then be used directly, or
-    persisted and later read back in needing only this more lightweight class that doesn't need to carry
-    around the input exposures. This class will generate template exposures suitable for
+    persisted and later read back in. GenerateTemplate requires much less memory than DcrCorrection,
+    since it does not store the input exposures. This class will generate template exposures suitable for
     image differencing that are matched to existing exposures in a repository.
 
     Attributes
@@ -87,6 +86,8 @@ class DcrModel:
         Length of the exposure, in seconds.
     filter_name : str
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
+        Filter names are restricted by the filter profiles stored in lsst.sims.photUtils.Bandpass.
+        If other filters are used, the profiles should be provided with a new Bandpass class.
     instrument : str
         Name of the observatory. Used to format dataIds for the butler.
     mask : np.ndarray
@@ -110,7 +111,7 @@ class DcrModel:
     """
 
     def __init__(self, model_repository=None, band_name='g', **kwargs):
-        """Restore a persisted DcrModel.
+        """Restore a persisted DCR model created with DcrCorrection.
 
         Only run when restoring a model or for testing; otherwise superceded by DcrCorrection __init__.
 
@@ -296,9 +297,9 @@ class DcrModel:
         lsst.meas.algorithms KernelPsf object
             Designed to be passed to a lsst.afw.image ExposureD through the method setPsf()
         """
-        dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                          observatory=self.observatory, weather=weather,
-                                          elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
+        dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
+                                      observatory=self.observatory, weather=weather,
+                                      elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
         psf_vals = self.psf.computeKernelImage().getArray()
         psf_vals_out = np.zeros((self.psf_size, self.psf_size))
 
@@ -322,7 +323,7 @@ class DcrModel:
         airmass_weight : bool, optional
             Set to True to scale the variance by the airmass of the observation.
         calculate_dcr_gen : bool, optional
-            Set to True to also return a DcrModel.dcr_generator generator.
+            Set to True to also return a GenerateTemplate.dcr_generator generator.
         use_only_detected : bool, optional
             If True, set all pixels to zero that do not have the detected bit set in the mask plane.
         use_variance : bool, optional
@@ -367,9 +368,9 @@ class DcrModel:
             el = visitInfo.getBoresightAzAlt().getLatitude()
             rotation_angle = calculate_rotation_angle(exposure)
             weather = visitInfo.getWeather()
-            dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                              observatory=self.observatory, weather=weather,
-                                              elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
+            dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
+                                          observatory=self.observatory, weather=weather,
+                                          elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
             return (img_vals, inverse_var, dcr_gen)
         else:
             return (img_vals, inverse_var)
@@ -643,7 +644,7 @@ class DcrModel:
         delta = namedtuple("delta", ["start", "end"])
         dcr = namedtuple("dcr", ["dx", "dy"])
         if use_midpoint:
-            for wl in DcrModel._wavelength_iterator(bandpass, use_midpoint=True):
+            for wl in GenerateTemplate._wavelength_iterator(bandpass, use_midpoint=True):
                 # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
                 refract_mid = diff_refraction(wavelength=wl, wavelength_ref=wavelength_midpoint,
                                               zenith_angle=zenith_angle,
@@ -652,7 +653,7 @@ class DcrModel:
                 yield dcr(dx=refract_mid_pixels*np.sin(rotation_angle.asRadians()),
                           dy=refract_mid_pixels*np.cos(rotation_angle.asRadians()))
         else:
-            for wl_start, wl_end in DcrModel._wavelength_iterator(bandpass, use_midpoint=False):
+            for wl_start, wl_end in GenerateTemplate._wavelength_iterator(bandpass, use_midpoint=False):
                 # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
                 refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
                                                 zenith_angle=zenith_angle,
@@ -798,7 +799,7 @@ class DcrModel:
             butler = self.butler
         else:
             butler = daf_persistence.Butler(model_repository)
-        wave_gen = DcrModel._wavelength_iterator(self.bandpass, use_midpoint=False)
+        wave_gen = self._wavelength_iterator(self.bandpass, use_midpoint=False)
         for f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
             exp = self.create_exposure(self.model[f], variance=self.weights,
@@ -809,7 +810,7 @@ class DcrModel:
             butler.put(exp, "dcrModel", dataId=self._build_model_dataId(self.filter_name, f))
 
     def load_model(self, model_repository=None, band_name='g', **kwargs):
-        """Depersist a DcrModel from a repository and set up the metadata.
+        """Depersist a DCR model from a repository and set up the metadata.
 
         Parameters
         ----------
@@ -948,8 +949,8 @@ class DcrModel:
             el = visitInfo.getBoresightAzAlt().getLatitude()
             az = visitInfo.getBoresightAzAlt().getLongitude()
             weather = visitInfo.getWeather()
-            dcr_gen = DcrModel._dcr_generator(bandpass, pixel_scale=self.pixel_scale, weather=weather,
-                                              observatory=self.observatory, elevation=el, rotation_angle=az)
+            dcr_gen = self._dcr_generator(bandpass, pixel_scale=self.pixel_scale, weather=weather,
+                                          observatory=self.observatory, elevation=el, rotation_angle=az)
             kernel_single = self._calc_offset_phase(dcr_gen=dcr_gen, size=size,
                                                     size_out=kernel_size_intermediate)
             dcr_kernel[exp_i*n_pix_int: (exp_i + 1)*n_pix_int, :] = kernel_single
@@ -985,8 +986,8 @@ class DcrModel:
             psf_size_use = psf_size_test
 
         # Calculate the expected shift (with no psf) due to DCR
-        dcr_gen = DcrModel._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, weather=weather,
-                                          observatory=self.observatory, elevation=el, azimuth=az)
+        dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, weather=weather,
+                                      observatory=self.observatory, elevation=el, azimuth=az)
         dcr_shift = self._calc_offset_phase(exposure=exposure, dcr_gen=dcr_gen,
                                             size=psf_size_use)
         # Assume that the PSF does not change between sub-bands.
@@ -999,580 +1000,6 @@ class DcrModel:
         # After solving for the (potentially) large psf, store only the central portion of size kernel_size.
         psf_vals = np.sum(psf_model_gen, axis=0)/self.n_step
         return psf_vals
-
-
-class DcrCorrection(DcrModel):
-    """Class that loads LSST calibrated exposures and produces airmass-matched template images.
-
-    Input exposures are read with a butler, and an initial model is made by coadding the images.
-    An improved model of the sky is built for a series of sub-bands within the full bandwidth of the filter
-    used for the observations by iteratively forward-modeling the template using the calculated
-    Differential Chromatic Refration for the exposures in each sub-band.
-
-    Attributes
-    ----------
-    bandpass : lsst.sims.photUtils.Bandpass object
-        Bandpass object returned by `load_bandpass`
-    bbox : lsst.afw.geom.Box2I object
-        A bounding box.
-    butler : lsst.daf.persistence Butler object
-        The butler handles persisting and depersisting data to and from a repository.
-    debug : bool
-        Temporary debugging option.
-        If set, calculations are performed on only a small region of the full images.
-    detected_bit : int
-        Value of the detected bit in the bit plane mask.
-    exposure_time : float
-        Length of the exposure, in seconds.
-    exposures : list
-        Description
-    filter_name : str
-        Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-    instrument : str
-        Name of the observatory. Used to format dataIds for the butler.
-    mask : np.ndarray
-        Combined bit plane mask of the model, which is used as the mask plane for generated templates.
-    model : list of np.ndarrays
-        The DCR model to be used to generate templates. Contains one array for each wavelength step.
-    model_base : np.ndarray
-        Coadded model built from the input exposures, without accounting for DCR.
-        Used as the starting point for the iterative solution.
-    n_images : int
-        Number of input images used to calculate the model.
-    n_step : int
-        Number of sub-filter wavelength planes to model.
-    observatory : lsst.afw.coord.coordLib.Observatory
-        Class containing the longitude, latitude, and altitude of the observatory.
-    pixel_scale : lsst.afw.geom.Angle
-            Plate scale, as an Angle.
-    psf : lsst.meas.algorithms KernelPsf object
-        Representation of the point spread function (PSF) of the model.
-    psf_size : int
-        Dimension of the PSF, in pixels.
-    wcs : lsst.afw.image Wcs object
-        World Coordinate System of the model.
-    weights : np.ndarray
-        Weights of the model, calculated from the combined inverse variance of the input exposures.
-    x_size : int
-        Width of the model, in pixels.
-    y_size : int
-        Height of the model, in pixels.
-
-    Example
-    -------
-
-    Set up:
-    dcrCorr = DcrCorrection(n_step=3, repository="./test_data/",
-                            obsid_range=np.arange(100, 124, 3), band_name='g')
-
-    Generate the model:
-    dcrCorr.build_model(max_iter=10)
-
-    Use the model to make matched templates for several observations:
-    template_exposure_gen = dcrCorr.generate_templates_from_model(obsid_range=[108, 109, 110],
-                                                                  output_repository="./test_data_templates/")
-    im_arr = []
-    for exp in template_exposure_gen:
-        im_arr.append(exp.getMaskedImage().getImage().getArray())
-    """
-
-    def __init__(self, obsid_range=None, repository=".", band_name='g', wavelength_step=10.,
-                 n_step=None, exposures=None, detected_bit=32,
-                 warp=False, instrument='lsstSim', debug_mode=False, **kwargs):
-        """Load images from the repository and set up parameters.
-
-        Parameters
-        ----------
-        obsid_range : int or list of ints, optional
-            The observation IDs of the data to load. Not used if `exposures` is set.
-        repository : str, optional
-            Full path to repository with the data. Defaults to working directory
-        band_name : str, optional
-            Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-        wavelength_step : float, optional
-            Wavelength resolution in nm, also the wavelength range of each sub-band plane.
-            Overridden if `n_step` is supplied.
-        n_step : int, optional
-            Number of sub-band planes to use. Takes precendence over `wavelength_step`.
-        exposures : List of lsst.afw.image.ExposureD objects, optional
-            List of exposures to use to calculate the model.
-        detected_bit : int, optional
-            Value of the detected bit in the bit plane mask. This should really be read from the data!
-        warp : bool, optional
-            Set to true if the exposures have different wcs from the model.
-            If True, the generated templates will be warped to match the wcs of each exposure.
-        instrument : str, optional
-            Name of the observatory.
-        debug_mode : bool, optional
-            Description
-        **kwargs : TYPE
-            Allows additional keyword arguments to be passed to `load_bandpass`.
-
-        Raises
-        ------
-        ValueError
-            If `exposures` is not set and no valid exposures are found in `repository`.
-        """
-        if exposures is None:
-            self.butler = daf_persistence.Butler(repository)
-            dataId_gen = self._build_dataId(obsid_range, band_name, instrument=instrument)
-            self.exposures = []
-            for dataId in dataId_gen:
-                calexp = self.butler.get("calexp", dataId=dataId)
-                self.exposures.append(calexp)
-        else:
-            self.exposures = exposures
-
-        if len(self.exposures) == 0:
-            raise ValueError("No valid exposures found.")
-
-        self.debug = debug_mode
-        self.instrument = instrument
-        self.n_images = len(self.exposures)
-        self.detected_bit = detected_bit
-        self.filter_name = band_name
-        psf_size_arr = []
-        hour_angle_arr = []
-        ref_exp_i = 0
-        self.bbox = self.exposures[ref_exp_i].getBBox()
-        self.wcs = self.exposures[ref_exp_i].getWcs()
-        self.observatory = self.exposures[ref_exp_i].getInfo().getVisitInfo().getObservatory()
-
-        for i, calexp in enumerate(self.exposures):
-            psf_size_arr.append(calexp.getPsf().computeKernelImage().getArray().shape[0])
-
-            hour_angle_arr.append(calexp.getInfo().getVisitInfo().getBoresightHourAngle().asRadians())
-
-            if (i != ref_exp_i) & warp:
-                wrap_warpExposure(calexp, self.wcs, self.bbox)
-
-        if np.any(np.isnan(hour_angle_arr)):
-            print("Warning: invalid hour angle in metadata. Azimuth will be used instead.")
-        self.x_size, self.y_size = self.exposures[ref_exp_i].getDimensions()
-        self.pixel_scale = self.exposures[ref_exp_i].getWcs().pixelScale()
-        self.exposure_time = self.exposures[ref_exp_i].getInfo().getVisitInfo().getExposureTime()
-        self.psf_size = int(np.min(psf_size_arr))
-        self.psf = None
-        self.mask = self._combine_masks()
-
-        bandpass = DcrModel.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
-        if n_step is not None:
-            wavelength_step = (bandpass.wavelen_max - bandpass.wavelen_min) / n_step
-            bandpass = DcrModel.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
-        else:
-            n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
-        if n_step >= self.n_images:
-            print("Warning! Under-constrained system. Reducing number of frequency planes.")
-            wavelength_step *= n_step / self.n_images
-            bandpass = DcrModel.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
-            n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
-        self.n_step = n_step
-        self.bandpass = bandpass
-
-    def calc_psf_model(self):
-        """Calculate the fiducial psf from a given set of exposures, accounting for DCR.
-
-        Returns
-        -------
-        None
-            Sets self.psf with a lsst.meas.algorithms KernelPsf object.
-        """
-        n_step = 1
-        bandpass = DcrModel.load_bandpass(band_name=self.filter_name, wavelength_step=None)
-        n_pix = self.psf_size**2
-        psf_mat = np.zeros(self.n_images*self.psf_size**2)
-        for exp_i, exp in enumerate(self.exposures):
-            # Use the measured PSF as the solution of the shifted PSFs.
-            psf_img = exp.getPsf().computeKernelImage().getArray()
-            psf_y_size, psf_x_size = psf_img.shape
-            x0 = int(psf_x_size//2 - self.psf_size//2)
-            x1 = x0 + self.psf_size
-            y0 = int(psf_y_size//2 - self.psf_size//2)
-            y1 = y0 + self.psf_size
-            psf_mat[exp_i*n_pix: (exp_i + 1)*n_pix] = np.ravel(psf_img[y0:y1, x0:x1])
-
-        dcr_shift = self._build_dcr_kernel(size=self.psf_size, bandpass=bandpass, n_step=n_step)
-        psf_model_gen = solve_model(self.psf_size, psf_mat, n_step=n_step, kernel_dcr=dcr_shift)
-
-        psf_vals = np.sum(psf_model_gen)/n_step
-        psf_image = afwImage.ImageD(self.psf_size, self.psf_size)
-        psf_image.getArray()[:, :] = psf_vals
-        psfK = afwMath.FixedKernel(psf_image)
-        self.psf = measAlg.KernelPsf(psfK)
-
-    def build_model(self, verbose=True, max_iter=10, min_iter=None, gain=None, clamp=None,
-                    frequency_regularization=True, max_slope=None,
-                    test_convergence=False, convergence_threshold=None, use_variance=True):
-        """Build a model of the sky in multiple sub-bands.
-
-        Parameters
-        ----------
-        verbose : `bool`, optional
-            Print additional status messages.
-        max_iter : `int`, optional
-            The maximum number of iterations of forward modeling allowed.
-        min_iter : int, optional
-            The minimum number of iterations of forward modeling before checking for convergence.
-        gain : float, optional
-            The weight of the new solution relative to the last solution
-            when calculating the model to use for the next iteration.
-            The defualt value is 1.0, and should only be changed if you know what you are doing.
-        clamp : float, optional
-            Restrict new solutions from being more than a factor of ``clamp`` different from the last solution
-            before `gain` is applied.
-            The default value is 3, chosen so that a gain of 1 restricts the change of the solution between
-            iterations to less than a factor of 2.
-        frequency_regularization : bool, optional
-            Set to restrict variations between frequency planes
-        max_slope : float, optional
-            Maximum slope to allow between sub-band model planes.
-            Only used if ``frequency_regularization`` is set.
-        test_convergence : bool, optional
-            If True, then matched templates will be generated for each image for every iteration,
-            and the difference with the image will be checked to see if it is less than the previous iteration
-            Any images where the difference is increasing will be excluded from the next iteration.
-        convergence_threshold : float, optional
-            Return once the convergence metric changes by less than ``convergence_threshold``
-            between iterations.
-        use_variance : bool, optional
-            Set to weight pixels by their inverse variance when combining images.
-        """
-        if verbose:
-            print("Calculating initial solution...", end="")
-
-        if self.debug:
-            self.x_size = dx
-            self.y_size = dy
-        # Set up an initial guess with all model planes equal as a starting point of the iterative solution
-        initial_solution = np.zeros((self.y_size, self.x_size))
-        initial_weights = np.zeros((self.y_size, self.x_size))
-        for exp in self.exposures:
-            img, inverse_var = self._extract_image(exp, airmass_weight=True, calculate_dcr_gen=False,
-                                                   use_variance=use_variance)
-            initial_solution += img*inverse_var
-            initial_weights += inverse_var
-
-        weight_inds = initial_weights > 0
-        self.model_base = initial_solution
-        initial_solution[weight_inds] /= initial_weights[weight_inds]
-        if verbose:
-            print(" Done!")
-
-        self._build_model_subroutine(initial_solution, verbose=verbose, max_iter=max_iter, min_iter=min_iter,
-                                     frequency_regularization=frequency_regularization, max_slope=None,
-                                     gain=gain, clamp=clamp,
-                                     test_convergence=test_convergence,
-                                     convergence_threshold=convergence_threshold,
-                                     use_variance=use_variance,
-                                     )
-        if verbose:
-            print("\nFinished building model.")
-
-    def _build_model_subroutine(self, initial_solution, verbose=True, max_iter=10, min_iter=None,
-                                test_convergence=False, frequency_regularization=True, max_slope=None,
-                                gain=None, clamp=None, convergence_threshold=None, use_variance=True):
-        """Extract the math from building the model so it can be re-used.
-
-        Parameters
-        ----------
-        initial_solution : float or np.ndarray
-            The model to use as a starting point for iteration.
-            If a float, then a constant value is used for all pixels.
-        verbose : bool, optional
-            Print additional status messages.
-        max_iter : int, optional
-            The maximum number of iterations of forward modeling allowed.
-        min_iter : int, optional
-            The minimum number of iterations of forward modeling before checking for convergence.
-        test_convergence : bool, optional
-            If True, then matched templates will be generated for each image for every iteration,
-            and the difference with the image will be checked to see if it is less than the previous iteration
-            Any images where the difference is increasing will be excluded from the next iteration.
-        frequency_regularization : bool, optional
-            Set to restrict variations between frequency planes
-        max_slope : float, optional
-            Maximum slope to allow between sub-band model planes.
-        gain : float, optional
-            The weight of the new solution when calculating the model to use for the next iteration.
-            The defualt value is 1.0, and should only be changed if you know what you are doing.
-        clamp : float, optional
-            Restrict new solutions from being more than a factor of `clamp` different from the last solution.
-        convergence_threshold : float, optional
-            Return once the convergence metric changes by less than this amount between iterations.
-        use_variance : bool, optional
-            Set to weight pixels by their inverse variance when combining images.
-
-        Returns
-        -------
-        bool
-            False if the solutions failed to converge, True otherwise.
-        Sets self.model as a list of np.ndarrays
-        Sets self.weights as a np.ndarray
-        """
-        if gain is None:
-            gain = 1.
-        if clamp is None:
-            # The value of clamp is chosen so that the solution never changes by
-            #  more than a factor of 2 between iterations: if new = old*3 then (old + new)/2 = 2*old
-            clamp = 3.
-        if convergence_threshold is None:
-            convergence_threshold = 1e-3
-        min_images = self.n_step + 1
-        if min_iter is None:
-            min_iter = 2
-        last_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
-        for f in range(self.n_step):
-            last_solution[f] += np.abs(initial_solution/self.n_step)
-
-        if verbose:
-            print("Fractional change per iteration:")
-        if test_convergence:
-            last_convergence_metric_full = self.calc_model_metric(last_solution)
-            print("Full initial convergence metric: ", last_convergence_metric_full)
-            last_convergence_metric = np.mean(last_convergence_metric_full)
-
-        exp_cut = [False for exp_i in range(self.n_images)]
-        final_soln_iter = None
-        converge_error = False
-        for sol_iter in range(int(max_iter)):
-            new_solution, inverse_var_arr = self._calculate_new_model(last_solution, exp_cut,
-                                                                      use_variance=use_variance)
-
-            # Optionally restrict variations between frequency planes
-            if frequency_regularization:
-                self._regularize_model_solution(new_solution, self.bandpass, max_slope=max_slope)
-
-            # Restrict new solutions from being wildly different from the last solution
-            self._clamp_model_solution(new_solution, last_solution, clamp, model_base=self.model_base)
-
-            inds_use = inverse_var_arr[-1] > 0
-            for f in range(self.n_step - 1):
-                inds_use *= inverse_var_arr[f] > 0
-
-            # Use the average of the new and last solution for the next iteration. This reduces oscillations.
-            new_solution_use = [np.abs((last_solution[f] + gain*new_solution[f])/(1 + gain))
-                                for f in range(self.n_step)]
-
-            delta = (np.sum(np.abs([last_solution[f][inds_use] - new_solution_use[f][inds_use]
-                                    for f in range(self.n_step)])) /
-                     np.sum(np.abs([soln[inds_use] for soln in last_solution])))
-            if verbose:
-                print("Iteration %i: delta=%f" % (sol_iter, delta))
-                last_soln_use = [soln[inds_use] for soln in last_solution]
-                print("Stddev(last_solution): %f, mean(abs(last_solution)): %f"
-                      % (np.std(last_soln_use), np.mean(np.abs(last_soln_use))))
-                new_soln_use = [soln[inds_use] for soln in new_solution_use]
-                print("Stddev(new_solution): %f, mean(abs(new_solution)): %f"
-                      % (np.std(new_soln_use), np.mean(np.abs(new_soln_use))))
-            if test_convergence:
-                convergence_metric_full = self.calc_model_metric(new_solution_use)
-                if verbose:
-                    print("Full convergence metric:", convergence_metric_full)
-                if sol_iter >= min_iter:
-                    exp_cut = convergence_metric_full > last_convergence_metric_full
-                n_exp_cut = np.sum(exp_cut)
-                if n_exp_cut > 0:
-                    print("%i exposure(s) cut from lack of convergence." % int(n_exp_cut))
-                if (self.n_images - n_exp_cut) < min_images:
-                    print("Exiting iterative solution: Too few images left.")
-                    final_soln_iter = sol_iter - 1
-                    converge_error = True
-                    break
-                last_convergence_metric = np.mean(last_convergence_metric_full[np.logical_not(exp_cut)])
-                last_convergence_metric_full = convergence_metric_full
-                convergence_metric = np.mean(convergence_metric_full[np.logical_not(exp_cut)])
-                print("Convergence metric: %f" % convergence_metric)
-
-                if sol_iter > min_iter:
-                    if convergence_metric > last_convergence_metric:
-                        print("BREAK from lack of convergence")
-                        final_soln_iter = sol_iter - 1
-                        converge_error = True
-                        break
-                    convergence_check2 = (1 - convergence_threshold)*last_convergence_metric
-                    if convergence_metric > convergence_check2:
-                        print("BREAK after reaching convergence threshold")
-                        final_soln_iter = sol_iter
-                        last_solution = new_solution_use
-                        break
-                last_convergence_metric = convergence_metric
-            last_solution = new_solution_use
-        if final_soln_iter is None:
-            final_soln_iter = sol_iter
-        if verbose:
-            print("Final solution from iteration: %i" % final_soln_iter)
-        self.model = last_solution
-        self.weights = np.sum(inverse_var_arr, axis=0)/self.n_step
-        return converge_error
-
-    def _calculate_new_model(self, last_solution, exp_cut, use_variance):
-        """Sub-routine to calculate a new model from the residuals of forward-modeling the previous solution.
-
-        Parameters
-        ----------
-        last_solution : list of np.ndarrays
-            One np.ndarray for each model sub-band, from the previous iteration.
-        exp_cut : List of bools
-            Exposures that failed to converge in the previous iteration are flagged,
-            and not included in the current iteration solution.
-
-        Returns
-        -------
-        Tuple of two lists of np.ndarrays
-            One np.ndarray for each model sub-band, and the associated inverse variance array.
-        """
-        residual_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
-        inverse_var_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
-        for exp_i, exp in enumerate(self.exposures):
-            if exp_cut[exp_i]:
-                continue
-            img, inverse_var, dcr_gen = self._extract_image(exp, use_variance=use_variance)
-            dcr_list = [dcr for dcr in dcr_gen]
-            last_model_shift = []
-            for f, dcr in enumerate(dcr_list):
-                shift = (dcr.dy, dcr.dx)
-                last_model_shift.append(scipy_shift(last_solution[f], shift))
-            for f, dcr in enumerate(dcr_list):
-                inv_shift = (-dcr.dy, -dcr.dx)
-                last_model = np.zeros((self.y_size, self.x_size))
-                for f2 in range(self.n_step):
-                    if f2 != f:
-                        last_model += last_model_shift[f2]
-                img_residual = img - last_model
-                residual_shift = scipy_shift(img_residual, inv_shift)
-                inv_var_shift = scipy_shift(inverse_var, inv_shift)
-
-                residual_arr[f] += residual_shift*inv_var_shift  # *weights_shift
-                inverse_var_arr[f] += inv_var_shift
-        new_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
-        for f in range(self.n_step):
-            inds_use = inverse_var_arr[f] > 0
-            new_solution[f][inds_use] = residual_arr[f][inds_use]/inverse_var_arr[f][inds_use]
-        return (new_solution, inverse_var_arr)
-
-    @staticmethod
-    def _clamp_model_solution(new_solution, last_solution, clamp, model_base=None):
-        """Restrict new solutions from being wildly different from the last solution.
-
-        Parameters
-        ----------
-        new_solution : list of np.ndarrays
-            The model solution from the current iteration.
-        last_solution : list of np.ndarrays
-            The model solution from the previous iteration.
-        clamp : float
-            Restrict new solutions from being more than a factor of `clamp` different from the last solution.
-
-        Returns
-        -------
-        None
-            Modifies new_solution in place.
-        """
-        for s_i, solution in enumerate(new_solution):
-            # Note: last_solution is always positive
-            clamp_high_i = solution > clamp*last_solution[s_i]
-            solution[clamp_high_i] = clamp*last_solution[s_i][clamp_high_i]
-            clamp_low_i = solution < last_solution[s_i]/clamp
-            solution[clamp_low_i] = last_solution[s_i][clamp_low_i]/clamp
-            if model_base is not None:
-                noise_threshold = np.std(solution)
-                clamp_high_i2 = solution > (model_base + 3.*noise_threshold)
-                solution[clamp_high_i2] = model_base[clamp_high_i2]
-
-    @staticmethod
-    def _regularize_model_solution(new_solution, bandpass, max_slope=None):
-        """Calculate a slope across sub-band model planes, and clip outlier values beyond a given threshold.
-
-        Parameters
-        ----------
-        new_solution : list of np.ndarrays
-            The model solution from the current iteration.
-        max_slope : float, optional
-            Maximum slope to allow between sub-band model planes.
-
-        Returns
-        -------
-        None
-            Modifies new_solution in place.
-        """
-        if max_slope is None:
-            max_slope = 1.
-        n_step = len(new_solution)
-        y_size, x_size = new_solution[0].shape
-        solution_avg = np.sum(new_solution, axis=0)/n_step
-        slope_ratio = max_slope
-        sum_x = 0.
-        sum_y = np.zeros((y_size, x_size))
-        sum_xy = np.zeros((y_size, x_size))
-        sum_xx = 0.
-        wl_cen = bandpass.calc_eff_wavelen()
-        for f, wl in enumerate(DcrModel._wavelength_iterator(bandpass, use_midpoint=True)):
-            sum_x += wl - wl_cen
-            sum_xx += (wl - wl_cen)**2
-            sum_xy += (wl - wl_cen)*(new_solution[f] - solution_avg)
-            sum_y += new_solution[f] - solution_avg
-        slope = (n_step*sum_xy - sum_x*sum_y)/(n_step*sum_xx + sum_x**2)
-        slope_cut_high = slope*bandpass.wavelen_step > solution_avg*slope_ratio
-        slope_cut_low = slope*bandpass.wavelen_step < -solution_avg*slope_ratio
-        slope[slope_cut_high] = solution_avg[slope_cut_high]*slope_ratio/bandpass.wavelen_step
-        slope[slope_cut_low] = -solution_avg[slope_cut_low]*slope_ratio/bandpass.wavelen_step
-        offset = solution_avg
-        for f, wl in enumerate(DcrModel._wavelength_iterator(bandpass, use_midpoint=True)):
-            new_solution[f] = offset + slope*(wl - wl_cen)
-
-    def calc_model_metric(self, model=None):
-        """Calculate a quality of fit metric for the DCR model given the set of exposures.
-
-        Parameters
-        ----------
-        model : None, optional
-            The DCR model. If not set, then self.model is used.
-
-        Returns
-        -------
-        np.ndarray
-            The calculated metric for each exposure.
-        """
-        metric = np.zeros(self.n_images)
-        for exp_i, exp in enumerate(self.exposures):
-            img_use, inverse_var = self._extract_image(exp, calculate_dcr_gen=False, use_only_detected=True)
-            template = self.build_matched_template(exp, model=model, return_weights=False)
-            inds_use = inverse_var > 0
-            diff_vals = np.abs(img_use - template)
-            ref_vals = np.abs(img_use)
-            if np.sum(inds_use) == 0:
-                metric[exp_i] = float("inf")
-            else:
-                metric[exp_i] = np.sum(diff_vals[inds_use])/np.sum(ref_vals[inds_use])
-        return metric
-
-    def _combine_masks(self):
-        """Combine multiple mask planes.
-
-        Sets the detected mask bit if any image has a detection,
-        and sets other bits only if set in all images.
-
-        Returns
-        -------
-        np.ndarray
-            The combined mask plane.
-        """
-        mask_arr = (exp.getMaskedImage().getMask().getArray() for exp in self.exposures)
-
-        detected_mask = None
-        mask_use = None
-        for mask in mask_arr:
-            if mask_use is None:
-                mask_use = mask
-            else:
-                mask_use = np.bitwise_and(mask_use, mask)
-
-            if detected_mask is None:
-                detected_mask = mask & self.detected_bit
-            else:
-                detected_mask = np.bitwise_or(detected_mask, (mask & self.detected_bit))
-        mask = np.bitwise_or(mask_use, detected_mask)
-        return mask
 
 
 def _calc_psf_kernel_subroutine(psf_img, size=None, size_out=None):
@@ -1679,124 +1106,3 @@ def _kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False):
                 else:
                     kernel += (np.sin(x)/x)*(np.sin(x/lanczos)/(x/lanczos))
     return kernel/n_substep
-
-
-def parallactic_angle(hour_angle, dec, lat):
-    """Compute the parallactic angle given hour angle, declination, and latitude.
-
-    Parameters
-    ----------
-    hour_angle : lsst.afw.geom.Angle
-        Hour angle of the observation
-    dec : lsst.afw.geom.Angle
-        Declination of the observation.
-    lat : lsst.afw.geom.Angle
-        Latitude of the observatory.
-    """
-    y_term = np.sin(hour_angle.asRadians())
-    x_term = (np.cos(dec.asRadians())*np.tan(lat.asRadians()) -
-              np.sin(dec.asRadians())*np.cos(hour_angle.asRadians()))
-    return np.arctan2(y_term, x_term)
-
-
-def wrap_warpExposure(exposure, wcs, BBox, warpingControl=None):
-    """Warp an exposure to fit a given WCS and bounding box.
-
-    Parameters
-    ----------
-    exposure : lsst.afw.image.ExposureD
-        An LSST exposure object. The image values will be overwritten!
-    wcs : lsst.afw.image.Wcs object
-        World Coordinate System to warp the image to.
-    BBox : lsst.afw.geom.Box2I object
-        Bounding box of the new image.
-    warpingControl : afwMath.WarpingControl, optional
-        Sets the interpolation parameters. Loads defualt values if None.
-
-    Returns
-    -------
-    None
-        Modifies exposure in place.
-    """
-    if warpingControl is None:
-        interpLength = 10
-        warpingControl = afwMath.WarpingControl("lanczos4", "", 0, interpLength)
-    warpExp = afwImage.ExposureD(BBox, wcs)
-    afwMath.warpExposure(warpExp, exposure, warpingControl)
-
-    warpImg = warpExp.getMaskedImage().getImage().getArray()
-    exposure.getMaskedImage().getImage().getArray()[:, :] = warpImg
-    warpMask = warpExp.getMaskedImage().getMask().getArray()
-    exposure.getMaskedImage().getMask().getArray()[:, :] = warpMask
-    warpVariance = warpExp.getMaskedImage().getVariance().getArray()
-    exposure.getMaskedImage().getVariance().getArray()[:, :] = warpVariance
-    exposure.setWcs(wcs)
-
-
-def solve_model(kernel_size, img_vals, n_step, kernel_dcr, kernel_ref=None, kernel_restore=None):
-    """Wrapper to call a fitter using a given covariance matrix, image values, and any regularization.
-
-    Parameters
-    ----------
-    kernel_size : int
-        Size of the kernel to use for calculating the covariance matrix, in pixels.
-    img_vals : np.ndarray
-        Image data values for the pixels being used for the calculation, as a 1D vector.
-    n_step : int, optional
-        Number of sub-filter wavelength planes to model.
-    kernel_dcr : np.ndarray
-        The covariance matrix describing the effect of DCR
-    kernel_ref : np.ndarray, optional
-        The covariance matrix for the reference image
-    kernel_restore : np.ndarray, optional
-        The covariance matrix for the final restored image
-
-    Returns
-    -------
-    np.ndarray
-        Array of the solution values.
-    """
-    x_size = kernel_size
-    y_size = kernel_size
-    if (kernel_restore is None) or (kernel_ref is None):
-        vals_use = img_vals
-        kernel_use = kernel_dcr
-    else:
-        vals_use = kernel_restore.dot(img_vals)
-        kernel_use = kernel_ref.dot(kernel_dcr)
-
-    model_solution = scipy.optimize.nnls(kernel_use, vals_use)
-    model_vals = model_solution[0]
-    n_pix = x_size*y_size
-    for f in range(n_step):
-        yield np.reshape(model_vals[f*n_pix: (f + 1)*n_pix], (y_size, x_size))
-
-
-def calculate_rotation_angle(exposure):
-    """Calculate the sky rotation angle of an exposure.
-
-    Parameters
-    ----------
-    exposure : lsst.afw.image.ExposureD
-        An LSST exposure object.
-
-    Returns
-    -------
-    lsst.afw.geom.Angle
-        The rotation of the image axis, East from North.
-    """
-    visitInfo = exposure.getInfo().getVisitInfo()
-
-    az = visitInfo.getBoresightAzAlt().getLongitude()
-    hour_angle = visitInfo.getBoresightHourAngle()
-    # Some simulated data contains invalid hour_angle metadata.
-    if np.isfinite(hour_angle.asRadians()):
-        dec = visitInfo.getBoresightRaDec().getDec()
-        lat = visitInfo.getObservatory().getLatitude()
-        p_angle = parallactic_angle(hour_angle, dec, lat)
-    else:
-        p_angle = az.asRadians()
-    cd = exposure.getInfo().getWcs().getCDMatrix()
-    cd_rot = (np.arctan2(-cd[0, 1], cd[0, 0]) + np.arctan2(cd[1, 0], cd[1, 1]))/2.
-    rotation_angle = Angle(cd_rot + p_angle)
-    return rotation_angle

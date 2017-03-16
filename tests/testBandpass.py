@@ -21,15 +21,11 @@
 
 from __future__ import print_function, division, absolute_import
 import numpy as np
-
-from lsst.afw.geom import Angle
 import unittest
+
 import lsst.utils.tests
 
-from python.test_utils import BasicDcrModel
-
-nanFloat = float("nan")
-nanAngle = Angle(nanFloat)
+from python.test_utils import BasicGenerateTemplate
 
 
 class BandpassTestCase(lsst.utils.tests.TestCase):
@@ -39,8 +35,8 @@ class BandpassTestCase(lsst.utils.tests.TestCase):
         """Define parameters used by every test."""
         self.band_name = 'g'
         self.wavelength_step = 10
-        self.bandpass = BasicDcrModel.load_bandpass(band_name=self.band_name,
-                                                    wavelength_step=self.wavelength_step)
+        self.bandpass = BasicGenerateTemplate.load_bandpass(band_name=self.band_name,
+                                                            wavelength_step=self.wavelength_step)
 
     def test_step_bandpass(self):
         """Check that the bandpass has necessary methods, and those return the correct number of values."""

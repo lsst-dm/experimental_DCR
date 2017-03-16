@@ -1,4 +1,5 @@
-#
+"""Utilities used by the DCR template generation code, including atmospheric refraction calculations."""
+
 # LSST Data Management System
 # Copyright 2016 LSST Corporation.
 #
@@ -19,15 +20,143 @@
 # the GNU General Public License along with this program.  If not,
 # see <http://www.lsstcorp.org/LegalNotices/>.
 #
-"""Calculate atmospheric refraction under different observing conditions."""
+
 from __future__ import print_function, division, absolute_import
+
 from astropy import units as u
 from astropy.units import cds as u_cds
 import numpy as np
+import scipy.optimize.nnls
 
 from lsst.afw.geom import Angle
+import lsst.afw.image as afwImage
+import lsst.afw.math as afwMath
+
 from .lsst_defaults import lsst_observatory, lsst_weather
-__all__ = ("refraction", "diff_refraction")
+
+__all__ = ("parallactic_angle", "wrap_warpExposure", "solve_model", "calculate_rotation_angle",
+           "refraction", "diff_refraction")
+
+
+def parallactic_angle(hour_angle, dec, lat):
+    """Compute the parallactic angle given hour angle, declination, and latitude.
+
+    Parameters
+    ----------
+    hour_angle : lsst.afw.geom.Angle
+        Hour angle of the observation
+    dec : lsst.afw.geom.Angle
+        Declination of the observation.
+    lat : lsst.afw.geom.Angle
+        Latitude of the observatory.
+    """
+    y_term = np.sin(hour_angle.asRadians())
+    x_term = (np.cos(dec.asRadians())*np.tan(lat.asRadians()) -
+              np.sin(dec.asRadians())*np.cos(hour_angle.asRadians()))
+    return np.arctan2(y_term, x_term)
+
+
+def wrap_warpExposure(exposure, wcs, BBox, warpingControl=None):
+    """Warp an exposure to fit a given WCS and bounding box.
+
+    Parameters
+    ----------
+    exposure : lsst.afw.image.ExposureD
+        An LSST exposure object. The image values will be overwritten!
+    wcs : lsst.afw.image.Wcs object
+        World Coordinate System to warp the image to.
+    BBox : lsst.afw.geom.Box2I object
+        Bounding box of the new image.
+    warpingControl : afwMath.WarpingControl, optional
+        Sets the interpolation parameters. Loads defualt values if None.
+
+    Returns
+    -------
+    None
+        Modifies exposure in place.
+    """
+    if warpingControl is None:
+        interpLength = 10
+        warpingControl = afwMath.WarpingControl("lanczos4", "", 0, interpLength)
+    warpExp = afwImage.ExposureD(BBox, wcs)
+    afwMath.warpExposure(warpExp, exposure, warpingControl)
+
+    warpImg = warpExp.getMaskedImage().getImage().getArray()
+    exposure.getMaskedImage().getImage().getArray()[:, :] = warpImg
+    warpMask = warpExp.getMaskedImage().getMask().getArray()
+    exposure.getMaskedImage().getMask().getArray()[:, :] = warpMask
+    warpVariance = warpExp.getMaskedImage().getVariance().getArray()
+    exposure.getMaskedImage().getVariance().getArray()[:, :] = warpVariance
+    exposure.setWcs(wcs)
+
+
+def solve_model(kernel_size, img_vals, n_step, kernel_dcr, kernel_ref=None, kernel_restore=None):
+    """Wrapper to call a fitter using a given covariance matrix, image values, and any regularization.
+
+    Parameters
+    ----------
+    kernel_size : int
+        Size of the kernel to use for calculating the covariance matrix, in pixels.
+    img_vals : np.ndarray
+        Image data values for the pixels being used for the calculation, as a 1D vector.
+    n_step : int, optional
+        Number of sub-filter wavelength planes to model.
+    kernel_dcr : np.ndarray
+        The covariance matrix describing the effect of DCR
+    kernel_ref : np.ndarray, optional
+        The covariance matrix for the reference image
+    kernel_restore : np.ndarray, optional
+        The covariance matrix for the final restored image
+
+    Returns
+    -------
+    np.ndarray
+        Array of the solution values.
+    """
+    x_size = kernel_size
+    y_size = kernel_size
+    if (kernel_restore is None) or (kernel_ref is None):
+        vals_use = img_vals
+        kernel_use = kernel_dcr
+    else:
+        vals_use = kernel_restore.dot(img_vals)
+        kernel_use = kernel_ref.dot(kernel_dcr)
+
+    model_solution = scipy.optimize.nnls(kernel_use, vals_use)
+    model_vals = model_solution[0]
+    n_pix = x_size*y_size
+    for f in range(n_step):
+        yield np.reshape(model_vals[f*n_pix: (f + 1)*n_pix], (y_size, x_size))
+
+
+def calculate_rotation_angle(exposure):
+    """Calculate the sky rotation angle of an exposure.
+
+    Parameters
+    ----------
+    exposure : lsst.afw.image.ExposureD
+        An LSST exposure object.
+
+    Returns
+    -------
+    lsst.afw.geom.Angle
+        The rotation of the image axis, East from North.
+    """
+    visitInfo = exposure.getInfo().getVisitInfo()
+
+    az = visitInfo.getBoresightAzAlt().getLongitude()
+    hour_angle = visitInfo.getBoresightHourAngle()
+    # Some simulated data contains invalid hour_angle metadata.
+    if np.isfinite(hour_angle.asRadians()):
+        dec = visitInfo.getBoresightRaDec().getDec()
+        lat = visitInfo.getObservatory().getLatitude()
+        p_angle = parallactic_angle(hour_angle, dec, lat)
+    else:
+        p_angle = az.asRadians()
+    cd = exposure.getInfo().getWcs().getCDMatrix()
+    cd_rot = (np.arctan2(-cd[0, 1], cd[0, 0]) + np.arctan2(cd[1, 0], cd[1, 1]))/2.
+    rotation_angle = Angle(cd_rot + p_angle)
+    return rotation_angle
 
 
 def refraction(wavelength, zenith_angle, weather=lsst_weather, observatory=lsst_observatory):

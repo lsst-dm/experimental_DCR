@@ -22,12 +22,12 @@
 from __future__ import print_function, division, absolute_import
 import copy
 import numpy as np
-
 import unittest
+
 import lsst.utils.tests
-from python.dcr_template import DcrCorrection
-from python.dcr_template import solve_model
-from python.test_utils import BasicDcrCorrection
+
+from python.dcr_utils import solve_model
+from python.test_utils import BasicBuildDcrModel
 
 
 class SolverTestCase(lsst.utils.tests.TestCase):
@@ -35,19 +35,19 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         data_file = "test_data/exposures.npy"
         exposures = np.load(data_file)
         self.kernel_size = 5
-        # Use _BasicDcrCorrection here to save execution time.
-        self.dcrCorr = BasicDcrCorrection(band_name='g', n_step=3, kernel_size=self.kernel_size,
-                                          exposures=exposures)
-        for exp in self.dcrCorr.exposures:
-            exp.getMaskedImage().getMask().getArray()[:, :] = self.dcrCorr.detected_bit
+        # Use BasicBuildDcrModel here to save execution time.
+        self.dcrModel = BasicBuildDcrModel(band_name='g', n_step=3, kernel_size=self.kernel_size,
+                                           exposures=exposures)
+        for exp in self.dcrModel.exposures:
+            exp.getMaskedImage().getMask().getArray()[:, :] = self.dcrModel.detected_bit
 
     def tearDown(self):
-        del self.dcrCorr
+        del self.dcrModel
 
     def test_build_dcr_kernel(self):
         """Compare the result of _build_dcr_kernel to previously computed values."""
         data_file = "test_data/build_dcr_kernel_vals.npy"
-        kernel = self.dcrCorr._build_dcr_kernel(self.kernel_size)
+        kernel = self.dcrModel._build_dcr_kernel(self.kernel_size)
         # np.save(data_file, kernel)
         kernel_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(kernel, kernel_ref)
@@ -56,8 +56,8 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         """Call build_model with as many options as possible turned off."""
         """Compare the result of build_model to previously computed values."""
         data_file = "test_data/build_model_vals.npy"
-        self.dcrCorr.build_model(verbose=False)
-        model_vals = self.dcrCorr.model
+        self.dcrModel.build_model(verbose=False)
+        model_vals = self.dcrModel.model
         # np.save(data_file, model_vals)
         model_ref = np.load(data_file)
         for f, model in enumerate(model_vals):
@@ -65,9 +65,9 @@ class SolverTestCase(lsst.utils.tests.TestCase):
 
     def test_build_matched_template(self):
         data_file = "test_data/build_matched_template_vals.npy"
-        exposure = self.dcrCorr.exposures[0]
-        self.dcrCorr.build_model(verbose=False)
-        template, variance = self.dcrCorr.build_matched_template(exposure)
+        exposure = self.dcrModel.exposures[0]
+        self.dcrModel.build_model(verbose=False)
+        template, variance = self.dcrModel.build_matched_template(exposure)
         # np.save(data_file, (template, variance))
         template_ref, variance_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(template, template_ref)
@@ -78,13 +78,13 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         use_variance = True
         rand_gen = np.random
         rand_gen.seed(5)
-        n_step = self.dcrCorr.n_step
-        x_size = self.dcrCorr.x_size
-        y_size = self.dcrCorr.y_size
+        n_step = self.dcrModel.n_step
+        x_size = self.dcrModel.x_size
+        y_size = self.dcrModel.y_size
         last_solution = [rand_gen.random((y_size, x_size)) for f in range(n_step)]
-        exp_cut = [False for exp_i in range(self.dcrCorr.n_images)]
-        new_solution, inverse_var_arr = self.dcrCorr._calculate_new_model(last_solution, exp_cut,
-                                                                          use_variance)
+        exp_cut = [False for exp_i in range(self.dcrModel.n_images)]
+        new_solution, inverse_var_arr = self.dcrModel._calculate_new_model(last_solution, exp_cut,
+                                                                           use_variance)
         # np.save(data_file, (new_solution, inverse_var_arr))
         new_solution_ref, inverse_var_arr_ref = np.load(data_file)
         for f, soln in enumerate(new_solution):
@@ -96,13 +96,13 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         clamp = 3.
         rand_gen = np.random
         rand_gen.seed(5)
-        n_step = self.dcrCorr.n_step
-        x_size = self.dcrCorr.x_size
-        y_size = self.dcrCorr.y_size
+        n_step = self.dcrModel.n_step
+        x_size = self.dcrModel.x_size
+        y_size = self.dcrModel.y_size
         last_solution = [rand_gen.random((y_size, x_size)) for f in range(n_step)]
         new_solution = [10.*(rand_gen.random((y_size, x_size)) - 0.5) for f in range(n_step)]
         ref_solution = copy.deepcopy(new_solution)
-        DcrCorrection._clamp_model_solution(new_solution, last_solution, clamp)
+        self.dcrModel._clamp_model_solution(new_solution, last_solution, clamp)
         ref_max = np.max(ref_solution)
         ref_min = np.min(ref_solution)
         last_max = np.max(last_solution)
@@ -119,31 +119,31 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         metric_ref = np.array([0.0326935547581, 0.0299110561613, 0.0312179049219,
                                0.0347479538541, 0.0391646266206, 0.0421978090644])
         model = np.load(model_file)
-        metric = self.dcrCorr.calc_model_metric(model=model)
+        metric = self.dcrModel.calc_model_metric(model=model)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)
 
     def test_build_model_convergence_failure(self):
         """Test that the iterative solver fails to converge if given a negative gain."""
-        converge_error = self.dcrCorr._build_model_subroutine(initial_solution=1, verbose=False, gain=-2,
-                                                              test_convergence=True)
+        converge_error = self.dcrModel._build_model_subroutine(initial_solution=1, verbose=False, gain=-2,
+                                                               test_convergence=True)
         self.assertTrue(converge_error)
 
     def test_solve_model(self):
         """Compare the result of _solve_model to previously computed values."""
         data_file = "test_data/solve_model_vals.npy"
-        y_size, x_size = self.dcrCorr.exposures[0].getDimensions()
+        y_size, x_size = self.dcrModel.exposures[0].getDimensions()
         kernel_size = self.kernel_size
-        n_step = self.dcrCorr.n_step
+        n_step = self.dcrModel.n_step
         pix_radius = kernel_size//2
         # Make j and i different slightly so we can tell if the indices get swapped
         i = x_size//2 + 1
         j = y_size//2 - 1
         slice_inds = np.s_[j - pix_radius: j + pix_radius + 1, i - pix_radius: i + pix_radius + 1]
         image_arr = []
-        for exp in self.dcrCorr.exposures:
+        for exp in self.dcrModel.exposures:
             image_arr.append(np.ravel(exp.getMaskedImage().getImage().getArray()[slice_inds]))
         image_vals = np.hstack(image_arr)
-        dcr_kernel = self.dcrCorr._build_dcr_kernel(kernel_size)
+        dcr_kernel = self.dcrModel._build_dcr_kernel(kernel_size)
         model_vals_gen = solve_model(kernel_size, image_vals, n_step=n_step, kernel_dcr=dcr_kernel)
         model_arr = [model for model in model_vals_gen]
         # np.save(data_file, model_arr)

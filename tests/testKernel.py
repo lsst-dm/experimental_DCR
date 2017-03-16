@@ -21,17 +21,12 @@
 
 from __future__ import print_function, division, absolute_import
 import numpy as np
-
-from lsst.afw.geom import Angle
 import unittest
+
 import lsst.utils.tests
 
-from python.test_utils import BasicDcrModel
+from python.test_utils import BasicGenerateTemplate
 from python.test_utils import DcrModelTestBase
-
-
-nanFloat = float("nan")
-nanAngle = Angle(nanFloat)
 
 
 class KernelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
@@ -42,8 +37,8 @@ class KernelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         data_file = "test_data/simple_phase_kernel.npy"
         psf = self.exposure.getPsf()
         psf_size = psf.computeKernelImage().getArray().shape[0]
-        phase_arr = BasicDcrModel._calc_offset_phase(exposure=self.exposure,
-                                                     dcr_gen=self.dcr_gen, size=psf_size)
+        phase_arr = BasicGenerateTemplate._calc_offset_phase(exposure=self.exposure,
+                                                             dcr_gen=self.dcr_gen, size=psf_size)
         # np.save(data_file, phase_arr)
         phase_arr_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref)
