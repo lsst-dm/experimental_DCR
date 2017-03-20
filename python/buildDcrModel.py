@@ -26,7 +26,6 @@ from __future__ import print_function, division, absolute_import
 import numpy as np
 from scipy.ndimage.interpolation import shift as scipy_shift
 
-import lsst.daf.persistence as daf_persistence
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
@@ -57,12 +56,14 @@ class BuildDcrModel(GenerateTemplate):
     debug : bool
         Temporary debugging option.
         If set, calculations are performed on only a small region of the full images.
+    default_repository : str
+        Full path to repository with the data
     detected_bit : int
         Value of the detected bit in the bit plane mask.
     exposure_time : float
         Length of the exposure, in seconds.
     exposures : list
-        Description
+        List of input exposures used to calculate the model.
     filter_name : str
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
     instrument : str
@@ -99,30 +100,30 @@ class BuildDcrModel(GenerateTemplate):
     -------
 
     Set up:
-    dcrCorr = DcrCorrection(n_step=3, repository="./test_data/",
-                            obsid_range=np.arange(100, 124, 3), band_name='g')
+    dcrModel = BuildDcrModel(n_step=3, input_repository="./test_data/",
+                             obsids=np.arange(100, 124, 3), band_name='g')
 
     Generate the model:
-    dcrCorr.build_model(max_iter=10)
+    dcrModel.build_model(max_iter=10)
 
     Use the model to make matched templates for several observations:
-    template_exposure_gen = dcrCorr.generate_templates_from_model(obsid_range=[108, 109, 110],
-                                                                  output_repository="./test_data_templates/")
+    template_exposure_gen = dcrModel.generate_templates_from_model(obsids=[108, 109, 110],
+                                                                   output_repository="./test_data_templates/")
     im_arr = []
     for exp in template_exposure_gen:
         im_arr.append(exp.getMaskedImage().getImage().getArray())
     """
 
-    def __init__(self, obsid_range=None, repository=".", band_name='g', wavelength_step=10.,
-                 n_step=None, exposures=None, detected_bit=32,
+    def __init__(self, obsids=None, input_repository='.', band_name='g',
+                 wavelength_step=10., n_step=None, exposures=None, detected_bit=32,
                  warp=False, instrument='lsstSim', debug_mode=False, **kwargs):
         """Load images from the repository and set up parameters.
 
         Parameters
         ----------
-        obsid_range : int or list of ints, optional
+        obsids : int or list of ints, optional
             The observation IDs of the data to load. Not used if `exposures` is set.
-        repository : str, optional
+        input_repository : str, optional
             Full path to repository with the data. Defaults to working directory
         band_name : str, optional
             Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
@@ -148,17 +149,14 @@ class BuildDcrModel(GenerateTemplate):
         Raises
         ------
         ValueError
-            If `exposures` is not set and no valid exposures are found in `repository`.
+            If  no valid exposures are found in `input_repository` and `exposures` is not set.
         """
+        self.filter_name = band_name
+        self.default_repository = input_repository
+        self.butler = None  # Placeholder. The butler is instantiated in read_exposures.
         if exposures is None:
-            self.butler = daf_persistence.Butler(repository)
-            dataId_gen = self._build_dataId(obsid_range, band_name, instrument=instrument)
-            self.exposures = []
-            for dataId in dataId_gen:
-                calexp = self.butler.get("calexp", dataId=dataId)
-                self.exposures.append(calexp)
-        else:
-            self.exposures = exposures
+            exposures = self.read_exposures(obsids, input_repository=input_repository)
+        self.exposures = [calexp for calexp in exposures]
 
         if len(self.exposures) == 0:
             raise ValueError("No valid exposures found.")
@@ -167,7 +165,6 @@ class BuildDcrModel(GenerateTemplate):
         self.instrument = instrument
         self.n_images = len(self.exposures)
         self.detected_bit = detected_bit
-        self.filter_name = band_name
         psf_size_arr = []
         hour_angle_arr = []
         ref_exp_i = 0
@@ -185,7 +182,9 @@ class BuildDcrModel(GenerateTemplate):
 
         if np.any(np.isnan(hour_angle_arr)):
             print("Warning: invalid hour angle in metadata. Azimuth will be used instead.")
-        self.x_size, self.y_size = self.exposures[ref_exp_i].getDimensions()
+        x_size, y_size = self.exposures[ref_exp_i].getDimensions()
+        self.x_size = x_size
+        self.y_size = y_size
         self.pixel_scale = self.exposures[ref_exp_i].getWcs().pixelScale()
         self.exposure_time = self.exposures[ref_exp_i].getInfo().getVisitInfo().getExposureTime()
         self.psf_size = int(np.min(psf_size_arr))

@@ -29,15 +29,15 @@ from scipy import constants
 from scipy.ndimage.interpolation import shift as scipy_shift
 from scipy.ndimage.morphology import binary_dilation
 
-from lsst.daf.base import DateTime
-import lsst.daf.persistence as daf_persistence
 from lsst.afw.coord import Coord, IcrsCoord
 import lsst.afw.geom as afwGeom
 from lsst.afw.geom import Angle
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
+from lsst.daf.base import DateTime
+import lsst.daf.persistence as daf_persistence
 import lsst.meas.algorithms as measAlg
-import lsst.pex.exceptions
+# import lsst.pex.exceptions
 import lsst.pex.policy as pexPolicy
 from lsst.sims.photUtils import Bandpass
 from lsst.utils import getPackageDir
@@ -79,9 +79,9 @@ class GenerateTemplate:
         The butler handles persisting and depersisting data to and from a repository.
     debug : bool
         Temporary debugging option.
-        If set, calculations are performed on only a small region of the full images.
+        If set, only a small region [y0: y0 + dy, x0: x0 + dx] of the full images are used.
     detected_bit : int
-        Value of the detected bit in the bit plane mask.
+        Value of the detected bit in the `mask`.
     exposure_time : float
         Length of the exposure, in seconds.
     filter_name : str
@@ -91,9 +91,10 @@ class GenerateTemplate:
     instrument : str
         Name of the observatory. Used to format dataIds for the butler.
     mask : np.ndarray
-        Combined bit plane mask of the model, which is used as the mask plane for generated templates.
+        Mask plane of the model. This mask is saved as the mask plane of the template exposure.
     model : list of np.ndarrays
-        The DCR model to be used to generate templates. Contains one array for each wavelength step.
+        The DCR model to be used to generate templates, calculate with `BuildDcrModel.build_model`.
+        Contains one array for each wavelength step.
     n_step : int
         Number of sub-filter wavelength planes to model.
     observatory : lsst.afw.coord.coordLib.Observatory
@@ -107,7 +108,8 @@ class GenerateTemplate:
     wcs : lsst.afw.image Wcs object
         World Coordinate System of the model.
     weights : np.ndarray
-        Weights of the model, calculated from the combined inverse variance of the input exposures.
+        Weights of the model. Calculated as the sum of the inverse variances of the input exposures to
+        `BuildDcrModel.build_model`. The same `weights` are used for each wavelength step of the `model`.
     """
 
     def __init__(self, model_repository=None, band_name='g', **kwargs):
@@ -449,40 +451,12 @@ class GenerateTemplate:
             return (img_vals, inverse_var)
 
     @staticmethod
-    def _fetch_metadata(metadata, property_name, default_value=None):
-        """Simple wrapper to extract metadata from an exposure, with some error handling.
-
-        Parameters
-        ----------
-        metadata : obj
-            An LSST exposure metadata object, obtained with exposure.getMetadata()
-        property_name : str
-            Name of the property to be extracted
-        default_value : None, optional
-            Value to be returned if the property is not found in the exposure metadata.
-
-        Returns
-        -------
-        Returns the value of `property_name` from the metadata of exposure.
-        If the given property is not found, returns `default_value` if supplied, or None otherwise.
-        """
-        try:
-            value = metadata.get(property_name)
-        except lsst.pex.exceptions.wrappers.NotFoundError as e:
-            if default_value is not None:
-                print("WARNING: " + str(e) + ". Using default value: %s" % repr(default_value))
-                return default_value
-            else:
-                return None
-        return value
-
-    @staticmethod
-    def _build_dataId(obsid_range, band, instrument='lsstSim'):
+    def _build_dataId(obsids, band, instrument='lsstSim'):
         """Construct a dataId dictionary for the butler to find a calexp.
 
         Parameters
         ----------
-        obsid_range : int, or list of ints
+        obsids : int, or list of ints
             The observation IDs of the data to load.
         band : str
             Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
@@ -494,19 +468,19 @@ class GenerateTemplate:
         Return a list of dataIds for the butler to use to load a calexp from a repository
         """
         if instrument == 'lsstSim':
-            if hasattr(obsid_range, '__iter__'):
+            if hasattr(obsids, '__iter__'):
                 dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                          for obsid in obsid_range]
+                          for obsid in obsids]
             else:
                 dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                          for obsid in [obsid_range]]
+                          for obsid in [obsids]]
         elif instrument == 'decam':
-            if hasattr(obsid_range, '__iter__'):
+            if hasattr(obsids, '__iter__'):
                 dataId = [{'visit': obsid, 'ccdnum': 10}
-                          for obsid in obsid_range]
+                          for obsid in obsids]
             else:
                 dataId = [{'visit': obsid, 'ccdnum': 10}
-                          for obsid in [obsid_range]]
+                          for obsid in [obsids]]
         return dataId
 
     @staticmethod

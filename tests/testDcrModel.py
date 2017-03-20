@@ -58,16 +58,6 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         dataId = BasicGenerateTemplate._build_model_dataId(band_ref, subfilter=subfilter)
         self.assertEqual(ref_id, dataId)
 
-    def test_fetch_metadata(self):
-        az = BasicGenerateTemplate._fetch_metadata(self.exposure.getMetadata(), "AZIMUTH")
-        self.assertFloatsAlmostEqual(az, self.azimuth.asDegrees())
-
-    def test_fetch_missing_metadata(self):
-        bogus_ref = 3.7
-        bogus = BasicGenerateTemplate._fetch_metadata(self.exposure.getMetadata(),
-                                                      "BOGUS", default_value=bogus_ref)
-        self.assertFloatsAlmostEqual(bogus, bogus_ref)
-
     def test_generate_template(self):
         """Compare the result of generate_templates_from_model to previously computed values."""
         data_file = "test_data/template.npy"
