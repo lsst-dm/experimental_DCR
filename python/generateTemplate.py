@@ -125,22 +125,25 @@ class GenerateTemplate:
             Any additional keyword arguments to pass to load_bandpass
         """
         self.butler = None
+        self.default_repository = model_repository
         self.load_model(model_repository=model_repository, band_name=band_name, **kwargs)
 
-    def generate_templates_from_model(self, obsid_range=None, exposures=None,
-                                      repository=None, output_repository=None,
+    def generate_templates_from_model(self, obsids=None, exposures=None,
+                                      input_repository=None, output_repository=None,
                                       instrument='lsstSim', warp=False, verbose=True,
                                       output_obsid_offset=None):
         """Use the previously generated model and construct a dcr template image.
 
         Parameters
         ----------
-        obsid_range : int, or list of ints, optional
-            Single, or list of observation IDs in repository to create matched
-            templates for. Ignored if exposures are supplied directly.
+        obsids : int, or list of ints, optional
+            Single, or list of observation IDs in `input_repository` to load and create matched
+            templates for.
+            Ignored if exposures are supplied directly.
         exposures : List or generator of lsst.afw.image.ExposureD objects, optional
             List or generator of exposure objects that will have matched templates created.
-        repository : str, optional
+            Intended primarily for unit tests that separate reading and writing from processing data.
+        input_repository : str, optional
             Path to the repository where the exposure data to be matched are stored.
             Ignored if exposures are supplied directly.
         output_repository : str, optional
@@ -164,31 +167,15 @@ class GenerateTemplate:
         Raises
         ------
         ValueError
-            If neither `repository` or `exposures` is set.
-            If neither `obsid_range` or `exposures` is set
+            If a butler has not been previously instantiated and input_repository is not supplied.
         """
-        butler_out = None  # Overwritten later if a butler is used
-        if exposures is None:
-            if repository is not None:
-                butler = daf_persistence.Butler(repository)
-                if self.butler is None:
-                    self.butler = butler
-            elif self.butler is not None:
-                butler = self.butler
-            else:
-                raise ValueError("Either repository or exposures must be set.")
-            if obsid_range is not None:
-                dataId_gen = self._build_dataId(obsid_range, self.filter_name, instrument=instrument)
-                exposures = (calexp for calexp in
-                             (butler.get("calexp", dataId=dataId) for dataId in dataId_gen))
-            else:
-                raise ValueError("One of obsid_range or exposures must be set.")
-
         self.instrument = instrument
         if self.psf is None:
             self.calc_psf_model()
 
-        for exp_i, calexp in enumerate(exposures):
+        if exposures is None:
+            exposures = self.read_exposures(obsids, input_repository=input_repository)
+        for calexp in exposures:
             visitInfo = calexp.getInfo().getVisitInfo()
             obsid = visitInfo.getExposureId()
             if verbose:
@@ -209,17 +196,103 @@ class GenerateTemplate:
                 obsid_out = obsid + output_obsid_offset
             else:
                 obsid_out = obsid
-            dataId_out = self._build_dataId(obsid_out, self.filter_name, instrument=instrument)[0]
             exposure = self.create_exposure(template, variance=variance, snap=0,
                                             boresightRotAngle=rotation_angle, weather=weather,
                                             elevation=el, azimuth=az, obsid=obsid_out)
             if warp:
                 wrap_warpExposure(exposure, wcs_exp, bbox_exp)
             if output_repository is not None:
-                if butler_out is None:
-                    butler_out = daf_persistence.Butler(output_repository)
-                butler_out.put(exposure, "calexp", dataId=dataId_out)
+                self.write_exposure(exposure, output_repository=output_repository)
             yield exposure
+
+    def read_exposures(self, obsids=None, input_repository=None, data_type="calexp"):
+        """Initialize a butler and read exposures from the given repository.
+
+        Parameters
+        ----------
+        obsids : int or list of ints, optional
+            Single, or list of observation IDs in `input_repository` to load and create matched
+            templates for.
+        input_repository : str, optional
+            Path to the repository where the exposure data to be matched are stored.
+        data_type : str, optional
+            The type of data to be persisted. Expected values are 'calexp' or 'dcrModel'
+
+        Yields
+        ------
+        lsst.afw.image.ExposureD object
+            The specified exposures from the given repository.
+
+        Raises
+        ------
+        ValueError
+            If no repository is set.
+        """
+        if input_repository is None:
+            input_repository = self.default_repository
+        if input_repository is not None:
+            butler = daf_persistence.Butler(inputs=input_repository)
+            if self.butler is None:
+                self.butler = butler
+        else:
+            butler = self.butler
+        if butler is None:
+            raise ValueError("Can't initialize butler: input_repository not set.")
+        if data_type == "calexp":
+            dataIds = self._build_dataId(obsids, self.filter_name, instrument=self.instrument)
+        elif data_type == "dcrModel":
+            # We want to read in all of the model planes, but we don't know ahead of time how many there are.
+            max_ids = 100
+            dataId_test = (self._build_model_dataId(self.filter_name, subfilter=f) for f in range(max_ids))
+            dataIds = []
+            for dataId in dataId_test:
+                if butler.datasetExists("dcrModel", dataId=dataId):
+                    dataIds.append(dataId)
+                else:
+                    break
+        else:
+            raise ValueError("Invalid `data_type`")
+        for dataId in dataIds:
+            yield butler.get(data_type, dataId=dataId)
+
+    def write_exposure(self, exposure, output_repository=None, data_type="calexp", subfilter=None):
+        """Persist an exposure using a butler.
+
+        Parameters
+        ----------
+        exposure : lsst.afw.image.ExposureD object
+            The exposure to be persisted to the given repository.
+        output_repository : str, optional
+            If specified, initialize a new butler set to write to the given `output_repository`.
+            Otherwise, the previously initialized butler is used.
+        data_type : str, optional
+            The type of data to be persisted. Expected values are 'calexp' or 'dcrModel'
+        subfilter : int, optional
+            The DCR model subfilter index, only used for `data_type`='dcrModel'
+
+        Returns
+        -------
+        None
+            The exposure is persisted to the repository.
+
+        Raises
+        ------
+        ValueError
+            If an unknown `data_type` is supplied.
+        """
+        visitInfo = exposure.getInfo().getVisitInfo()
+        obsid_out = visitInfo.getExposureId()
+        if data_type == "calexp":
+            dataId_out = self._build_dataId(obsid_out, self.filter_name, instrument=self.instrument)[0]
+        elif data_type == "dcrModel":
+            dataId_out = self._build_model_dataId(self.filter_name, subfilter)
+        else:
+            raise ValueError("Invalid `data_type`")
+        if output_repository is not None:
+            butler = daf_persistence.Butler(outputs=output_repository)
+        else:
+            butler = self.butler
+        butler.put(exposure, data_type, dataId=dataId_out)
 
     def build_matched_template(self, exposure, model=None, el=None, rotation_angle=None,
                                return_weights=True, weather=None):
@@ -795,10 +868,6 @@ class GenerateTemplate:
         -------
         None
         """
-        if model_repository is None:
-            butler = self.butler
-        else:
-            butler = daf_persistence.Butler(model_repository)
         wave_gen = self._wavelength_iterator(self.bandpass, use_midpoint=False)
         for f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
@@ -806,10 +875,11 @@ class GenerateTemplate:
                                        elevation=Angle(np.pi/2), azimuth=Angle(0),
                                        detectbit=self.detected_bit,
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
-                                       wavestep=self.bandpass.wavelen_step, telescop=self.instrument)
-            butler.put(exp, "dcrModel", dataId=self._build_model_dataId(self.filter_name, f))
+                                       telescop=self.instrument)
+            self.write_exposure(exp, output_repository=model_repository, data_type="dcrModel", subfilter=f)
 
-    def load_model(self, model_repository=None, band_name='g', **kwargs):
+    def load_model(self, model_repository=None, band_name='g',
+                   instrument='lsstSim', detected_bit=32, **kwargs):
         """Depersist a DCR model from a repository and set up the metadata.
 
         Parameters
@@ -826,37 +896,30 @@ class GenerateTemplate:
         -------
         None, but loads self.model and sets up all the needed quantities such as the psf and bandpass objects.
         """
-        if model_repository is None:
-            butler = self.butler
-        else:
-            butler = daf_persistence.Butler(model_repository)
+        self.instrument = instrument
+        self.filter_name = band_name
         model_arr = []
-        weights_arr = []
-        f = 0
-        while butler.datasetExists("dcrModel", dataId=self._build_model_dataId(band_name, subfilter=f)):
-            dcrModel = butler.get("dcrModel", dataId=self._build_model_dataId(band_name, subfilter=f))
+        dcrModel_gen = self.read_exposures(data_type="dcrModel", input_repository=model_repository)
+        for dcrModel in dcrModel_gen:
             model_arr.append(dcrModel.getMaskedImage().getImage().getArray())
-            weights_arr.append(dcrModel.getMaskedImage().getVariance().getArray())
-            f += 1
 
         self.model = model_arr
-        self.weights = weights_arr[0]  # The weights should be identical for all subfilters.
+        # The weights should be identical for all subfilters.
+        self.weights = dcrModel.getMaskedImage().getVariance().getArray()
+        # The masks should be identical for all subfilters
         self.mask = dcrModel.getMaskedImage().getMask().getArray()
 
-        # This only uses the mask of the last image. For real data all masks should be used.
-        meta = dcrModel.getMetadata()
         self.wcs = dcrModel.getWcs()
-        self.n_step = len(model_arr)
-        wave_step = self._fetch_metadata(meta, "WAVESTEP")
-        self.detected_bit = self._fetch_metadata(meta, "DETECTBIT")
+        self.n_step = len(self.model)
+        self.detected_bit = detected_bit
         self.y_size, self.x_size = dcrModel.getDimensions()
         self.pixel_scale = self.wcs.pixelScale()
         self.exposure_time = dcrModel.getInfo().getVisitInfo().getExposureTime()
         self.observatory = dcrModel.getInfo().getVisitInfo().getObservatory()
-        self.filter_name = band_name
         self.bbox = dcrModel.getBBox()
-        self.instrument = self._fetch_metadata(meta, "TELESCOP", default_value='lsstSim')
-        self.bandpass = self.load_bandpass(band_name=band_name, wavelength_step=wave_step, **kwargs)
+        bandpass_init = self.load_bandpass(band_name=band_name, **kwargs)
+        wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / self.n_step
+        self.bandpass = self.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
 
         self.psf = dcrModel.getPsf()
         psf_avg = self.psf.computeKernelImage().getArray()
