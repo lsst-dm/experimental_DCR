@@ -80,6 +80,8 @@ class GenerateTemplate:
     debug : bool
         Temporary debugging option.
         If set, only a small region [y0: y0 + dy, x0: x0 + dx] of the full images are used.
+    default_repository : str
+        Full path to repository with the data.
     detected_bit : int
         Value of the detected bit in the `mask`.
     exposure_time : float
@@ -110,6 +112,10 @@ class GenerateTemplate:
     weights : np.ndarray
         Weights of the model. Calculated as the sum of the inverse variances of the input exposures to
         `BuildDcrModel.build_model`. The same `weights` are used for each wavelength step of the `model`.
+    x_size : int
+        Width of the model, in pixels.
+    y_size : int
+        Height of the model, in pixels.
     """
 
     def __init__(self, model_repository=None, band_name='g', **kwargs):
@@ -886,7 +892,9 @@ class GenerateTemplate:
         self.wcs = dcrModel.getWcs()
         self.n_step = len(self.model)
         self.detected_bit = detected_bit
-        self.y_size, self.x_size = dcrModel.getDimensions()
+        y_size, x_size = dcrModel.getDimensions()
+        self.x_size = x_size
+        self.y_size = y_size
         self.pixel_scale = self.wcs.pixelScale()
         self.exposure_time = dcrModel.getInfo().getVisitInfo().getExposureTime()
         self.observatory = dcrModel.getInfo().getVisitInfo().getObservatory()

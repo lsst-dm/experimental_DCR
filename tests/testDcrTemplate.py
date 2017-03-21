@@ -1,3 +1,4 @@
+"""Tests for functions and methods that are primarily used for generating templates."""
 # LSST Data Management System
 # Copyright 2016 LSST Corporation.
 #
@@ -32,10 +33,11 @@ from python.test_utils import BasicGenerateTemplate
 from python.test_utils import DcrModelTestBase
 
 
-class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
-    """Tests for the functions in the DcrModel class."""
+class DcrTemplateTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
+    """Tests for the functions in the GenerateTemplate class."""
 
     def test_dataId_single(self):
+        """Test that the dataIds for the `calexp` data type are correct."""
         id_ref = 100
         band_ref = 'g'
         ref_id = {'visit': id_ref, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
@@ -43,6 +45,7 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         self.assertEqual(ref_id, dataId[0])
 
     def test_dataId_list(self):
+        """Test that the dataIds for the `calexp` data type are correct."""
         id_ref = [100, 103]
         band_ref = 'g'
         ref_id = {'visit': id_ref, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
@@ -52,6 +55,7 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
             self.assertEqual(ref_id, dataId[i])
 
     def test_model_dataId(self):
+        """Test that the dataIds for the `dcrModel` data type are correct."""
         subfilter = 1
         band_ref = 'g'
         ref_id = {'filter': band_ref, 'tract': 0, 'patch': '0', 'subfilter': subfilter}
@@ -78,27 +82,35 @@ class DcrModelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
             self.assertFloatsAlmostEqual(m_test, m_ref)
 
     def test_warp_exposure(self):
+        """Test that an exposure warped to its own wcs is unchanged."""
         wcs = self.exposure.getWcs()
         bbox = self.exposure.getBBox()
         wrap_warpExposure(self.exposure, wcs, bbox)
         array_warped = self.exposure.getMaskedImage().getImage().getArray()
+        y_size, x_size = array_warped.shape
+        n_pix = y_size*x_size
         # For some reason the edges are all NAN.
+        min_fraction = 0.25
         valid_inds = np.isfinite(array_warped)
-        self.assertGreater(np.sum(valid_inds), (self.size/2)**2)
+        self.assertGreater(np.sum(valid_inds)/n_pix, min_fraction)
         array_ref = self.array[valid_inds]
         array_warped = array_warped[valid_inds]
         self.assertFloatsAlmostEqual(array_ref, array_warped, rtol=1e-7)
 
     def test_rotation_angle(self):
+        """Test that we can calculate the same rotation angle that was originally supplied in setup."""
         rotation_angle = calculate_rotation_angle(self.exposure)
         self.assertFloatsAlmostEqual(self.rotation_angle.asDegrees(), rotation_angle.asDegrees())
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
+    """Test for memory leaks."""
+
     pass
 
 
 def setup_module(module):
+    """Setup helper for pytest."""
     lsst.utils.tests.init()
 
 

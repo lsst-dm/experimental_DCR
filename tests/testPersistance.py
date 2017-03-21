@@ -1,3 +1,4 @@
+"""Tests that read and write exposures and dcr models to disk."""
 # LSST Data Management System
 # Copyright 2016 LSST Corporation.
 #
@@ -33,11 +34,7 @@ class PersistanceTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
     """Tests that read and write exposures and dcr models to disk."""
 
     def test_create_exposure(self):
-        """Summary.
-
-        Returns
-        -------
-        None
+        """Test that the data retrieved from an exposure is the same as what it was initialized with.
 
         Raises
         ------
@@ -57,12 +54,7 @@ class PersistanceTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
             raise e
 
     def test_persist_dcr_model_roundtrip(self):
-        """Summary.
-
-        Returns
-        -------
-        None
-        """
+        """Test that an exposure can be persisted and later depersisted from a repository."""
         # Instantiating the butler takes several seconds, so all butler-related tests are condensed into one.
         model_repository = "test_data"
 
@@ -86,10 +78,13 @@ class PersistanceTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
+    """Test for memory leaks."""
+
     pass
 
 
 def setup_module(module):
+    """Setup helper for pytest."""
     lsst.utils.tests.init()
 
 

@@ -1,3 +1,4 @@
+"""Test the the calculations of Differential Chromatic Refraction."""
 # LSST Data Management System
 # Copyright 2016 LSST Corporation.
 #
@@ -32,7 +33,15 @@ from python.test_utils import BasicGenerateTemplate
 
 
 class DCRTestCase(lsst.utils.tests.TestCase):
-    """Test the the calculations of Differential Chromatic Refraction."""
+    """Test the the calculations of Differential Chromatic Refraction.
+
+    Attributes
+    ----------
+    bandpass : lsst.sims.photUtils.Bandpass object
+        Bandpass object returned by load_bandpass
+    pixel_scale : lsst.afw.geom.Angle
+            Plate scale, as an Angle.
+    """
 
     def setUp(self):
         """Define parameters used by every test."""
@@ -95,10 +104,13 @@ class DCRTestCase(lsst.utils.tests.TestCase):
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
+    """Test for memory leaks."""
+
     pass
 
 
 def setup_module(module):
+    """Setup helper for pytest."""
     lsst.utils.tests.init()
 
 

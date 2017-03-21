@@ -1,3 +1,4 @@
+"""Tests of the interface to Bandpass from lsst.sims.photUtils."""
 # LSST Data Management System
 # Copyright 2016 LSST Corporation.
 #
@@ -29,12 +30,23 @@ from python.test_utils import BasicGenerateTemplate
 
 
 class BandpassTestCase(lsst.utils.tests.TestCase):
-    """Tests of the interface to Bandpass from lsst.sims.photUtils."""
+    """Tests of the interface to Bandpass from lsst.sims.photUtils.
+
+    Attributes
+    ----------
+    band_name : str
+        Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
+    bandpass : lsst.sims.photUtils.Bandpass object
+        Bandpass object returned by load_bandpass
+    wavelength_step : float, optional
+            Wavelength resolution in nm, also the wavelength range of each sub-band plane.
+            If not set, the entire band range is used.
+    """
 
     def setUp(self):
         """Define parameters used by every test."""
         self.band_name = 'g'
-        self.wavelength_step = 10
+        self.wavelength_step = 10.
         self.bandpass = BasicGenerateTemplate.load_bandpass(band_name=self.band_name,
                                                             wavelength_step=self.wavelength_step)
 
@@ -47,10 +59,13 @@ class BandpassTestCase(lsst.utils.tests.TestCase):
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
+    """Test for memory leaks."""
+
     pass
 
 
 def setup_module(module):
+    """Setup helper for pytest."""
     lsst.utils.tests.init()
 
 

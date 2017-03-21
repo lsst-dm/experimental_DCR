@@ -1,3 +1,4 @@
+"""Tests of the kernels that incorporate dcr-based shifts."""
 # LSST Data Management System
 # Copyright 2016 LSST Corporation.
 #
@@ -45,10 +46,13 @@ class KernelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
+    """Test for memory leaks."""
+
     pass
 
 
 def setup_module(module):
+    """Setup helper for pytest."""
     lsst.utils.tests.init()
 
 
