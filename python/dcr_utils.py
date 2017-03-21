@@ -34,8 +34,8 @@ import lsst.afw.math as afwMath
 
 from .lsst_defaults import lsst_observatory, lsst_weather
 
-__all__ = ("parallactic_angle", "wrap_warpExposure", "solve_model", "calculate_rotation_angle",
-           "refraction", "diff_refraction")
+__all__ = ["parallactic_angle", "wrap_warpExposure", "solve_model", "calculate_rotation_angle",
+           "refraction", "diff_refraction"]
 
 
 def parallactic_angle(hour_angle, dec, lat):

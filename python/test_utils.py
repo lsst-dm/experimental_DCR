@@ -33,7 +33,7 @@ from .buildDcrModel import BuildDcrModel
 from .dcr_utils import parallactic_angle
 from .lsst_defaults import lsst_observatory
 
-__all__ = ("BasicBandpass", "BasicGenerateTemplate", "BasicBuildDcrModel", "DcrModelTestBase")
+__all__ = ["BasicBandpass", "BasicGenerateTemplate", "BasicBuildDcrModel", "DcrModelTestBase"]
 
 nanFloat = float("nan")
 nanAngle = Angle(nanFloat)

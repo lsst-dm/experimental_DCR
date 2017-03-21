@@ -48,7 +48,7 @@ from .dcr_utils import diff_refraction
 from .dcr_utils import solve_model
 from .dcr_utils import wrap_warpExposure
 
-__all__ = ("GenerateTemplate")
+__all__ = ['GenerateTemplate']
 
 nanFloat = float("nan")
 nanAngle = Angle(nanFloat)
@@ -83,7 +83,7 @@ class GenerateTemplate:
     default_repository : str
         Full path to repository with the data.
     detected_bit : int
-        Value of the detected bit in the `mask`.
+        Value of the detected bit in the ``mask``.
     exposure_time : float
         Length of the exposure, in seconds.
     filter_name : str
@@ -95,7 +95,7 @@ class GenerateTemplate:
     mask : np.ndarray
         Mask plane of the model. This mask is saved as the mask plane of the template exposure.
     model : list of np.ndarrays
-        The DCR model to be used to generate templates, calculate with `BuildDcrModel.build_model`.
+        The DCR model to be used to generate templates, calculate with ``BuildDcrModel.build_model``.
         Contains one array for each wavelength step.
     n_step : int
         Number of sub-filter wavelength planes to model.
@@ -111,7 +111,7 @@ class GenerateTemplate:
         World Coordinate System of the model.
     weights : np.ndarray
         Weights of the model. Calculated as the sum of the inverse variances of the input exposures to
-        `BuildDcrModel.build_model`. The same `weights` are used for each wavelength step of the `model`.
+        ``BuildDcrModel.build_model``. The same ``weights`` are used for each wavelength step of the ``model``.
     x_size : int
         Width of the model, in pixels.
     y_size : int
@@ -145,7 +145,7 @@ class GenerateTemplate:
         Parameters
         ----------
         obsids : int, or list of ints, optional
-            Single, or list of observation IDs in `input_repository` to load and create matched
+            Single, or list of observation IDs in ``input_repository`` to load and create matched
             templates for.
             Ignored if exposures are supplied directly.
         exposures : List or generator of lsst.afw.image.ExposureD objects, optional
@@ -156,7 +156,7 @@ class GenerateTemplate:
             Ignored if exposures are supplied directly.
         output_repository : str, optional
             Path to repository directory where templates will be saved.
-            The templates will not be written to disk if `output_repository` is None.
+            The templates will not be written to disk if ``output_repository`` is None.
         instrument : str, optional
             Name of the observatory.
         warp : bool, optional
@@ -219,12 +219,12 @@ class GenerateTemplate:
         Parameters
         ----------
         obsids : int or list of ints, optional
-            Single, or list of observation IDs in `input_repository` to load and create matched
+            Single, or list of observation IDs in ``input_repository`` to load and create matched
             templates for.
         input_repository : str, optional
             Path to the repository where the exposure data to be matched are stored.
         data_type : str, optional
-            The type of data to be persisted. Expected values are 'calexp' or 'dcrModel'
+            The type of data to be persisted. Expected values are ``'calexp'`` or ``'dcrModel'``
 
         Yields
         ------
@@ -271,12 +271,12 @@ class GenerateTemplate:
         exposure : lsst.afw.image.ExposureD object
             The exposure to be persisted to the given repository.
         output_repository : str, optional
-            If specified, initialize a new butler set to write to the given `output_repository`.
+            If specified, initialize a new butler set to write to the given ``output_repository``.
             Otherwise, the previously initialized butler is used.
         data_type : str, optional
-            The type of data to be persisted. Expected values are 'calexp' or 'dcrModel'
+            The type of data to be persisted. Expected values are ``'calexp'`` or ``'dcrModel'``
         subfilter : int, optional
-            The DCR model subfilter index, only used for `data_type`='dcrModel'
+            The DCR model subfilter index, only used for ```data_type`='dcrModel'``
 
         Returns
         -------
@@ -286,7 +286,7 @@ class GenerateTemplate:
         Raises
         ------
         ValueError
-            If an unknown `data_type` is supplied.
+            If an unknown ``data_type`` is supplied.
         """
         visitInfo = exposure.getInfo().getVisitInfo()
         obsid_out = visitInfo.getExposureId()
@@ -327,7 +327,7 @@ class GenerateTemplate:
         -------
         np.ndarrary or (np.ndarray, np.ndarray)
             Returns a numpy ndarray of the image values for the template.
-            If `return_weights` is set, then it returns a tuple of the image and variance arrays.
+            If ``return_weights`` is set, then it returns a tuple of the image and variance arrays.
         """
         if el is None:
             el = exposure.getInfo().getVisitInfo().getBoresightAzAlt().getLatitude()
@@ -521,7 +521,7 @@ class GenerateTemplate:
         pixel_scale : lsst.afw.geom.Angle
             Plate scale, as an Angle.
         ra : lsst.afw.geom.Angle
-            Right Ascension of the reference pixel, as an Angle.
+            Right Ascension of the reference pixel, as an `Angle`.
         dec : lsst.afw.geom.Angle
             Declination of the reference pixel, as an Angle.
         sky_rotation : lsst.afw.geom.Angle
@@ -647,7 +647,7 @@ class GenerateTemplate:
 
         Yields
         -----
-        If `use_midpoint` is set, yields the effective wavelength of the next sub-band.
+        If ``use_midpoint`` is set, yields the effective wavelength of the next sub-band.
         Otherwise, yields the start and end wavelength of the next sub-band as a tuple.
         """
         wave_start = bandpass.wavelen_min
@@ -688,8 +688,10 @@ class GenerateTemplate:
 
         Yields
         ------
-            If `use_midpoint` is True, yields the x and y DCR offsets for the mid-point of the next sub-band.
-            Otherwise yields a tuple of the x and y DCR offsets for the start and end of the next sub-band.
+            If ``use_midpoint`` is True, yields the x and y DCR offsets
+            for the mid-point of the next sub-band.
+            Otherwise yields a tuple of the x and y
+            DCR offsets for the start and end of the next sub-band.
 
         """
         zenith_angle = Angle(np.pi/2) - elevation
@@ -755,7 +757,7 @@ class GenerateTemplate:
             Class containing the measured temperature, pressure, and humidity
             at the observatory during an observation
             Weather data is read from the exposure metadata if not supplied.
-        **kwargs : TYPE
+        **kwargs :
             Any additional keyword arguments will be added to the metadata of the exposure.
 
         Returns
@@ -865,12 +867,12 @@ class GenerateTemplate:
         Parameters
         ----------
         model_repository : None, optional
-            Full path to the directory of the repository to load the dcrModel from.
+            Full path to the directory of the repository to load the ``dcrModel`` from.
             If not set, uses the existing self.butler
         band_name : str, optional
             Common name of the filter used. For LSST, use u, g, r, i, z, or y
-        **kwargs : TYPE
-            Any additional keyword arguments to pass to load_bandpass
+        **kwargs :
+            Any additional keyword arguments to pass to ``load_bandpass``
 
         Returns
         -------
@@ -915,7 +917,7 @@ class GenerateTemplate:
         Parameters
         ----------
         dcr_gen : generator
-             A dcr generator of offsets, returned by _dcr_generator.
+             A dcr generator of offsets, returned by ``_dcr_generator``.
         exposure : lsst.afw.image.ExposureD object, optional
             An LSST exposure object. Only needed if size is not specified.
         size : int, optional
@@ -960,11 +962,11 @@ class GenerateTemplate:
             the origin image and a region twice as wide in the destination image.
             This helps avoid edge effects when computing A^T A.
         exposure : lsst.afw.image.ExposureD object, optional
-            If not supplied, the covariance matrix for all exposures in self.exposures is calculated.
+            If not supplied, the covariance matrix for all exposures in ``self.exposures`` is calculated.
         bandpass : lsst.sims.photUtils.Bandpass object
             Bandpass object returned by load_bandpass
         n_step : int, optional
-            Number of sub-band planes to use. Default is to use self.n_step
+            Number of sub-band planes to use. Default is to use ``self.n_step``
 
         Returns
         -------
@@ -1114,7 +1116,7 @@ def _kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False):
         Dimension in pixels of the given axis.
     n_substep : int, optional
         Number of points in the numerical integration. Default is 1.
-    lanczos : None, optional
+    lanczos : int, optional
         If set, the order of lanczos interpolation to use.
     debug_sinc : bool, optional
         Set to use a simple linear interpolation between nearest neighbors, instead of a sinc kernel.

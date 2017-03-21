@@ -1,0 +1,1271 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>python.generateTemplate &#8212; generateTemplate</title>
+    
+    <link rel="stylesheet" href="../../_static/bootstrap-astropy.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true,
+        SOURCELINK_SUFFIX: '.txt'
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <script type="text/javascript" src="../../_static/sidebar.js"></script>
+    <link rel="search" title="Search" href="../../search.html" />
+
+<script src="https://use.typekit.net/eme3dgn.js"></script>
+<script>try{Typekit.load({ async: true });}catch(e){}</script>
+<script type="text/javascript" src="../../_static/copybutton.js"></script>
+
+
+  </head>
+  <body role="document">
+<div class="topbar">
+  <a class="brand" title="Documentation Home" href="../../index.html">
+    <span id="logotext">LSST Science Pipelines</span>
+  </a>
+  <ul>
+    <li><a title="General Index" href="../../genindex.html">Index</a></li>
+    <li><a title="Module Index" href="../../py-modindex.html">Modules</a></li>
+    <li>
+      
+      
+<form action="../../search.html" method="get">
+  <input type="text" name="q" placeholder="Search" />
+  <input type="hidden" name="check_keywords" value="yes" />
+  <input type="hidden" name="area" value="default" />
+</form>
+      
+    </li>
+  </ul>
+</div>
+
+<div class="related">
+    <h3>Navigation</h3>
+    <ul>
+      <li>
+	<a href="../../index.html">generateTemplate</a>
+	 &#187;
+      </li>
+      <li><a href="../index.html" accesskey="U">Module code</a> &#187;</li>
+      
+       
+    </ul>
+</div>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for python.generateTemplate</h1><div class="highlight"><pre>
+<span class="sd">&quot;&quot;&quot;Attempts to create airmass-matched template images for existing images in an LSST repository.&quot;&quot;&quot;</span>
+
+<span class="c"># LSST Data Management System</span>
+<span class="c"># Copyright 2016 LSST Corporation.</span>
+<span class="c">#</span>
+<span class="c"># This product includes software developed by the</span>
+<span class="c"># LSST Project (http://www.lsst.org/).</span>
+<span class="c">#</span>
+<span class="c"># This program is free software: you can redistribute it and/or modify</span>
+<span class="c"># it under the terms of the GNU General Public License as published by</span>
+<span class="c"># the Free Software Foundation, either version 3 of the License, or</span>
+<span class="c"># (at your option) any later version.</span>
+<span class="c">#</span>
+<span class="c"># This program is distributed in the hope that it will be useful,</span>
+<span class="c"># but WITHOUT ANY WARRANTY; without even the implied warranty of</span>
+<span class="c"># MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the</span>
+<span class="c"># GNU General Public License for more details.</span>
+<span class="c">#</span>
+<span class="c"># You should have received a copy of the LSST License Statement and</span>
+<span class="c"># the GNU General Public License along with this program.  If not,</span>
+<span class="c"># see &lt;http://www.lsstcorp.org/LegalNotices/&gt;.</span>
+<span class="c">#</span>
+
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="k">import</span> <span class="n">print_function</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">absolute_import</span>
+<span class="kn">from</span> <span class="nn">collections</span> <span class="k">import</span> <span class="n">namedtuple</span>
+
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">from</span> <span class="nn">scipy</span> <span class="k">import</span> <span class="n">constants</span>
+<span class="kn">from</span> <span class="nn">scipy.ndimage.interpolation</span> <span class="k">import</span> <span class="n">shift</span> <span class="k">as</span> <span class="n">scipy_shift</span>
+<span class="kn">from</span> <span class="nn">scipy.ndimage.morphology</span> <span class="k">import</span> <span class="n">binary_dilation</span>
+
+<span class="kn">from</span> <span class="nn">lsst.afw.coord</span> <span class="k">import</span> <span class="n">Coord</span><span class="p">,</span> <span class="n">IcrsCoord</span>
+<span class="kn">import</span> <span class="nn">lsst.afw.geom</span> <span class="k">as</span> <span class="nn">afwGeom</span>
+<span class="kn">from</span> <span class="nn">lsst.afw.geom</span> <span class="k">import</span> <span class="n">Angle</span>
+<span class="kn">import</span> <span class="nn">lsst.afw.image</span> <span class="k">as</span> <span class="nn">afwImage</span>
+<span class="kn">import</span> <span class="nn">lsst.afw.math</span> <span class="k">as</span> <span class="nn">afwMath</span>
+<span class="kn">from</span> <span class="nn">lsst.daf.base</span> <span class="k">import</span> <span class="n">DateTime</span>
+<span class="kn">import</span> <span class="nn">lsst.daf.persistence</span> <span class="k">as</span> <span class="nn">daf_persistence</span>
+<span class="kn">import</span> <span class="nn">lsst.meas.algorithms</span> <span class="k">as</span> <span class="nn">measAlg</span>
+<span class="c"># import lsst.pex.exceptions</span>
+<span class="kn">import</span> <span class="nn">lsst.pex.policy</span> <span class="k">as</span> <span class="nn">pexPolicy</span>
+<span class="kn">from</span> <span class="nn">lsst.sims.photUtils</span> <span class="k">import</span> <span class="n">Bandpass</span>
+<span class="kn">from</span> <span class="nn">lsst.utils</span> <span class="k">import</span> <span class="n">getPackageDir</span>
+
+<span class="kn">from</span> <span class="nn">.lsst_defaults</span> <span class="k">import</span> <span class="n">lsst_observatory</span><span class="p">,</span> <span class="n">lsst_weather</span>
+<span class="kn">from</span> <span class="nn">.dcr_utils</span> <span class="k">import</span> <span class="n">calculate_rotation_angle</span>
+<span class="kn">from</span> <span class="nn">.dcr_utils</span> <span class="k">import</span> <span class="n">diff_refraction</span>
+<span class="kn">from</span> <span class="nn">.dcr_utils</span> <span class="k">import</span> <span class="n">solve_model</span>
+<span class="kn">from</span> <span class="nn">.dcr_utils</span> <span class="k">import</span> <span class="n">wrap_warpExposure</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;GenerateTemplate&#39;</span><span class="p">]</span>
+
+<span class="n">nanFloat</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s">&quot;nan&quot;</span><span class="p">)</span>
+<span class="n">nanAngle</span> <span class="o">=</span> <span class="n">Angle</span><span class="p">(</span><span class="n">nanFloat</span><span class="p">)</span>
+
+<span class="c"># Temporary debugging parameters, used if debug_mode=True or self.debug=True is set.</span>
+<span class="c"># In debug mode, the DCR model is only calculated for pixels within [y0: y0 + dy, x0: x0 + dx]</span>
+<span class="n">x0</span> <span class="o">=</span> <span class="mi">300</span>
+<span class="n">dx</span> <span class="o">=</span> <span class="mi">200</span>
+<span class="n">y0</span> <span class="o">=</span> <span class="mi">500</span>
+<span class="n">dy</span> <span class="o">=</span> <span class="mi">200</span>
+
+
+<div class="viewcode-block" id="GenerateTemplate"><a class="viewcode-back" href="../../py-api/python.generateTemplate.GenerateTemplate.html#python.generateTemplate.GenerateTemplate">[docs]</a><span class="k">class</span> <span class="nc">GenerateTemplate</span><span class="p">:</span>
+    <span class="sd">&quot;&quot;&quot;Lightweight object with only the minimum needed to generate DCR-matched template exposures.</span>
+
+<span class="sd">    A model must first be generated with DcrCorrection (below). That model can then be used directly, or</span>
+<span class="sd">    persisted and later read back in. GenerateTemplate requires much less memory than DcrCorrection,</span>
+<span class="sd">    since it does not store the input exposures. This class will generate template exposures suitable for</span>
+<span class="sd">    image differencing that are matched to existing exposures in a repository.</span>
+
+<span class="sd">    Attributes</span>
+<span class="sd">    ----------</span>
+<span class="sd">    bandpass : lsst.sims.photUtils.Bandpass object</span>
+<span class="sd">        Bandpass object returned by load_bandpass</span>
+<span class="sd">    bbox : lsst.afw.geom.Box2I object</span>
+<span class="sd">        A bounding box.</span>
+<span class="sd">    butler : lsst.daf.persistence Butler object</span>
+<span class="sd">        The butler handles persisting and depersisting data to and from a repository.</span>
+<span class="sd">    debug : bool</span>
+<span class="sd">        Temporary debugging option.</span>
+<span class="sd">        If set, only a small region [y0: y0 + dy, x0: x0 + dx] of the full images are used.</span>
+<span class="sd">    default_repository : str</span>
+<span class="sd">        Full path to repository with the data.</span>
+<span class="sd">    detected_bit : int</span>
+<span class="sd">        Value of the detected bit in the ``mask``.</span>
+<span class="sd">    exposure_time : float</span>
+<span class="sd">        Length of the exposure, in seconds.</span>
+<span class="sd">    filter_name : str</span>
+<span class="sd">        Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.</span>
+<span class="sd">        Filter names are restricted by the filter profiles stored in lsst.sims.photUtils.Bandpass.</span>
+<span class="sd">        If other filters are used, the profiles should be provided with a new Bandpass class.</span>
+<span class="sd">    instrument : str</span>
+<span class="sd">        Name of the observatory. Used to format dataIds for the butler.</span>
+<span class="sd">    mask : np.ndarray</span>
+<span class="sd">        Mask plane of the model. This mask is saved as the mask plane of the template exposure.</span>
+<span class="sd">    model : list of np.ndarrays</span>
+<span class="sd">        The DCR model to be used to generate templates, calculate with ``BuildDcrModel.build_model``.</span>
+<span class="sd">        Contains one array for each wavelength step.</span>
+<span class="sd">    n_step : int</span>
+<span class="sd">        Number of sub-filter wavelength planes to model.</span>
+<span class="sd">    observatory : lsst.afw.coord.coordLib.Observatory</span>
+<span class="sd">        Class containing the longitude, latitude, and altitude of the observatory.</span>
+<span class="sd">    pixel_scale : lsst.afw.geom.Angle</span>
+<span class="sd">            Plate scale, as an Angle.</span>
+<span class="sd">    psf : lsst.meas.algorithms KernelPsf object</span>
+<span class="sd">        Representation of the point spread function (PSF) of the model.</span>
+<span class="sd">    psf_size : int</span>
+<span class="sd">        Dimension of the PSF, in pixels.</span>
+<span class="sd">    wcs : lsst.afw.image Wcs object</span>
+<span class="sd">        World Coordinate System of the model.</span>
+<span class="sd">    weights : np.ndarray</span>
+<span class="sd">        Weights of the model. Calculated as the sum of the inverse variances of the input exposures to</span>
+<span class="sd">        ``BuildDcrModel.build_model``. The same ``weights`` are used for each wavelength step of the ``model``.</span>
+<span class="sd">    x_size : int</span>
+<span class="sd">        Width of the model, in pixels.</span>
+<span class="sd">    y_size : int</span>
+<span class="sd">        Height of the model, in pixels.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_repository</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">band_name</span><span class="o">=</span><span class="s">&#39;g&#39;</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Restore a persisted DCR model created with DcrCorrection.</span>
+
+<span class="sd">        Only run when restoring a model or for testing; otherwise superceded by DcrCorrection __init__.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        model_repository : None, optional</span>
+<span class="sd">            Path to the repository where the previously-generated DCR model is stored.</span>
+<span class="sd">        band_name : str, optional</span>
+<span class="sd">            Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.</span>
+<span class="sd">        **kwargs : TYPE</span>
+<span class="sd">            Any additional keyword arguments to pass to load_bandpass</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">butler</span> <span class="o">=</span> <span class="k">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">default_repository</span> <span class="o">=</span> <span class="n">model_repository</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">load_model</span><span class="p">(</span><span class="n">model_repository</span><span class="o">=</span><span class="n">model_repository</span><span class="p">,</span> <span class="n">band_name</span><span class="o">=</span><span class="n">band_name</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+<div class="viewcode-block" id="GenerateTemplate.generate_templates_from_model"><a class="viewcode-back" href="../../py-api/python.generateTemplate.GenerateTemplate.html#python.generateTemplate.GenerateTemplate.generate_templates_from_model">[docs]</a>    <span class="k">def</span> <span class="nf">generate_templates_from_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obsids</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">exposures</span><span class="o">=</span><span class="k">None</span><span class="p">,</span>
+                                      <span class="n">input_repository</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">output_repository</span><span class="o">=</span><span class="k">None</span><span class="p">,</span>
+                                      <span class="n">instrument</span><span class="o">=</span><span class="s">&#39;lsstSim&#39;</span><span class="p">,</span> <span class="n">warp</span><span class="o">=</span><span class="k">False</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="k">True</span><span class="p">,</span>
+                                      <span class="n">output_obsid_offset</span><span class="o">=</span><span class="k">None</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Use the previously generated model and construct a dcr template image.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        obsids : int, or list of ints, optional</span>
+<span class="sd">            Single, or list of observation IDs in ``input_repository`` to load and create matched</span>
+<span class="sd">            templates for.</span>
+<span class="sd">            Ignored if exposures are supplied directly.</span>
+<span class="sd">        exposures : List or generator of lsst.afw.image.ExposureD objects, optional</span>
+<span class="sd">            List or generator of exposure objects that will have matched templates created.</span>
+<span class="sd">            Intended primarily for unit tests that separate reading and writing from processing data.</span>
+<span class="sd">        input_repository : str, optional</span>
+<span class="sd">            Path to the repository where the exposure data to be matched are stored.</span>
+<span class="sd">            Ignored if exposures are supplied directly.</span>
+<span class="sd">        output_repository : str, optional</span>
+<span class="sd">            Path to repository directory where templates will be saved.</span>
+<span class="sd">            The templates will not be written to disk if ``output_repository`` is None.</span>
+<span class="sd">        instrument : str, optional</span>
+<span class="sd">            Name of the observatory.</span>
+<span class="sd">        warp : bool, optional</span>
+<span class="sd">            Set to true if the exposures have different wcs from the model.</span>
+<span class="sd">            If True, the generated templates will be warped to match the wcs of each exposure.</span>
+<span class="sd">        verbose : bool, optional</span>
+<span class="sd">            Set to True to print progress messages.</span>
+<span class="sd">        output_obsid_offset : int, optional</span>
+<span class="sd">            Optional offset to add to the output obsids.</span>
+<span class="sd">            Use if writing to the same repository as the input to avoid over-writing the input data.</span>
+
+<span class="sd">        Yields</span>
+<span class="sd">        ------</span>
+<span class="sd">        Returns a generator that builds DCR-matched templates for each exposure.</span>
+
+<span class="sd">        Raises</span>
+<span class="sd">        ------</span>
+<span class="sd">        ValueError</span>
+<span class="sd">            If a butler has not been previously instantiated and input_repository is not supplied.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">instrument</span> <span class="o">=</span> <span class="n">instrument</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">psf</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">calc_psf_model</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">exposures</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">exposures</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">read_exposures</span><span class="p">(</span><span class="n">obsids</span><span class="p">,</span> <span class="n">input_repository</span><span class="o">=</span><span class="n">input_repository</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">calexp</span> <span class="ow">in</span> <span class="n">exposures</span><span class="p">:</span>
+            <span class="n">visitInfo</span> <span class="o">=</span> <span class="n">calexp</span><span class="o">.</span><span class="n">getInfo</span><span class="p">()</span><span class="o">.</span><span class="n">getVisitInfo</span><span class="p">()</span>
+            <span class="n">obsid</span> <span class="o">=</span> <span class="n">visitInfo</span><span class="o">.</span><span class="n">getExposureId</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">verbose</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="s">&quot;Working on observation %s&quot;</span> <span class="o">%</span> <span class="n">obsid</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s">&quot;&quot;</span><span class="p">)</span>
+            <span class="n">bbox_exp</span> <span class="o">=</span> <span class="n">calexp</span><span class="o">.</span><span class="n">getBBox</span><span class="p">()</span>
+            <span class="n">wcs_exp</span> <span class="o">=</span> <span class="n">calexp</span><span class="o">.</span><span class="n">getInfo</span><span class="p">()</span><span class="o">.</span><span class="n">getWcs</span><span class="p">()</span>
+            <span class="n">el</span> <span class="o">=</span> <span class="n">visitInfo</span><span class="o">.</span><span class="n">getBoresightAzAlt</span><span class="p">()</span><span class="o">.</span><span class="n">getLatitude</span><span class="p">()</span>
+            <span class="n">az</span> <span class="o">=</span> <span class="n">visitInfo</span><span class="o">.</span><span class="n">getBoresightAzAlt</span><span class="p">()</span><span class="o">.</span><span class="n">getLongitude</span><span class="p">()</span>
+            <span class="n">rotation_angle</span> <span class="o">=</span> <span class="n">calculate_rotation_angle</span><span class="p">(</span><span class="n">calexp</span><span class="p">)</span>
+            <span class="n">weather</span> <span class="o">=</span> <span class="n">visitInfo</span><span class="o">.</span><span class="n">getWeather</span><span class="p">()</span>
+            <span class="n">template</span><span class="p">,</span> <span class="n">variance</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">build_matched_template</span><span class="p">(</span><span class="n">calexp</span><span class="p">,</span> <span class="n">el</span><span class="o">=</span><span class="n">el</span><span class="p">,</span> <span class="n">rotation_angle</span><span class="o">=</span><span class="n">rotation_angle</span><span class="p">,</span>
+                                                             <span class="n">weather</span><span class="o">=</span><span class="n">weather</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">verbose</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="s">&quot; ... Done!&quot;</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">output_obsid_offset</span> <span class="ow">is</span> <span class="ow">not</span> <span class="k">None</span><span class="p">:</span>
+                <span class="n">obsid_out</span> <span class="o">=</span> <span class="n">obsid</span> <span class="o">+</span> <span class="n">output_obsid_offset</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">obsid_out</span> <span class="o">=</span> <span class="n">obsid</span>
+            <span class="n">exposure</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">create_exposure</span><span class="p">(</span><span class="n">template</span><span class="p">,</span> <span class="n">variance</span><span class="o">=</span><span class="n">variance</span><span class="p">,</span> <span class="n">snap</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+                                            <span class="n">boresightRotAngle</span><span class="o">=</span><span class="n">rotation_angle</span><span class="p">,</span> <span class="n">weather</span><span class="o">=</span><span class="n">weather</span><span class="p">,</span>
+                                            <span class="n">elevation</span><span class="o">=</span><span class="n">el</span><span class="p">,</span> <span class="n">azimuth</span><span class="o">=</span><span class="n">az</span><span class="p">,</span> <span class="n">obsid</span><span class="o">=</span><span class="n">obsid_out</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">warp</span><span class="p">:</span>
+                <span class="n">wrap_warpExposure</span><span class="p">(</span><span class="n">exposure</span><span class="p">,</span> <span class="n">wcs_exp</span><span class="p">,</span> <span class="n">bbox_exp</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">output_repository</span> <span class="ow">is</span> <span class="ow">not</span> <span class="k">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">write_exposure</span><span class="p">(</span><span class="n">exposure</span><span class="p">,</span> <span class="n">output_repository</span><span class="o">=</span><span class="n">output_repository</span><span class="p">)</span>
+            <span class="k">yield</span> <span class="n">exposure</span></div>
+
+<div class="viewcode-block" id="GenerateTemplate.read_exposures"><a class="viewcode-back" href="../../py-api/python.generateTemplate.GenerateTemplate.html#python.generateTemplate.GenerateTemplate.read_exposures">[docs]</a>    <span class="k">def</span> <span class="nf">read_exposures</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obsids</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">input_repository</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">data_type</span><span class="o">=</span><span class="s">&quot;calexp&quot;</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Initialize a butler and read exposures from the given repository.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        obsids : int or list of ints, optional</span>
+<span class="sd">            Single, or list of observation IDs in ``input_repository`` to load and create matched</span>
+<span class="sd">            templates for.</span>
+<span class="sd">        input_repository : str, optional</span>
+<span class="sd">            Path to the repository where the exposure data to be matched are stored.</span>
+<span class="sd">        data_type : str, optional</span>
+<span class="sd">            The type of data to be persisted. Expected values are ``&#39;calexp&#39;`` or ``&#39;dcrModel&#39;``</span>
+
+<span class="sd">        Yields</span>
+<span class="sd">        ------</span>
+<span class="sd">        lsst.afw.image.ExposureD object</span>
+<span class="sd">            The specified exposures from the given repository.</span>
+
+<span class="sd">        Raises</span>
+<span class="sd">        ------</span>
+<span class="sd">        ValueError</span>
+<span class="sd">            If no repository is set.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">input_repository</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">input_repository</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">default_repository</span>
+        <span class="k">if</span> <span class="n">input_repository</span> <span class="ow">is</span> <span class="ow">not</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">butler</span> <span class="o">=</span> <span class="n">daf_persistence</span><span class="o">.</span><span class="n">Butler</span><span class="p">(</span><span class="n">inputs</span><span class="o">=</span><span class="n">input_repository</span><span class="p">)</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">butler</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">butler</span> <span class="o">=</span> <span class="n">butler</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">butler</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">butler</span>
+        <span class="k">if</span> <span class="n">butler</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s">&quot;Can&#39;t initialize butler: input_repository not set.&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">data_type</span> <span class="o">==</span> <span class="s">&quot;calexp&quot;</span><span class="p">:</span>
+            <span class="n">dataIds</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_build_dataId</span><span class="p">(</span><span class="n">obsids</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">filter_name</span><span class="p">,</span> <span class="n">instrument</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">instrument</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">data_type</span> <span class="o">==</span> <span class="s">&quot;dcrModel&quot;</span><span class="p">:</span>
+            <span class="c"># We want to read in all of the model planes, but we don&#39;t know ahead of time how many there are.</span>
+            <span class="n">max_ids</span> <span class="o">=</span> <span class="mi">100</span>
+            <span class="n">dataId_test</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_build_model_dataId</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">filter_name</span><span class="p">,</span> <span class="n">subfilter</span><span class="o">=</span><span class="n">f</span><span class="p">)</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_ids</span><span class="p">))</span>
+            <span class="n">dataIds</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">dataId</span> <span class="ow">in</span> <span class="n">dataId_test</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">butler</span><span class="o">.</span><span class="n">datasetExists</span><span class="p">(</span><span class="s">&quot;dcrModel&quot;</span><span class="p">,</span> <span class="n">dataId</span><span class="o">=</span><span class="n">dataId</span><span class="p">):</span>
+                    <span class="n">dataIds</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">dataId</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">break</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s">&quot;Invalid `data_type`&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">dataId</span> <span class="ow">in</span> <span class="n">dataIds</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="n">butler</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">data_type</span><span class="p">,</span> <span class="n">dataId</span><span class="o">=</span><span class="n">dataId</span><span class="p">)</span></div>
+
+<div class="viewcode-block" id="GenerateTemplate.write_exposure"><a class="viewcode-back" href="../../py-api/python.generateTemplate.GenerateTemplate.html#python.generateTemplate.GenerateTemplate.write_exposure">[docs]</a>    <span class="k">def</span> <span class="nf">write_exposure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exposure</span><span class="p">,</span> <span class="n">output_repository</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">data_type</span><span class="o">=</span><span class="s">&quot;calexp&quot;</span><span class="p">,</span> <span class="n">subfilter</span><span class="o">=</span><span class="k">None</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Persist an exposure using a butler.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        exposure : lsst.afw.image.ExposureD object</span>
+<span class="sd">            The exposure to be persisted to the given repository.</span>
+<span class="sd">        output_repository : str, optional</span>
+<span class="sd">            If specified, initialize a new butler set to write to the given ``output_repository``.</span>
+<span class="sd">            Otherwise, the previously initialized butler is used.</span>
+<span class="sd">        data_type : str, optional</span>
+<span class="sd">            The type of data to be persisted. Expected values are ``&#39;calexp&#39;`` or ``&#39;dcrModel&#39;``</span>
+<span class="sd">        subfilter : int, optional</span>
+<span class="sd">            The DCR model subfilter index, only used for ```data_type`=&#39;dcrModel&#39;``</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        None</span>
+<span class="sd">            The exposure is persisted to the repository.</span>
+
+<span class="sd">        Raises</span>
+<span class="sd">        ------</span>
+<span class="sd">        ValueError</span>
+<span class="sd">            If an unknown ``data_type`` is supplied.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">visitInfo</span> <span class="o">=</span> <span class="n">exposure</span><span class="o">.</span><span class="n">getInfo</span><span class="p">()</span><span class="o">.</span><span class="n">getVisitInfo</span><span class="p">()</span>
+        <span class="n">obsid_out</span> <span class="o">=</span> <span class="n">visitInfo</span><span class="o">.</span><span class="n">getExposureId</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">data_type</span> <span class="o">==</span> <span class="s">&quot;calexp&quot;</span><span class="p">:</span>
+            <span class="n">dataId_out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_build_dataId</span><span class="p">(</span><span class="n">obsid_out</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">filter_name</span><span class="p">,</span> <span class="n">instrument</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">instrument</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">elif</span> <span class="n">data_type</span> <span class="o">==</span> <span class="s">&quot;dcrModel&quot;</span><span class="p">:</span>
+            <span class="n">dataId_out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_build_model_dataId</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">filter_name</span><span class="p">,</span> <span class="n">subfilter</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s">&quot;Invalid `data_type`&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">output_repository</span> <span class="ow">is</span> <span class="ow">not</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">butler</span> <span class="o">=</span> <span class="n">daf_persistence</span><span class="o">.</span><span class="n">Butler</span><span class="p">(</span><span class="n">outputs</span><span class="o">=</span><span class="n">output_repository</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">butler</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">butler</span>
+        <span class="n">butler</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">exposure</span><span class="p">,</span> <span class="n">data_type</span><span class="p">,</span> <span class="n">dataId</span><span class="o">=</span><span class="n">dataId_out</span><span class="p">)</span></div>
+
+<div class="viewcode-block" id="GenerateTemplate.build_matched_template"><a class="viewcode-back" href="../../py-api/python.generateTemplate.GenerateTemplate.html#python.generateTemplate.GenerateTemplate.build_matched_template">[docs]</a>    <span class="k">def</span> <span class="nf">build_matched_template</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exposure</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">el</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">rotation_angle</span><span class="o">=</span><span class="k">None</span><span class="p">,</span>
+                               <span class="n">return_weights</span><span class="o">=</span><span class="k">True</span><span class="p">,</span> <span class="n">weather</span><span class="o">=</span><span class="k">None</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Sub-routine to calculate the sum of the model images shifted by DCR for a given exposure.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        exposure : lsst.afw.image.ExposureD object</span>
+<span class="sd">            Single exposure to create a DCR-matched template for from the model.</span>
+<span class="sd">        model : List of numpy ndarrays, optional</span>
+<span class="sd">            The DCR model. If not set, then self.model is used.</span>
+<span class="sd">        el : lsst.afw.geom.Angle, optional</span>
+<span class="sd">            Elevation angle of the observation. If not set, it is read from the exposure.</span>
+<span class="sd">        rotation_angle : lsst.afw.geom.Angle, optional</span>
+<span class="sd">            Sky rotation angle of the observation. If not set it is calculated from the exposure metadata.</span>
+<span class="sd">        return_weights : bool, optional</span>
+<span class="sd">            Set to True to return the variance plane, as well as the image.</span>
+<span class="sd">        weather : lsst.afw.coord Weather, optional</span>
+<span class="sd">            Class containing the measured temperature, pressure, and humidity</span>
+<span class="sd">            at the observatory during an observation</span>
+<span class="sd">            Weather data is read from the exposure metadata if not supplied.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        np.ndarrary or (np.ndarray, np.ndarray)</span>
+<span class="sd">            Returns a numpy ndarray of the image values for the template.</span>
+<span class="sd">            If ``return_weights`` is set, then it returns a tuple of the image and variance arrays.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">el</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">el</span> <span class="o">=</span> <span class="n">exposure</span><span class="o">.</span><span class="n">getInfo</span><span class="p">()</span><span class="o">.</span><span class="n">getVisitInfo</span><span class="p">()</span><span class="o">.</span><span class="n">getBoresightAzAlt</span><span class="p">()</span><span class="o">.</span><span class="n">getLatitude</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">rotation_angle</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">rotation_angle</span> <span class="o">=</span> <span class="n">calculate_rotation_angle</span><span class="p">(</span><span class="n">exposure</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">weather</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">weather</span> <span class="o">=</span> <span class="n">exposure</span><span class="o">.</span><span class="n">getInfo</span><span class="p">()</span><span class="o">.</span><span class="n">getVisitInfo</span><span class="p">()</span><span class="o">.</span><span class="n">getWeather</span><span class="p">()</span>
+        <span class="n">dcr_gen</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dcr_generator</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">bandpass</span><span class="p">,</span> <span class="n">pixel_scale</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pixel_scale</span><span class="p">,</span>
+                                      <span class="n">observatory</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">observatory</span><span class="p">,</span> <span class="n">weather</span><span class="o">=</span><span class="n">weather</span><span class="p">,</span>
+                                      <span class="n">elevation</span><span class="o">=</span><span class="n">el</span><span class="p">,</span> <span class="n">rotation_angle</span><span class="o">=</span><span class="n">rotation_angle</span><span class="p">,</span> <span class="n">use_midpoint</span><span class="o">=</span><span class="k">True</span><span class="p">)</span>
+        <span class="n">template</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">y_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">x_size</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">return_weights</span><span class="p">:</span>
+            <span class="n">weights</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">y_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">x_size</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">model</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">model_use</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">model_use</span> <span class="o">=</span> <span class="n">model</span>
+        <span class="k">for</span> <span class="n">f</span><span class="p">,</span> <span class="n">dcr</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">dcr_gen</span><span class="p">):</span>
+            <span class="n">shift</span> <span class="o">=</span> <span class="p">(</span><span class="n">dcr</span><span class="o">.</span><span class="n">dy</span><span class="p">,</span> <span class="n">dcr</span><span class="o">.</span><span class="n">dx</span><span class="p">)</span>
+            <span class="n">template</span> <span class="o">+=</span> <span class="n">scipy_shift</span><span class="p">(</span><span class="n">model_use</span><span class="p">[</span><span class="n">f</span><span class="p">],</span> <span class="n">shift</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">return_weights</span><span class="p">:</span>
+                <span class="n">weights</span> <span class="o">+=</span> <span class="n">scipy_shift</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">weights</span><span class="p">,</span> <span class="n">shift</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">return_weights</span><span class="p">:</span>
+            <span class="n">weights</span> <span class="o">/=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_step</span>
+            <span class="n">variance</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">y_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">x_size</span><span class="p">))</span>
+            <span class="n">variance</span><span class="p">[</span><span class="n">weights</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.</span><span class="o">/</span><span class="n">weights</span><span class="p">[</span><span class="n">weights</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
+            <span class="k">return</span> <span class="p">(</span><span class="n">template</span><span class="p">,</span> <span class="n">variance</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">template</span></div>
+
+<div class="viewcode-block" id="GenerateTemplate.build_matched_psf"><a class="viewcode-back" href="../../py-api/python.generateTemplate.GenerateTemplate.html#python.generateTemplate.GenerateTemplate.build_matched_psf">[docs]</a>    <span class="k">def</span> <span class="nf">build_matched_psf</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">el</span><span class="p">,</span> <span class="n">rotation_angle</span><span class="p">,</span> <span class="n">weather</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Sub-routine to calculate the PSF as elongated by DCR for a given exposure.</span>
+
+<span class="sd">        Once the matched templates incorporate variable seeing, this function should also match the seeing.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        el : lsst.afw.geom.Angle</span>
+<span class="sd">            Elevation angle of the observation. If not set, it is read from the exposure.</span>
+<span class="sd">        rotation_angle : lsst.afw.geom.Angle</span>
+<span class="sd">            Sky rotation angle of the observation. If not set it is calculated from the exposure metadata.</span>
+<span class="sd">        weather : lsst.afw.coord Weather</span>
+<span class="sd">            Class containing the measured temperature, pressure, and humidity</span>
+<span class="sd">            at the observatory during an observation</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        lsst.meas.algorithms KernelPsf object</span>
+<span class="sd">            Designed to be passed to a lsst.afw.image ExposureD through the method setPsf()</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">dcr_gen</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dcr_generator</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">bandpass</span><span class="p">,</span> <span class="n">pixel_scale</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pixel_scale</span><span class="p">,</span>
+                                      <span class="n">observatory</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">observatory</span><span class="p">,</span> <span class="n">weather</span><span class="o">=</span><span class="n">weather</span><span class="p">,</span>
+                                      <span class="n">elevation</span><span class="o">=</span><span class="n">el</span><span class="p">,</span> <span class="n">rotation_angle</span><span class="o">=</span><span class="n">rotation_angle</span><span class="p">,</span> <span class="n">use_midpoint</span><span class="o">=</span><span class="k">True</span><span class="p">)</span>
+        <span class="n">psf_vals</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">psf</span><span class="o">.</span><span class="n">computeKernelImage</span><span class="p">()</span><span class="o">.</span><span class="n">getArray</span><span class="p">()</span>
+        <span class="n">psf_vals_out</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">psf_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">psf_size</span><span class="p">))</span>
+
+        <span class="k">for</span> <span class="n">f</span><span class="p">,</span> <span class="n">dcr</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">dcr_gen</span><span class="p">):</span>
+            <span class="n">shift</span> <span class="o">=</span> <span class="p">(</span><span class="n">dcr</span><span class="o">.</span><span class="n">dy</span><span class="p">,</span> <span class="n">dcr</span><span class="o">.</span><span class="n">dx</span><span class="p">)</span>
+            <span class="n">psf_vals_out</span> <span class="o">+=</span> <span class="n">scipy_shift</span><span class="p">(</span><span class="n">psf_vals</span><span class="p">,</span> <span class="n">shift</span><span class="p">)</span>
+        <span class="n">psf_image</span> <span class="o">=</span> <span class="n">afwImage</span><span class="o">.</span><span class="n">ImageD</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">psf_size</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">psf_size</span><span class="p">)</span>
+        <span class="n">psf_image</span><span class="o">.</span><span class="n">getArray</span><span class="p">()[:,</span> <span class="p">:]</span> <span class="o">=</span> <span class="n">psf_vals_out</span>
+        <span class="n">psfK</span> <span class="o">=</span> <span class="n">afwMath</span><span class="o">.</span><span class="n">FixedKernel</span><span class="p">(</span><span class="n">psf_image</span><span class="p">)</span>
+        <span class="n">psf</span> <span class="o">=</span> <span class="n">measAlg</span><span class="o">.</span><span class="n">KernelPsf</span><span class="p">(</span><span class="n">psfK</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">psf</span></div>
+
+    <span class="k">def</span> <span class="nf">_extract_image</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exposure</span><span class="p">,</span> <span class="n">airmass_weight</span><span class="o">=</span><span class="k">False</span><span class="p">,</span> <span class="n">calculate_dcr_gen</span><span class="o">=</span><span class="k">True</span><span class="p">,</span>
+                       <span class="n">use_only_detected</span><span class="o">=</span><span class="k">False</span><span class="p">,</span> <span class="n">use_variance</span><span class="o">=</span><span class="k">True</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Helper function to extract image array values from an exposure.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        exposure : lsst.afw.image.ExposureD object</span>
+<span class="sd">            Input single exposure to extract the image and variance planes</span>
+<span class="sd">        airmass_weight : bool, optional</span>
+<span class="sd">            Set to True to scale the variance by the airmass of the observation.</span>
+<span class="sd">        calculate_dcr_gen : bool, optional</span>
+<span class="sd">            Set to True to also return a GenerateTemplate.dcr_generator generator.</span>
+<span class="sd">        use_only_detected : bool, optional</span>
+<span class="sd">            If True, set all pixels to zero that do not have the detected bit set in the mask plane.</span>
+<span class="sd">        use_variance : bool, optional</span>
+<span class="sd">            If True, return the true inverse variance.</span>
+<span class="sd">            Otherwise, return calculated weights in the range 0 - 1 for each pixel.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        Returns a tuple of the image and weights (inverse variance) arrays.</span>
+<span class="sd">        If `calculate_dcr_gen` is set, returns a tuple of the image, weights, and dcr generator.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">img_vals</span> <span class="o">=</span> <span class="n">exposure</span><span class="o">.</span><span class="n">getMaskedImage</span><span class="p">()</span><span class="o">.</span><span class="n">getImage</span><span class="p">()</span><span class="o">.</span><span class="n">getArray</span><span class="p">()</span>
+        <span class="n">nan_inds</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">isnan</span><span class="p">(</span><span class="n">img_vals</span><span class="p">)</span>
+        <span class="n">img_vals</span><span class="p">[</span><span class="n">nan_inds</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.</span>
+        <span class="n">variance</span> <span class="o">=</span> <span class="n">exposure</span><span class="o">.</span><span class="n">getMaskedImage</span><span class="p">()</span><span class="o">.</span><span class="n">getVariance</span><span class="p">()</span><span class="o">.</span><span class="n">getArray</span><span class="p">()</span>
+        <span class="n">variance</span><span class="p">[</span><span class="n">nan_inds</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">inverse_var</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">variance</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">use_variance</span><span class="p">:</span>
+            <span class="n">inverse_var</span><span class="p">[</span><span class="n">variance</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.</span><span class="o">/</span><span class="n">variance</span><span class="p">[</span><span class="n">variance</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">inverse_var</span><span class="p">[</span><span class="n">variance</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.</span>
+
+        <span class="n">mask</span> <span class="o">=</span> <span class="n">exposure</span><span class="o">.</span><span class="n">getMaskedImage</span><span class="p">()</span><span class="o">.</span><span class="n">getMask</span><span class="p">()</span><span class="o">.</span><span class="n">getArray</span><span class="p">()</span>
+        <span class="n">ind_cut</span> <span class="o">=</span> <span class="p">(</span><span class="n">mask</span> <span class="o">|</span> <span class="bp">self</span><span class="o">.</span><span class="n">detected_bit</span><span class="p">)</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">detected_bit</span>
+        <span class="n">inverse_var</span><span class="p">[</span><span class="n">ind_cut</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.</span>
+        <span class="c"># Create a buffer of lower-weight pixels surrounding masked pixels.</span>
+        <span class="n">ind_cut2</span> <span class="o">=</span> <span class="n">binary_dilation</span><span class="p">(</span><span class="n">ind_cut</span><span class="p">,</span> <span class="n">iterations</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">inverse_var</span><span class="p">[</span><span class="n">ind_cut2</span><span class="p">]</span> <span class="o">/=</span> <span class="mf">2.</span>
+        <span class="k">if</span> <span class="n">use_only_detected</span><span class="p">:</span>
+            <span class="n">ind_cut3</span> <span class="o">=</span> <span class="p">(</span><span class="n">mask</span> <span class="o">&amp;</span> <span class="bp">self</span><span class="o">.</span><span class="n">detected_bit</span><span class="p">)</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">detected_bit</span>
+            <span class="n">inverse_var</span><span class="p">[</span><span class="n">ind_cut3</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">debug</span><span class="p">:</span>
+            <span class="n">slice_inds</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">s_</span><span class="p">[</span><span class="n">y0</span><span class="p">:</span> <span class="n">y0</span> <span class="o">+</span> <span class="n">dy</span><span class="p">,</span> <span class="n">x0</span><span class="p">:</span> <span class="n">x0</span> <span class="o">+</span> <span class="n">dx</span><span class="p">]</span>
+            <span class="n">img_vals</span> <span class="o">=</span> <span class="n">img_vals</span><span class="p">[</span><span class="n">slice_inds</span><span class="p">]</span>
+            <span class="n">inverse_var</span> <span class="o">=</span> <span class="n">inverse_var</span><span class="p">[</span><span class="n">slice_inds</span><span class="p">]</span>
+
+        <span class="n">visitInfo</span> <span class="o">=</span> <span class="n">exposure</span><span class="o">.</span><span class="n">getInfo</span><span class="p">()</span><span class="o">.</span><span class="n">getVisitInfo</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">airmass_weight</span><span class="p">:</span>
+            <span class="n">inverse_var</span> <span class="o">/=</span> <span class="n">visitInfo</span><span class="o">.</span><span class="n">getBoresightAirmass</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">calculate_dcr_gen</span><span class="p">:</span>
+            <span class="n">el</span> <span class="o">=</span> <span class="n">visitInfo</span><span class="o">.</span><span class="n">getBoresightAzAlt</span><span class="p">()</span><span class="o">.</span><span class="n">getLatitude</span><span class="p">()</span>
+            <span class="n">rotation_angle</span> <span class="o">=</span> <span class="n">calculate_rotation_angle</span><span class="p">(</span><span class="n">exposure</span><span class="p">)</span>
+            <span class="n">weather</span> <span class="o">=</span> <span class="n">visitInfo</span><span class="o">.</span><span class="n">getWeather</span><span class="p">()</span>
+            <span class="n">dcr_gen</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dcr_generator</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">bandpass</span><span class="p">,</span> <span class="n">pixel_scale</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pixel_scale</span><span class="p">,</span>
+                                          <span class="n">observatory</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">observatory</span><span class="p">,</span> <span class="n">weather</span><span class="o">=</span><span class="n">weather</span><span class="p">,</span>
+                                          <span class="n">elevation</span><span class="o">=</span><span class="n">el</span><span class="p">,</span> <span class="n">rotation_angle</span><span class="o">=</span><span class="n">rotation_angle</span><span class="p">,</span> <span class="n">use_midpoint</span><span class="o">=</span><span class="k">True</span><span class="p">)</span>
+            <span class="k">return</span> <span class="p">(</span><span class="n">img_vals</span><span class="p">,</span> <span class="n">inverse_var</span><span class="p">,</span> <span class="n">dcr_gen</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">(</span><span class="n">img_vals</span><span class="p">,</span> <span class="n">inverse_var</span><span class="p">)</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">_build_dataId</span><span class="p">(</span><span class="n">obsids</span><span class="p">,</span> <span class="n">band</span><span class="p">,</span> <span class="n">instrument</span><span class="o">=</span><span class="s">&#39;lsstSim&#39;</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Construct a dataId dictionary for the butler to find a calexp.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        obsids : int, or list of ints</span>
+<span class="sd">            The observation IDs of the data to load.</span>
+<span class="sd">        band : str</span>
+<span class="sd">            Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.</span>
+<span class="sd">        instrument : str, optional</span>
+<span class="sd">            Name of the observatory.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        Return a list of dataIds for the butler to use to load a calexp from a repository</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">instrument</span> <span class="o">==</span> <span class="s">&#39;lsstSim&#39;</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">obsids</span><span class="p">,</span> <span class="s">&#39;__iter__&#39;</span><span class="p">):</span>
+                <span class="n">dataId</span> <span class="o">=</span> <span class="p">[{</span><span class="s">&#39;visit&#39;</span><span class="p">:</span> <span class="n">obsid</span><span class="p">,</span> <span class="s">&#39;raft&#39;</span><span class="p">:</span> <span class="s">&#39;2,2&#39;</span><span class="p">,</span> <span class="s">&#39;sensor&#39;</span><span class="p">:</span> <span class="s">&#39;1,1&#39;</span><span class="p">,</span> <span class="s">&#39;filter&#39;</span><span class="p">:</span> <span class="n">band</span><span class="p">}</span>
+                          <span class="k">for</span> <span class="n">obsid</span> <span class="ow">in</span> <span class="n">obsids</span><span class="p">]</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">dataId</span> <span class="o">=</span> <span class="p">[{</span><span class="s">&#39;visit&#39;</span><span class="p">:</span> <span class="n">obsid</span><span class="p">,</span> <span class="s">&#39;raft&#39;</span><span class="p">:</span> <span class="s">&#39;2,2&#39;</span><span class="p">,</span> <span class="s">&#39;sensor&#39;</span><span class="p">:</span> <span class="s">&#39;1,1&#39;</span><span class="p">,</span> <span class="s">&#39;filter&#39;</span><span class="p">:</span> <span class="n">band</span><span class="p">}</span>
+                          <span class="k">for</span> <span class="n">obsid</span> <span class="ow">in</span> <span class="p">[</span><span class="n">obsids</span><span class="p">]]</span>
+        <span class="k">elif</span> <span class="n">instrument</span> <span class="o">==</span> <span class="s">&#39;decam&#39;</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">obsids</span><span class="p">,</span> <span class="s">&#39;__iter__&#39;</span><span class="p">):</span>
+                <span class="n">dataId</span> <span class="o">=</span> <span class="p">[{</span><span class="s">&#39;visit&#39;</span><span class="p">:</span> <span class="n">obsid</span><span class="p">,</span> <span class="s">&#39;ccdnum&#39;</span><span class="p">:</span> <span class="mi">10</span><span class="p">}</span>
+                          <span class="k">for</span> <span class="n">obsid</span> <span class="ow">in</span> <span class="n">obsids</span><span class="p">]</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">dataId</span> <span class="o">=</span> <span class="p">[{</span><span class="s">&#39;visit&#39;</span><span class="p">:</span> <span class="n">obsid</span><span class="p">,</span> <span class="s">&#39;ccdnum&#39;</span><span class="p">:</span> <span class="mi">10</span><span class="p">}</span>
+                          <span class="k">for</span> <span class="n">obsid</span> <span class="ow">in</span> <span class="p">[</span><span class="n">obsids</span><span class="p">]]</span>
+        <span class="k">return</span> <span class="n">dataId</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">_build_model_dataId</span><span class="p">(</span><span class="n">band</span><span class="p">,</span> <span class="n">subfilter</span><span class="o">=</span><span class="k">None</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Construct a dataId dictionary for the butler to find a dcrModel.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        band : str</span>
+<span class="sd">            Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.</span>
+<span class="sd">        subfilter : int, optional</span>
+<span class="sd">            DCR model index within the band.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        Return a dataId for the butler to use to load a dcrModel from a repository</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">subfilter</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">dataId</span> <span class="o">=</span> <span class="p">{</span><span class="s">&#39;filter&#39;</span><span class="p">:</span> <span class="n">band</span><span class="p">,</span> <span class="s">&#39;tract&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#39;patch&#39;</span><span class="p">:</span> <span class="s">&#39;0&#39;</span><span class="p">}</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">dataId</span> <span class="o">=</span> <span class="p">{</span><span class="s">&#39;filter&#39;</span><span class="p">:</span> <span class="n">band</span><span class="p">,</span> <span class="s">&#39;tract&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s">&#39;patch&#39;</span><span class="p">:</span> <span class="s">&#39;0&#39;</span><span class="p">,</span> <span class="s">&#39;subfilter&#39;</span><span class="p">:</span> <span class="n">subfilter</span><span class="p">}</span>
+        <span class="k">return</span><span class="p">(</span><span class="n">dataId</span><span class="p">)</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">_create_wcs</span><span class="p">(</span><span class="n">bbox</span><span class="p">,</span> <span class="n">pixel_scale</span><span class="p">,</span> <span class="n">ra</span><span class="p">,</span> <span class="n">dec</span><span class="p">,</span> <span class="n">sky_rotation</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Create a wcs (coordinate system).</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        bbox : lsst.afw.geom.Box2I object</span>
+<span class="sd">            A bounding box.</span>
+<span class="sd">        pixel_scale : lsst.afw.geom.Angle</span>
+<span class="sd">            Plate scale, as an Angle.</span>
+<span class="sd">        ra : lsst.afw.geom.Angle</span>
+<span class="sd">            Right Ascension of the reference pixel, as an `Angle`.</span>
+<span class="sd">        dec : lsst.afw.geom.Angle</span>
+<span class="sd">            Declination of the reference pixel, as an Angle.</span>
+<span class="sd">        sky_rotation : lsst.afw.geom.Angle</span>
+<span class="sd">            Rotation of the image axis, East from North.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        Returns a lsst.afw.image.wcs object.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">crval</span> <span class="o">=</span> <span class="n">IcrsCoord</span><span class="p">(</span><span class="n">ra</span><span class="p">,</span> <span class="n">dec</span><span class="p">)</span>
+        <span class="n">crpix</span> <span class="o">=</span> <span class="n">afwGeom</span><span class="o">.</span><span class="n">Box2D</span><span class="p">(</span><span class="n">bbox</span><span class="p">)</span><span class="o">.</span><span class="n">getCenter</span><span class="p">()</span>
+        <span class="n">cd1_1</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">sky_rotation</span><span class="o">.</span><span class="n">asRadians</span><span class="p">())</span><span class="o">*</span><span class="n">pixel_scale</span><span class="o">.</span><span class="n">asDegrees</span><span class="p">()</span>
+        <span class="n">cd1_2</span> <span class="o">=</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">sky_rotation</span><span class="o">.</span><span class="n">asRadians</span><span class="p">())</span><span class="o">*</span><span class="n">pixel_scale</span><span class="o">.</span><span class="n">asDegrees</span><span class="p">()</span>
+        <span class="n">cd2_1</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">sky_rotation</span><span class="o">.</span><span class="n">asRadians</span><span class="p">())</span><span class="o">*</span><span class="n">pixel_scale</span><span class="o">.</span><span class="n">asDegrees</span><span class="p">()</span>
+        <span class="n">cd2_2</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">sky_rotation</span><span class="o">.</span><span class="n">asRadians</span><span class="p">())</span><span class="o">*</span><span class="n">pixel_scale</span><span class="o">.</span><span class="n">asDegrees</span><span class="p">()</span>
+        <span class="k">return</span><span class="p">(</span><span class="n">afwImage</span><span class="o">.</span><span class="n">makeWcs</span><span class="p">(</span><span class="n">crval</span><span class="p">,</span> <span class="n">crpix</span><span class="p">,</span> <span class="n">cd1_1</span><span class="p">,</span> <span class="n">cd1_2</span><span class="p">,</span> <span class="n">cd2_1</span><span class="p">,</span> <span class="n">cd2_2</span><span class="p">))</span>
+
+    <span class="nd">@staticmethod</span>
+<div class="viewcode-block" id="GenerateTemplate.load_bandpass"><a class="viewcode-back" href="../../py-api/python.generateTemplate.GenerateTemplate.html#python.generateTemplate.GenerateTemplate.load_bandpass">[docs]</a>    <span class="k">def</span> <span class="nf">load_bandpass</span><span class="p">(</span><span class="n">band_name</span><span class="o">=</span><span class="s">&#39;g&#39;</span><span class="p">,</span> <span class="n">wavelength_step</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">use_mirror</span><span class="o">=</span><span class="k">True</span><span class="p">,</span> <span class="n">use_lens</span><span class="o">=</span><span class="k">True</span><span class="p">,</span> <span class="n">use_atmos</span><span class="o">=</span><span class="k">True</span><span class="p">,</span>
+                      <span class="n">use_filter</span><span class="o">=</span><span class="k">True</span><span class="p">,</span> <span class="n">use_detector</span><span class="o">=</span><span class="k">True</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Load in Bandpass object from sims_photUtils.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        band_name : str, optional</span>
+<span class="sd">            Common name of the filter used. For LSST, use u, g, r, i, z, or y</span>
+<span class="sd">        wavelength_step : float, optional</span>
+<span class="sd">            Wavelength resolution in nm, also the wavelength range of each sub-band plane.</span>
+<span class="sd">            If not set, the entire band range is used.</span>
+<span class="sd">        use_mirror : bool, optional</span>
+<span class="sd">            Set to include the mirror in the filter throughput calculation.</span>
+<span class="sd">        use_lens : bool, optional</span>
+<span class="sd">            Set to use the LSST lens in the filter throughput calculation</span>
+<span class="sd">        use_atmos : bool, optional</span>
+<span class="sd">            Set to use the standard atmosphere transmission in the filter throughput calculation</span>
+<span class="sd">        use_filter : bool, optional</span>
+<span class="sd">            Set to use the LSST filters in the filter throughput calculation.</span>
+<span class="sd">        use_detector : bool, optional</span>
+<span class="sd">            Set to use the LSST detector efficiency in the filter throughput calculation.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        Returns a lsst.sims.photUtils.Bandpass object.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">class</span> <span class="nc">BandpassMod</span><span class="p">(</span><span class="n">Bandpass</span><span class="p">):</span>
+            <span class="sd">&quot;&quot;&quot;Customize a few methods of the Bandpass class from sims_photUtils.&quot;&quot;&quot;</span>
+
+            <span class="k">def</span> <span class="nf">calc_eff_wavelen</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">wavelength_min</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">wavelength_max</span><span class="o">=</span><span class="k">None</span><span class="p">):</span>
+                <span class="sd">&quot;&quot;&quot;Calculate effective wavelengths for filters.</span>
+
+<span class="sd">                Parameters</span>
+<span class="sd">                ----------</span>
+<span class="sd">                wavelength_min : float, optional</span>
+<span class="sd">                    Starting wavelength, in nm</span>
+<span class="sd">                wavelength_max : float, optional</span>
+<span class="sd">                    End wavelength, in nm</span>
+
+<span class="sd">                Returns</span>
+<span class="sd">                -------</span>
+<span class="sd">                Returns the weighted average wavelength within the range given, taken over the bandpass.</span>
+<span class="sd">                &quot;&quot;&quot;</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">phi</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">sbTophi</span><span class="p">()</span>
+                <span class="k">if</span> <span class="n">wavelength_min</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+                    <span class="n">wavelength_min</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wavelen</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">wavelength_max</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+                    <span class="n">wavelength_max</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wavelen</span><span class="p">)</span>
+                <span class="n">w_inds</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wavelen</span> <span class="o">&gt;=</span> <span class="n">wavelength_min</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wavelen</span> <span class="o">&lt;=</span> <span class="n">wavelength_max</span><span class="p">)</span>
+                <span class="n">effwavelenphi</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wavelen</span><span class="p">[</span><span class="n">w_inds</span><span class="p">]</span><span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">phi</span><span class="p">[</span><span class="n">w_inds</span><span class="p">])</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">/</span><span class="bp">self</span><span class="o">.</span><span class="n">phi</span><span class="p">[</span><span class="n">w_inds</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+                <span class="k">return</span> <span class="n">effwavelenphi</span>
+
+            <span class="k">def</span> <span class="nf">calc_bandwidth</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+                <span class="n">f0</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">speed_of_light</span><span class="o">/</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wavelen_min</span><span class="o">*</span><span class="mf">1.0e-9</span><span class="p">)</span>
+                <span class="n">f1</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">speed_of_light</span><span class="o">/</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wavelen_max</span><span class="o">*</span><span class="mf">1.0e-9</span><span class="p">)</span>
+                <span class="n">f_cen</span> <span class="o">=</span> <span class="n">constants</span><span class="o">.</span><span class="n">speed_of_light</span><span class="o">/</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">calc_eff_wavelen</span><span class="p">()</span><span class="o">*</span><span class="mf">1.0e-9</span><span class="p">)</span>
+                <span class="k">return</span><span class="p">(</span><span class="n">f_cen</span><span class="o">*</span><span class="mf">2.0</span><span class="o">*</span><span class="p">(</span><span class="n">f0</span> <span class="o">-</span> <span class="n">f1</span><span class="p">)</span><span class="o">/</span><span class="p">(</span><span class="n">f0</span> <span class="o">+</span> <span class="n">f1</span><span class="p">))</span>
+
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Define the wavelength range and resolution for a given ugrizy band.</span>
+<span class="sd">        These are defined in case the LSST filter throughputs are not used.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">band_dict</span> <span class="o">=</span> <span class="p">{</span><span class="s">&#39;u&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mf">324.0</span><span class="p">,</span> <span class="mf">395.0</span><span class="p">),</span> <span class="s">&#39;g&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mf">405.0</span><span class="p">,</span> <span class="mf">552.0</span><span class="p">),</span> <span class="s">&#39;r&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mf">552.0</span><span class="p">,</span> <span class="mf">691.0</span><span class="p">),</span>
+                     <span class="s">&#39;i&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mf">818.0</span><span class="p">,</span> <span class="mf">921.0</span><span class="p">),</span> <span class="s">&#39;z&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mf">922.0</span><span class="p">,</span> <span class="mf">997.0</span><span class="p">),</span> <span class="s">&#39;y&#39;</span><span class="p">:</span> <span class="p">(</span><span class="mf">975.0</span><span class="p">,</span> <span class="mf">1075.0</span><span class="p">)}</span>
+        <span class="n">band_range</span> <span class="o">=</span> <span class="n">band_dict</span><span class="p">[</span><span class="n">band_name</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">wavelength_step</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">wavelength_step</span> <span class="o">=</span> <span class="n">band_range</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">band_range</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">bandpass</span> <span class="o">=</span> <span class="n">BandpassMod</span><span class="p">(</span><span class="n">wavelen_min</span><span class="o">=</span><span class="n">band_range</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">wavelen_max</span><span class="o">=</span><span class="n">band_range</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
+                               <span class="n">wavelen_step</span><span class="o">=</span><span class="n">wavelength_step</span><span class="p">)</span>
+        <span class="n">throughput_dir</span> <span class="o">=</span> <span class="n">getPackageDir</span><span class="p">(</span><span class="s">&#39;throughputs&#39;</span><span class="p">)</span>
+        <span class="n">lens_list</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;baseline/lens1.dat&#39;</span><span class="p">,</span> <span class="s">&#39;baseline/lens2.dat&#39;</span><span class="p">,</span> <span class="s">&#39;baseline/lens3.dat&#39;</span><span class="p">]</span>
+        <span class="n">mirror_list</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;baseline/m1.dat&#39;</span><span class="p">,</span> <span class="s">&#39;baseline/m2.dat&#39;</span><span class="p">,</span> <span class="s">&#39;baseline/m3.dat&#39;</span><span class="p">]</span>
+        <span class="n">atmos_list</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;atmos/atmos_11.dat&#39;</span><span class="p">]</span>
+        <span class="n">detector_list</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;baseline/detector.dat&#39;</span><span class="p">]</span>
+        <span class="n">filter_list</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;baseline/filter_&#39;</span> <span class="o">+</span> <span class="n">band_name</span> <span class="o">+</span> <span class="s">&#39;.dat&#39;</span><span class="p">]</span>
+        <span class="n">component_list</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">if</span> <span class="n">use_mirror</span><span class="p">:</span>
+            <span class="n">component_list</span> <span class="o">+=</span> <span class="n">mirror_list</span>
+        <span class="k">if</span> <span class="n">use_lens</span><span class="p">:</span>
+            <span class="n">component_list</span> <span class="o">+=</span> <span class="n">lens_list</span>
+        <span class="k">if</span> <span class="n">use_atmos</span><span class="p">:</span>
+            <span class="n">component_list</span> <span class="o">+=</span> <span class="n">atmos_list</span>
+        <span class="k">if</span> <span class="n">use_detector</span><span class="p">:</span>
+            <span class="n">component_list</span> <span class="o">+=</span> <span class="n">detector_list</span>
+        <span class="k">if</span> <span class="n">use_filter</span><span class="p">:</span>
+            <span class="n">component_list</span> <span class="o">+=</span> <span class="n">filter_list</span>
+        <span class="n">bandpass</span><span class="o">.</span><span class="n">readThroughputList</span><span class="p">(</span><span class="n">rootDir</span><span class="o">=</span><span class="n">throughput_dir</span><span class="p">,</span> <span class="n">componentList</span><span class="o">=</span><span class="n">component_list</span><span class="p">)</span>
+        <span class="c"># Calculate bandpass phi value if required.</span>
+        <span class="k">if</span> <span class="n">bandpass</span><span class="o">.</span><span class="n">phi</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">bandpass</span><span class="o">.</span><span class="n">sbTophi</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">bandpass</span></div>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">_wavelength_iterator</span><span class="p">(</span><span class="n">bandpass</span><span class="p">,</span> <span class="n">use_midpoint</span><span class="o">=</span><span class="k">False</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Define iterator to ensure that loops over wavelength are consistent.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        bandpass : lsst.sims.photUtils.Bandpass object</span>
+<span class="sd">            Bandpass object returned by load_bandpass</span>
+<span class="sd">        use_midpoint : bool, optional</span>
+<span class="sd">            If set to True return the filter-weighted average wavelength.</span>
+<span class="sd">            Otherwise, return a tuple of the starting and end wavelength.</span>
+
+<span class="sd">        Yields</span>
+<span class="sd">        -----</span>
+<span class="sd">        If ``use_midpoint`` is set, yields the effective wavelength of the next sub-band.</span>
+<span class="sd">        Otherwise, yields the start and end wavelength of the next sub-band as a tuple.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">wave_start</span> <span class="o">=</span> <span class="n">bandpass</span><span class="o">.</span><span class="n">wavelen_min</span>
+        <span class="k">while</span> <span class="n">np</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">wave_start</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">bandpass</span><span class="o">.</span><span class="n">wavelen_max</span><span class="p">:</span>
+            <span class="n">wave_end</span> <span class="o">=</span> <span class="n">wave_start</span> <span class="o">+</span> <span class="n">bandpass</span><span class="o">.</span><span class="n">wavelen_step</span>
+            <span class="k">if</span> <span class="n">wave_end</span> <span class="o">&gt;</span> <span class="n">bandpass</span><span class="o">.</span><span class="n">wavelen_max</span><span class="p">:</span>
+                <span class="n">wave_end</span> <span class="o">=</span> <span class="n">bandpass</span><span class="o">.</span><span class="n">wavelen_max</span>
+            <span class="k">if</span> <span class="n">use_midpoint</span><span class="p">:</span>
+                <span class="k">yield</span> <span class="n">bandpass</span><span class="o">.</span><span class="n">calc_eff_wavelen</span><span class="p">(</span><span class="n">wavelength_min</span><span class="o">=</span><span class="n">wave_start</span><span class="p">,</span> <span class="n">wavelength_max</span><span class="o">=</span><span class="n">wave_end</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">yield</span> <span class="p">(</span><span class="n">wave_start</span><span class="p">,</span> <span class="n">wave_end</span><span class="p">)</span>
+            <span class="n">wave_start</span> <span class="o">=</span> <span class="n">wave_end</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">_dcr_generator</span><span class="p">(</span><span class="n">bandpass</span><span class="p">,</span> <span class="n">pixel_scale</span><span class="p">,</span> <span class="n">elevation</span><span class="p">,</span> <span class="n">rotation_angle</span><span class="p">,</span>
+                       <span class="n">weather</span><span class="o">=</span><span class="n">lsst_weather</span><span class="p">,</span>
+                       <span class="n">observatory</span><span class="o">=</span><span class="n">lsst_observatory</span><span class="p">,</span> <span class="n">use_midpoint</span><span class="o">=</span><span class="k">False</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Call the functions that compute Differential Chromatic Refraction (relative to mid-band).</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        bandpass : lsst.sims.photUtils.Bandpass object</span>
+<span class="sd">            Bandpass object returned by load_bandpass</span>
+<span class="sd">        pixel_scale : lsst.afw.geom.Angle</span>
+<span class="sd">            Plate scale, as an Angle.</span>
+<span class="sd">        elevation : lsst.afw.geom.Angle</span>
+<span class="sd">            Elevation angle of the observation</span>
+<span class="sd">        rotation_angle : lsst.afw.geom.Angle</span>
+<span class="sd">            Sky rotation angle of the observation</span>
+<span class="sd">        weather : lsst.afw.coord Weather, optional</span>
+<span class="sd">            Class containing the measured temperature, pressure, and humidity</span>
+<span class="sd">            at the observatory during an observation</span>
+<span class="sd">            Weather data is read from the exposure metadata if not supplied.</span>
+<span class="sd">        observatory : lsst.afw.coord.coordLib.Observatory, optional</span>
+<span class="sd">            Class containing the longitude, latitude, and altitude of the observatory.</span>
+<span class="sd">        use_midpoint : bool, optional</span>
+<span class="sd">            Set to True to use the effective wavelength of the sub-band.</span>
+
+<span class="sd">        Yields</span>
+<span class="sd">        ------</span>
+<span class="sd">            If ``use_midpoint`` is True, yields the x and y DCR offsets</span>
+<span class="sd">            for the mid-point of the next sub-band.</span>
+<span class="sd">            Otherwise yields a tuple of the x and y</span>
+<span class="sd">            DCR offsets for the start and end of the next sub-band.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">zenith_angle</span> <span class="o">=</span> <span class="n">Angle</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="o">/</span><span class="mi">2</span><span class="p">)</span> <span class="o">-</span> <span class="n">elevation</span>
+        <span class="n">wavelength_midpoint</span> <span class="o">=</span> <span class="n">bandpass</span><span class="o">.</span><span class="n">calc_eff_wavelen</span><span class="p">()</span>
+        <span class="n">delta</span> <span class="o">=</span> <span class="n">namedtuple</span><span class="p">(</span><span class="s">&quot;delta&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s">&quot;start&quot;</span><span class="p">,</span> <span class="s">&quot;end&quot;</span><span class="p">])</span>
+        <span class="n">dcr</span> <span class="o">=</span> <span class="n">namedtuple</span><span class="p">(</span><span class="s">&quot;dcr&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s">&quot;dx&quot;</span><span class="p">,</span> <span class="s">&quot;dy&quot;</span><span class="p">])</span>
+        <span class="k">if</span> <span class="n">use_midpoint</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">wl</span> <span class="ow">in</span> <span class="n">GenerateTemplate</span><span class="o">.</span><span class="n">_wavelength_iterator</span><span class="p">(</span><span class="n">bandpass</span><span class="p">,</span> <span class="n">use_midpoint</span><span class="o">=</span><span class="k">True</span><span class="p">):</span>
+                <span class="c"># Note that refract_amp can be negative, since it&#39;s relative to the midpoint of the full band</span>
+                <span class="n">refract_mid</span> <span class="o">=</span> <span class="n">diff_refraction</span><span class="p">(</span><span class="n">wavelength</span><span class="o">=</span><span class="n">wl</span><span class="p">,</span> <span class="n">wavelength_ref</span><span class="o">=</span><span class="n">wavelength_midpoint</span><span class="p">,</span>
+                                              <span class="n">zenith_angle</span><span class="o">=</span><span class="n">zenith_angle</span><span class="p">,</span>
+                                              <span class="n">observatory</span><span class="o">=</span><span class="n">observatory</span><span class="p">,</span> <span class="n">weather</span><span class="o">=</span><span class="n">weather</span><span class="p">)</span>
+                <span class="n">refract_mid_pixels</span> <span class="o">=</span> <span class="n">refract_mid</span><span class="o">.</span><span class="n">asArcseconds</span><span class="p">()</span><span class="o">/</span><span class="n">pixel_scale</span><span class="o">.</span><span class="n">asArcseconds</span><span class="p">()</span>
+                <span class="k">yield</span> <span class="n">dcr</span><span class="p">(</span><span class="n">dx</span><span class="o">=</span><span class="n">refract_mid_pixels</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">rotation_angle</span><span class="o">.</span><span class="n">asRadians</span><span class="p">()),</span>
+                          <span class="n">dy</span><span class="o">=</span><span class="n">refract_mid_pixels</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">rotation_angle</span><span class="o">.</span><span class="n">asRadians</span><span class="p">()))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">wl_start</span><span class="p">,</span> <span class="n">wl_end</span> <span class="ow">in</span> <span class="n">GenerateTemplate</span><span class="o">.</span><span class="n">_wavelength_iterator</span><span class="p">(</span><span class="n">bandpass</span><span class="p">,</span> <span class="n">use_midpoint</span><span class="o">=</span><span class="k">False</span><span class="p">):</span>
+                <span class="c"># Note that refract_amp can be negative, since it&#39;s relative to the midpoint of the full band</span>
+                <span class="n">refract_start</span> <span class="o">=</span> <span class="n">diff_refraction</span><span class="p">(</span><span class="n">wavelength</span><span class="o">=</span><span class="n">wl_start</span><span class="p">,</span> <span class="n">wavelength_ref</span><span class="o">=</span><span class="n">wavelength_midpoint</span><span class="p">,</span>
+                                                <span class="n">zenith_angle</span><span class="o">=</span><span class="n">zenith_angle</span><span class="p">,</span>
+                                                <span class="n">observatory</span><span class="o">=</span><span class="n">observatory</span><span class="p">,</span> <span class="n">weather</span><span class="o">=</span><span class="n">weather</span><span class="p">)</span>
+                <span class="n">refract_end</span> <span class="o">=</span> <span class="n">diff_refraction</span><span class="p">(</span><span class="n">wavelength</span><span class="o">=</span><span class="n">wl_end</span><span class="p">,</span> <span class="n">wavelength_ref</span><span class="o">=</span><span class="n">wavelength_midpoint</span><span class="p">,</span>
+                                              <span class="n">zenith_angle</span><span class="o">=</span><span class="n">zenith_angle</span><span class="p">,</span>
+                                              <span class="n">observatory</span><span class="o">=</span><span class="n">observatory</span><span class="p">,</span> <span class="n">weather</span><span class="o">=</span><span class="n">weather</span><span class="p">)</span>
+                <span class="n">refract_start_pixels</span> <span class="o">=</span> <span class="n">refract_start</span><span class="o">.</span><span class="n">asArcseconds</span><span class="p">()</span><span class="o">/</span><span class="n">pixel_scale</span><span class="o">.</span><span class="n">asArcseconds</span><span class="p">()</span>
+                <span class="n">refract_end_pixels</span> <span class="o">=</span> <span class="n">refract_end</span><span class="o">.</span><span class="n">asArcseconds</span><span class="p">()</span><span class="o">/</span><span class="n">pixel_scale</span><span class="o">.</span><span class="n">asArcseconds</span><span class="p">()</span>
+                <span class="n">dx</span> <span class="o">=</span> <span class="n">delta</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="n">refract_start_pixels</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">rotation_angle</span><span class="o">.</span><span class="n">asRadians</span><span class="p">()),</span>
+                           <span class="n">end</span><span class="o">=</span><span class="n">refract_end_pixels</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">rotation_angle</span><span class="o">.</span><span class="n">asRadians</span><span class="p">()))</span>
+                <span class="n">dy</span> <span class="o">=</span> <span class="n">delta</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="n">refract_start_pixels</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">rotation_angle</span><span class="o">.</span><span class="n">asRadians</span><span class="p">()),</span>
+                           <span class="n">end</span><span class="o">=</span><span class="n">refract_end_pixels</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">rotation_angle</span><span class="o">.</span><span class="n">asRadians</span><span class="p">()))</span>
+                <span class="k">yield</span> <span class="n">dcr</span><span class="p">(</span><span class="n">dx</span><span class="o">=</span><span class="n">dx</span><span class="p">,</span> <span class="n">dy</span><span class="o">=</span><span class="n">dy</span><span class="p">)</span>
+
+<div class="viewcode-block" id="GenerateTemplate.create_exposure"><a class="viewcode-back" href="../../py-api/python.generateTemplate.GenerateTemplate.html#python.generateTemplate.GenerateTemplate.create_exposure">[docs]</a>    <span class="k">def</span> <span class="nf">create_exposure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">array</span><span class="p">,</span> <span class="n">elevation</span><span class="p">,</span> <span class="n">azimuth</span><span class="p">,</span> <span class="n">variance</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">era</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">snap</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+                        <span class="n">exposureId</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">ra</span><span class="o">=</span><span class="n">nanAngle</span><span class="p">,</span> <span class="n">dec</span><span class="o">=</span><span class="n">nanAngle</span><span class="p">,</span> <span class="n">boresightRotAngle</span><span class="o">=</span><span class="n">nanAngle</span><span class="p">,</span>
+                        <span class="n">weather</span><span class="o">=</span><span class="n">lsst_weather</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Convert a numpy array to an LSST exposure, and units of electron counts.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        array : np.ndarray</span>
+<span class="sd">            Numpy array to use as the data for the exposure</span>
+<span class="sd">        elevation : lsst.afw.geom Angle</span>
+<span class="sd">            Elevation angle of the observation</span>
+<span class="sd">        azimuth : lsst.afw.geom Angle</span>
+<span class="sd">            Azimuth angle of the observation</span>
+<span class="sd">        variance : np.ndarray, optional</span>
+<span class="sd">            Numpy array to use as the variance plane of the exposure.</span>
+<span class="sd">            If None, the absoulte value of &#39;array&#39; is used for the variance plane.</span>
+<span class="sd">        era : lsst.afw.geom Angle, optional</span>
+<span class="sd">            Earth rotation angle (ERA) of the observation.</span>
+<span class="sd">            If not set it will be calculated from the latitude, longitude, RA, Dec, and elevation angle</span>
+<span class="sd">        snap : int, optional</span>
+<span class="sd">            Snap ID to add to the metadata of the exposure. Required to mimic Phosim output.</span>
+<span class="sd">        exposureId : int, optional</span>
+<span class="sd">            Observation ID of the exposure, a long int.</span>
+<span class="sd">        ra : lsst.afw.geom Angle, optional</span>
+<span class="sd">            The right ascension of the boresight of the target field.</span>
+<span class="sd">        dec : lsst.afw.geom Angle, optional</span>
+<span class="sd">            The declination of the boresight of the target field</span>
+<span class="sd">        boresightRotAngle : lsst.afw.geom Angle, optional</span>
+<span class="sd">            The rotation angle of the field around the boresight.</span>
+<span class="sd">        weather : lsst.afw.coord Weather, optional</span>
+<span class="sd">            Class containing the measured temperature, pressure, and humidity</span>
+<span class="sd">            at the observatory during an observation</span>
+<span class="sd">            Weather data is read from the exposure metadata if not supplied.</span>
+<span class="sd">        **kwargs :</span>
+<span class="sd">            Any additional keyword arguments will be added to the metadata of the exposure.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        lsst.afw.image.ExposureD object</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">exposure</span> <span class="o">=</span> <span class="n">afwImage</span><span class="o">.</span><span class="n">ExposureD</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">bbox</span><span class="p">)</span>
+        <span class="n">exposure</span><span class="o">.</span><span class="n">setWcs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wcs</span><span class="p">)</span>
+        <span class="c"># We need the filter name in the exposure metadata, and it can&#39;t just be set directly</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">exposure</span><span class="o">.</span><span class="n">setFilter</span><span class="p">(</span><span class="n">afwImage</span><span class="o">.</span><span class="n">Filter</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">filter_name</span><span class="p">))</span>
+        <span class="k">except</span><span class="p">:</span>
+            <span class="n">filterPolicy</span> <span class="o">=</span> <span class="n">pexPolicy</span><span class="o">.</span><span class="n">Policy</span><span class="p">()</span>
+            <span class="n">filterPolicy</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s">&quot;lambdaEff&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">bandpass</span><span class="o">.</span><span class="n">calc_eff_wavelen</span><span class="p">())</span>
+            <span class="n">afwImage</span><span class="o">.</span><span class="n">Filter</span><span class="o">.</span><span class="n">define</span><span class="p">(</span><span class="n">afwImage</span><span class="o">.</span><span class="n">FilterProperty</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">filter_name</span><span class="p">,</span> <span class="n">filterPolicy</span><span class="p">))</span>
+            <span class="n">exposure</span><span class="o">.</span><span class="n">setFilter</span><span class="p">(</span><span class="n">afwImage</span><span class="o">.</span><span class="n">Filter</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">filter_name</span><span class="p">))</span>
+            <span class="c"># Need to reset afwImage.Filter to prevent an error in future calls to daf_persistence.Butler</span>
+            <span class="n">afwImage</span><span class="o">.</span><span class="n">FilterProperty_reset</span><span class="p">()</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">debug</span><span class="p">:</span>
+            <span class="n">array_temp</span> <span class="o">=</span> <span class="n">array</span>
+            <span class="n">array</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">exposure</span><span class="o">.</span><span class="n">getMaskedImage</span><span class="p">()</span><span class="o">.</span><span class="n">getImage</span><span class="p">()</span><span class="o">.</span><span class="n">getArray</span><span class="p">())</span>
+            <span class="n">array</span><span class="p">[</span><span class="n">y0</span><span class="p">:</span> <span class="n">y0</span> <span class="o">+</span> <span class="n">dy</span><span class="p">,</span> <span class="n">x0</span><span class="p">:</span> <span class="n">x0</span> <span class="o">+</span> <span class="n">dx</span><span class="p">]</span> <span class="o">=</span> <span class="n">array_temp</span>
+            <span class="k">if</span> <span class="n">variance</span> <span class="ow">is</span> <span class="ow">not</span> <span class="k">None</span><span class="p">:</span>
+                <span class="n">variance_temp</span> <span class="o">=</span> <span class="n">variance</span>
+                <span class="n">variance</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">array</span><span class="p">)</span>
+                <span class="n">variance</span><span class="p">[</span><span class="n">y0</span><span class="p">:</span> <span class="n">y0</span> <span class="o">+</span> <span class="n">dy</span><span class="p">,</span> <span class="n">x0</span><span class="p">:</span> <span class="n">x0</span> <span class="o">+</span> <span class="n">dx</span><span class="p">]</span> <span class="o">=</span> <span class="n">variance_temp</span>
+        <span class="n">exposure</span><span class="o">.</span><span class="n">getMaskedImage</span><span class="p">()</span><span class="o">.</span><span class="n">getImage</span><span class="p">()</span><span class="o">.</span><span class="n">getArray</span><span class="p">()[:,</span> <span class="p">:]</span> <span class="o">=</span> <span class="n">array</span>
+        <span class="k">if</span> <span class="n">variance</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">variance</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">array</span><span class="p">)</span>
+        <span class="n">exposure</span><span class="o">.</span><span class="n">getMaskedImage</span><span class="p">()</span><span class="o">.</span><span class="n">getVariance</span><span class="p">()</span><span class="o">.</span><span class="n">getArray</span><span class="p">()[:,</span> <span class="p">:]</span> <span class="o">=</span> <span class="n">variance</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask</span> <span class="ow">is</span> <span class="ow">not</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">exposure</span><span class="o">.</span><span class="n">getMaskedImage</span><span class="p">()</span><span class="o">.</span><span class="n">getMask</span><span class="p">()</span><span class="o">.</span><span class="n">getArray</span><span class="p">()[:,</span> <span class="p">:]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask</span>
+        <span class="n">ha_term1</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">elevation</span><span class="o">.</span><span class="n">asRadians</span><span class="p">())</span>
+        <span class="n">ha_term2</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">dec</span><span class="o">.</span><span class="n">asRadians</span><span class="p">())</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">observatory</span><span class="o">.</span><span class="n">getLatitude</span><span class="p">()</span><span class="o">.</span><span class="n">asRadians</span><span class="p">())</span>
+        <span class="n">ha_term3</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">dec</span><span class="o">.</span><span class="n">asRadians</span><span class="p">())</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">observatory</span><span class="o">.</span><span class="n">getLatitude</span><span class="p">()</span><span class="o">.</span><span class="n">asRadians</span><span class="p">())</span>
+        <span class="n">hour_angle</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arccos</span><span class="p">((</span><span class="n">ha_term1</span> <span class="o">-</span> <span class="n">ha_term2</span><span class="p">)</span> <span class="o">/</span> <span class="n">ha_term3</span><span class="p">)</span>
+        <span class="n">mjd</span> <span class="o">=</span> <span class="mf">59000.0</span> <span class="o">+</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">observatory</span><span class="o">.</span><span class="n">getLatitude</span><span class="p">()</span><span class="o">.</span><span class="n">asDegrees</span><span class="p">()</span><span class="o">/</span><span class="mf">15.0</span> <span class="o">-</span> <span class="n">hour_angle</span><span class="o">*</span><span class="mi">180</span><span class="o">/</span><span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span><span class="o">/</span><span class="mf">24.0</span>
+        <span class="n">airmass</span> <span class="o">=</span> <span class="mf">1.0</span><span class="o">/</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">elevation</span><span class="o">.</span><span class="n">asRadians</span><span class="p">())</span>
+        <span class="k">if</span> <span class="n">era</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">era</span> <span class="o">=</span> <span class="n">Angle</span><span class="p">(</span><span class="n">hour_angle</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">observatory</span><span class="o">.</span><span class="n">getLongitude</span><span class="p">()</span><span class="o">.</span><span class="n">asRadians</span><span class="p">())</span>
+        <span class="n">meta</span> <span class="o">=</span> <span class="n">exposure</span><span class="o">.</span><span class="n">getMetadata</span><span class="p">()</span>
+        <span class="n">meta</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s">&quot;CHIPID&quot;</span><span class="p">,</span> <span class="s">&quot;R22_S11&quot;</span><span class="p">)</span>
+        <span class="c"># Required! Phosim output stores the snap ID in &quot;OUTFILE&quot; as the last three characters in a string.</span>
+        <span class="n">meta</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s">&quot;OUTFILE&quot;</span><span class="p">,</span> <span class="p">(</span><span class="s">&quot;SnapId_%3.3i&quot;</span> <span class="o">%</span> <span class="n">snap</span><span class="p">))</span>
+
+        <span class="n">meta</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s">&quot;TAI&quot;</span><span class="p">,</span> <span class="n">mjd</span><span class="p">)</span>
+        <span class="n">meta</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s">&quot;MJD-OBS&quot;</span><span class="p">,</span> <span class="n">mjd</span><span class="p">)</span>
+
+        <span class="n">meta</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s">&quot;EXTTYPE&quot;</span><span class="p">,</span> <span class="s">&quot;IMAGE&quot;</span><span class="p">)</span>
+        <span class="n">meta</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s">&quot;EXPTIME&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">exposure_time</span><span class="p">)</span>
+        <span class="n">meta</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s">&quot;AIRMASS&quot;</span><span class="p">,</span> <span class="n">airmass</span><span class="p">)</span>
+        <span class="n">meta</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s">&quot;ZENITH&quot;</span><span class="p">,</span> <span class="mf">90.</span> <span class="o">-</span> <span class="n">elevation</span><span class="o">.</span><span class="n">asDegrees</span><span class="p">())</span>
+        <span class="n">meta</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s">&quot;AZIMUTH&quot;</span><span class="p">,</span> <span class="n">azimuth</span><span class="o">.</span><span class="n">asDegrees</span><span class="p">())</span>
+
+        <span class="c"># Add all additional keyword arguments to the metadata.</span>
+        <span class="k">for</span> <span class="n">add_item</span> <span class="ow">in</span> <span class="n">kwargs</span><span class="p">:</span>
+            <span class="n">meta</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">add_item</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">[</span><span class="n">add_item</span><span class="p">])</span>
+
+        <span class="n">visitInfo</span> <span class="o">=</span> <span class="n">afwImage</span><span class="o">.</span><span class="n">makeVisitInfo</span><span class="p">(</span><span class="n">exposureId</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">exposureId</span><span class="p">),</span>
+                                           <span class="n">exposureTime</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">exposure_time</span><span class="p">,</span>
+                                           <span class="n">darkTime</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">exposure_time</span><span class="p">,</span>
+                                           <span class="n">date</span><span class="o">=</span><span class="n">DateTime</span><span class="p">(</span><span class="n">mjd</span><span class="p">),</span>
+                                           <span class="n">ut1</span><span class="o">=</span><span class="n">mjd</span><span class="p">,</span>
+                                           <span class="n">era</span><span class="o">=</span><span class="n">era</span><span class="p">,</span>
+                                           <span class="n">boresightRaDec</span><span class="o">=</span><span class="n">IcrsCoord</span><span class="p">(</span><span class="n">ra</span><span class="p">,</span> <span class="n">dec</span><span class="p">),</span>
+                                           <span class="n">boresightAzAlt</span><span class="o">=</span><span class="n">Coord</span><span class="p">(</span><span class="n">azimuth</span><span class="p">,</span> <span class="n">elevation</span><span class="p">),</span>
+                                           <span class="n">boresightAirmass</span><span class="o">=</span><span class="n">airmass</span><span class="p">,</span>
+                                           <span class="n">boresightRotAngle</span><span class="o">=</span><span class="n">boresightRotAngle</span><span class="p">,</span>
+                                           <span class="n">observatory</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">observatory</span><span class="p">,</span>
+                                           <span class="n">weather</span><span class="o">=</span><span class="n">weather</span>
+                                           <span class="p">)</span>
+        <span class="n">exposure</span><span class="o">.</span><span class="n">getInfo</span><span class="p">()</span><span class="o">.</span><span class="n">setVisitInfo</span><span class="p">(</span><span class="n">visitInfo</span><span class="p">)</span>
+
+        <span class="c">#Set the DCR-matched PSF</span>
+        <span class="n">psf_single</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">build_matched_psf</span><span class="p">(</span><span class="n">elevation</span><span class="p">,</span> <span class="n">calculate_rotation_angle</span><span class="p">(</span><span class="n">exposure</span><span class="p">),</span> <span class="n">weather</span><span class="p">)</span>
+        <span class="n">exposure</span><span class="o">.</span><span class="n">setPsf</span><span class="p">(</span><span class="n">psf_single</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">exposure</span></div>
+
+<div class="viewcode-block" id="GenerateTemplate.export_model"><a class="viewcode-back" href="../../py-api/python.generateTemplate.GenerateTemplate.html#python.generateTemplate.GenerateTemplate.export_model">[docs]</a>    <span class="k">def</span> <span class="nf">export_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_repository</span><span class="o">=</span><span class="k">None</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Persist a DcrModel with metadata to a repository.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        model_repository : None, optional</span>
+<span class="sd">            Full path to the directory of the repository to save the dcrModel in</span>
+<span class="sd">            If not set, uses the existing self.butler</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        None</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">wave_gen</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_wavelength_iterator</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">bandpass</span><span class="p">,</span> <span class="n">use_midpoint</span><span class="o">=</span><span class="k">False</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_step</span><span class="p">):</span>
+            <span class="n">wl_start</span><span class="p">,</span> <span class="n">wl_end</span> <span class="o">=</span> <span class="n">wave_gen</span><span class="o">.</span><span class="n">next</span><span class="p">()</span>
+            <span class="n">exp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">create_exposure</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">[</span><span class="n">f</span><span class="p">],</span> <span class="n">variance</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">weights</span><span class="p">,</span>
+                                       <span class="n">elevation</span><span class="o">=</span><span class="n">Angle</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="o">/</span><span class="mi">2</span><span class="p">),</span> <span class="n">azimuth</span><span class="o">=</span><span class="n">Angle</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span>
+                                       <span class="n">detectbit</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">detected_bit</span><span class="p">,</span>
+                                       <span class="n">subfilt</span><span class="o">=</span><span class="n">f</span><span class="p">,</span> <span class="n">nstep</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">n_step</span><span class="p">,</span> <span class="n">wavelow</span><span class="o">=</span><span class="n">wl_start</span><span class="p">,</span> <span class="n">wavehigh</span><span class="o">=</span><span class="n">wl_end</span><span class="p">,</span>
+                                       <span class="n">telescop</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">instrument</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">write_exposure</span><span class="p">(</span><span class="n">exp</span><span class="p">,</span> <span class="n">output_repository</span><span class="o">=</span><span class="n">model_repository</span><span class="p">,</span> <span class="n">data_type</span><span class="o">=</span><span class="s">&quot;dcrModel&quot;</span><span class="p">,</span> <span class="n">subfilter</span><span class="o">=</span><span class="n">f</span><span class="p">)</span></div>
+
+<div class="viewcode-block" id="GenerateTemplate.load_model"><a class="viewcode-back" href="../../py-api/python.generateTemplate.GenerateTemplate.html#python.generateTemplate.GenerateTemplate.load_model">[docs]</a>    <span class="k">def</span> <span class="nf">load_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_repository</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">band_name</span><span class="o">=</span><span class="s">&#39;g&#39;</span><span class="p">,</span>
+                   <span class="n">instrument</span><span class="o">=</span><span class="s">&#39;lsstSim&#39;</span><span class="p">,</span> <span class="n">detected_bit</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Depersist a DCR model from a repository and set up the metadata.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        model_repository : None, optional</span>
+<span class="sd">            Full path to the directory of the repository to load the ``dcrModel`` from.</span>
+<span class="sd">            If not set, uses the existing self.butler</span>
+<span class="sd">        band_name : str, optional</span>
+<span class="sd">            Common name of the filter used. For LSST, use u, g, r, i, z, or y</span>
+<span class="sd">        **kwargs :</span>
+<span class="sd">            Any additional keyword arguments to pass to ``load_bandpass``</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        None, but loads self.model and sets up all the needed quantities such as the psf and bandpass objects.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">instrument</span> <span class="o">=</span> <span class="n">instrument</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">filter_name</span> <span class="o">=</span> <span class="n">band_name</span>
+        <span class="n">model_arr</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">dcrModel_gen</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">read_exposures</span><span class="p">(</span><span class="n">data_type</span><span class="o">=</span><span class="s">&quot;dcrModel&quot;</span><span class="p">,</span> <span class="n">input_repository</span><span class="o">=</span><span class="n">model_repository</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">dcrModel</span> <span class="ow">in</span> <span class="n">dcrModel_gen</span><span class="p">:</span>
+            <span class="n">model_arr</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">dcrModel</span><span class="o">.</span><span class="n">getMaskedImage</span><span class="p">()</span><span class="o">.</span><span class="n">getImage</span><span class="p">()</span><span class="o">.</span><span class="n">getArray</span><span class="p">())</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">model_arr</span>
+        <span class="c"># The weights should be identical for all subfilters.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">weights</span> <span class="o">=</span> <span class="n">dcrModel</span><span class="o">.</span><span class="n">getMaskedImage</span><span class="p">()</span><span class="o">.</span><span class="n">getVariance</span><span class="p">()</span><span class="o">.</span><span class="n">getArray</span><span class="p">()</span>
+        <span class="c"># The masks should be identical for all subfilters</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mask</span> <span class="o">=</span> <span class="n">dcrModel</span><span class="o">.</span><span class="n">getMaskedImage</span><span class="p">()</span><span class="o">.</span><span class="n">getMask</span><span class="p">()</span><span class="o">.</span><span class="n">getArray</span><span class="p">()</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">wcs</span> <span class="o">=</span> <span class="n">dcrModel</span><span class="o">.</span><span class="n">getWcs</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_step</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">detected_bit</span> <span class="o">=</span> <span class="n">detected_bit</span>
+        <span class="n">y_size</span><span class="p">,</span> <span class="n">x_size</span> <span class="o">=</span> <span class="n">dcrModel</span><span class="o">.</span><span class="n">getDimensions</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">x_size</span> <span class="o">=</span> <span class="n">x_size</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">y_size</span> <span class="o">=</span> <span class="n">y_size</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pixel_scale</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">wcs</span><span class="o">.</span><span class="n">pixelScale</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">exposure_time</span> <span class="o">=</span> <span class="n">dcrModel</span><span class="o">.</span><span class="n">getInfo</span><span class="p">()</span><span class="o">.</span><span class="n">getVisitInfo</span><span class="p">()</span><span class="o">.</span><span class="n">getExposureTime</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">observatory</span> <span class="o">=</span> <span class="n">dcrModel</span><span class="o">.</span><span class="n">getInfo</span><span class="p">()</span><span class="o">.</span><span class="n">getVisitInfo</span><span class="p">()</span><span class="o">.</span><span class="n">getObservatory</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bbox</span> <span class="o">=</span> <span class="n">dcrModel</span><span class="o">.</span><span class="n">getBBox</span><span class="p">()</span>
+        <span class="n">bandpass_init</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">load_bandpass</span><span class="p">(</span><span class="n">band_name</span><span class="o">=</span><span class="n">band_name</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="n">wavelength_step</span> <span class="o">=</span> <span class="p">(</span><span class="n">bandpass_init</span><span class="o">.</span><span class="n">wavelen_max</span> <span class="o">-</span> <span class="n">bandpass_init</span><span class="o">.</span><span class="n">wavelen_min</span><span class="p">)</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_step</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bandpass</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">load_bandpass</span><span class="p">(</span><span class="n">band_name</span><span class="o">=</span><span class="n">band_name</span><span class="p">,</span> <span class="n">wavelength_step</span><span class="o">=</span><span class="n">wavelength_step</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">psf</span> <span class="o">=</span> <span class="n">dcrModel</span><span class="o">.</span><span class="n">getPsf</span><span class="p">()</span>
+        <span class="n">psf_avg</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">psf</span><span class="o">.</span><span class="n">computeKernelImage</span><span class="p">()</span><span class="o">.</span><span class="n">getArray</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">psf_size</span> <span class="o">=</span> <span class="n">psf_avg</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">debug</span> <span class="o">=</span> <span class="k">False</span></div>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">_calc_offset_phase</span><span class="p">(</span><span class="n">dcr_gen</span><span class="p">,</span> <span class="n">exposure</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">size_out</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">center_only</span><span class="o">=</span><span class="k">False</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Calculate the covariance matrix for a simple shift with no psf.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        dcr_gen : generator</span>
+<span class="sd">             A dcr generator of offsets, returned by ``_dcr_generator``.</span>
+<span class="sd">        exposure : lsst.afw.image.ExposureD object, optional</span>
+<span class="sd">            An LSST exposure object. Only needed if size is not specified.</span>
+<span class="sd">        size : int, optional</span>
+<span class="sd">            Width in pixels of the region used in the origin image. Default is entire image</span>
+<span class="sd">        size_out : int, optional</span>
+<span class="sd">            Width in pixels of the region used in the destination image. Default is same as size</span>
+<span class="sd">        center_only : bool, optional</span>
+<span class="sd">            Set to True to calculate the covariance for only the center pixel.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        np.ndarray</span>
+<span class="sd">            Returns the covariance matrix of an offset generated by _dcr_generator in the form (dx, dy)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">phase_arr</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">if</span> <span class="n">size</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">size</span> <span class="o">=</span> <span class="nb">min</span><span class="p">([</span><span class="n">exposure</span><span class="o">.</span><span class="n">getHeight</span><span class="p">(),</span> <span class="n">exposure</span><span class="o">.</span><span class="n">getWidth</span><span class="p">()])</span>
+        <span class="k">if</span> <span class="n">size_out</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">size_out</span> <span class="o">=</span> <span class="n">size</span>
+        <span class="k">for</span> <span class="n">dx</span><span class="p">,</span> <span class="n">dy</span> <span class="ow">in</span> <span class="n">dcr_gen</span><span class="p">:</span>
+            <span class="n">kernel_x</span> <span class="o">=</span> <span class="n">_kernel_1d</span><span class="p">(</span><span class="n">dx</span><span class="p">,</span> <span class="n">size</span><span class="p">,</span> <span class="n">n_substep</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+            <span class="n">kernel_y</span> <span class="o">=</span> <span class="n">_kernel_1d</span><span class="p">(</span><span class="n">dy</span><span class="p">,</span> <span class="n">size</span><span class="p">,</span> <span class="n">n_substep</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+            <span class="n">kernel</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s">&#39;i,j-&gt;ij&#39;</span><span class="p">,</span> <span class="n">kernel_y</span><span class="p">,</span> <span class="n">kernel_x</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">center_only</span><span class="p">:</span>
+                <span class="n">size_out</span> <span class="o">=</span> <span class="mi">1</span>
+            <span class="n">shift_mat</span> <span class="o">=</span> <span class="n">_calc_psf_kernel_subroutine</span><span class="p">(</span><span class="n">kernel</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">size</span><span class="p">,</span> <span class="n">size_out</span><span class="o">=</span><span class="n">size_out</span><span class="p">)</span>
+            <span class="n">phase_arr</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">shift_mat</span><span class="p">)</span>
+        <span class="n">phase_arr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">hstack</span><span class="p">(</span><span class="n">phase_arr</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">phase_arr</span>
+
+    <span class="k">def</span> <span class="nf">_build_dcr_kernel</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">size</span><span class="p">,</span> <span class="n">expand_intermediate</span><span class="o">=</span><span class="k">False</span><span class="p">,</span> <span class="n">exposure</span><span class="o">=</span><span class="k">None</span><span class="p">,</span>
+                          <span class="n">bandpass</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">n_step</span><span class="o">=</span><span class="k">None</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Calculate the DCR covariance matrix for a set of exposures, or a single exposure.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        size : int</span>
+<span class="sd">            Width in pixels of the region used in the origin image.</span>
+<span class="sd">        expand_intermediate : bool, optional</span>
+<span class="sd">            If set, calculate the covariance matrix between the region of pixels in</span>
+<span class="sd">            the origin image and a region twice as wide in the destination image.</span>
+<span class="sd">            This helps avoid edge effects when computing A^T A.</span>
+<span class="sd">        exposure : lsst.afw.image.ExposureD object, optional</span>
+<span class="sd">            If not supplied, the covariance matrix for all exposures in ``self.exposures`` is calculated.</span>
+<span class="sd">        bandpass : lsst.sims.photUtils.Bandpass object</span>
+<span class="sd">            Bandpass object returned by load_bandpass</span>
+<span class="sd">        n_step : int, optional</span>
+<span class="sd">            Number of sub-band planes to use. Default is to use ``self.n_step``</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        np.ndarray</span>
+<span class="sd">            Returns the covariance matrix for the exposure(s).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">n_pix</span> <span class="o">=</span> <span class="n">size</span><span class="o">**</span><span class="mi">2</span>
+        <span class="k">if</span> <span class="n">expand_intermediate</span><span class="p">:</span>
+            <span class="n">kernel_size_intermediate</span> <span class="o">=</span> <span class="n">size</span><span class="o">*</span><span class="mi">2</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">kernel_size_intermediate</span> <span class="o">=</span> <span class="n">size</span>
+        <span class="n">n_pix_int</span> <span class="o">=</span> <span class="n">kernel_size_intermediate</span><span class="o">**</span><span class="mi">2</span>
+
+        <span class="k">if</span> <span class="n">exposure</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">exp_gen</span> <span class="o">=</span> <span class="p">(</span><span class="n">exp</span> <span class="k">for</span> <span class="n">exp</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">exposures</span><span class="p">)</span>
+            <span class="n">n_images</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_images</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">exp_gen</span> <span class="o">=</span> <span class="p">(</span><span class="n">exposure</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="n">n_images</span> <span class="o">=</span> <span class="mi">1</span>
+        <span class="k">if</span> <span class="n">n_step</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">n_step</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_step</span>
+        <span class="k">if</span> <span class="n">bandpass</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+            <span class="n">bandpass</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">bandpass</span>
+        <span class="n">dcr_kernel</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_images</span><span class="o">*</span><span class="n">n_pix_int</span><span class="p">,</span> <span class="n">n_step</span><span class="o">*</span><span class="n">n_pix</span><span class="p">))</span>
+        <span class="k">for</span> <span class="n">exp_i</span><span class="p">,</span> <span class="n">exp</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">exp_gen</span><span class="p">):</span>
+            <span class="n">visitInfo</span> <span class="o">=</span> <span class="n">exp</span><span class="o">.</span><span class="n">getInfo</span><span class="p">()</span><span class="o">.</span><span class="n">getVisitInfo</span><span class="p">()</span>
+            <span class="n">el</span> <span class="o">=</span> <span class="n">visitInfo</span><span class="o">.</span><span class="n">getBoresightAzAlt</span><span class="p">()</span><span class="o">.</span><span class="n">getLatitude</span><span class="p">()</span>
+            <span class="n">az</span> <span class="o">=</span> <span class="n">visitInfo</span><span class="o">.</span><span class="n">getBoresightAzAlt</span><span class="p">()</span><span class="o">.</span><span class="n">getLongitude</span><span class="p">()</span>
+            <span class="n">weather</span> <span class="o">=</span> <span class="n">visitInfo</span><span class="o">.</span><span class="n">getWeather</span><span class="p">()</span>
+            <span class="n">dcr_gen</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dcr_generator</span><span class="p">(</span><span class="n">bandpass</span><span class="p">,</span> <span class="n">pixel_scale</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pixel_scale</span><span class="p">,</span> <span class="n">weather</span><span class="o">=</span><span class="n">weather</span><span class="p">,</span>
+                                          <span class="n">observatory</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">observatory</span><span class="p">,</span> <span class="n">elevation</span><span class="o">=</span><span class="n">el</span><span class="p">,</span> <span class="n">rotation_angle</span><span class="o">=</span><span class="n">az</span><span class="p">)</span>
+            <span class="n">kernel_single</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_calc_offset_phase</span><span class="p">(</span><span class="n">dcr_gen</span><span class="o">=</span><span class="n">dcr_gen</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">size</span><span class="p">,</span>
+                                                    <span class="n">size_out</span><span class="o">=</span><span class="n">kernel_size_intermediate</span><span class="p">)</span>
+            <span class="n">dcr_kernel</span><span class="p">[</span><span class="n">exp_i</span><span class="o">*</span><span class="n">n_pix_int</span><span class="p">:</span> <span class="p">(</span><span class="n">exp_i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="n">n_pix_int</span><span class="p">,</span> <span class="p">:]</span> <span class="o">=</span> <span class="n">kernel_single</span>
+        <span class="k">return</span> <span class="n">dcr_kernel</span>
+
+<div class="viewcode-block" id="GenerateTemplate.calc_psf_model_single"><a class="viewcode-back" href="../../py-api/python.generateTemplate.GenerateTemplate.html#python.generateTemplate.GenerateTemplate.calc_psf_model_single">[docs]</a>    <span class="k">def</span> <span class="nf">calc_psf_model_single</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exposure</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Calculate the fiducial psf for a single exposure, accounting for DCR.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        exposure : lsst.afw.image.ExposureD object</span>
+<span class="sd">            A single LSST exposure object</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        np.ndarray</span>
+<span class="sd">            Returns the fiducial PSF for an exposure, after taking out DCR effects.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">visitInfo</span> <span class="o">=</span> <span class="n">exposure</span><span class="o">.</span><span class="n">getInfo</span><span class="p">()</span><span class="o">.</span><span class="n">getVisitInfo</span><span class="p">()</span>
+        <span class="n">el</span> <span class="o">=</span> <span class="n">visitInfo</span><span class="o">.</span><span class="n">getBoresightAzAlt</span><span class="p">()</span><span class="o">.</span><span class="n">getLatitude</span><span class="p">()</span>
+        <span class="n">az</span> <span class="o">=</span> <span class="n">visitInfo</span><span class="o">.</span><span class="n">getBoresightAzAlt</span><span class="p">()</span><span class="o">.</span><span class="n">getLongitude</span><span class="p">()</span>
+        <span class="n">weather</span> <span class="o">=</span> <span class="n">visitInfo</span><span class="o">.</span><span class="n">getWeather</span><span class="p">()</span>
+
+        <span class="c"># Take the measured PSF as the true PSF, smeared out by DCR.</span>
+        <span class="n">psf_img</span> <span class="o">=</span> <span class="n">exposure</span><span class="o">.</span><span class="n">getPsf</span><span class="p">()</span><span class="o">.</span><span class="n">computeKernelImage</span><span class="p">()</span><span class="o">.</span><span class="n">getArray</span><span class="p">()</span>
+        <span class="n">psf_size_test</span> <span class="o">=</span> <span class="n">psf_img</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">psf_size_test</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">psf_size</span><span class="p">:</span>
+            <span class="n">p0</span> <span class="o">=</span> <span class="n">psf_size_test</span><span class="o">//</span><span class="mi">2</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">psf_size</span><span class="o">//</span><span class="mi">2</span>
+            <span class="n">p1</span> <span class="o">=</span> <span class="n">p0</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">psf_size</span>
+            <span class="n">psf_img</span> <span class="o">=</span> <span class="n">psf_img</span><span class="p">[</span><span class="n">p0</span><span class="p">:</span><span class="n">p1</span><span class="p">,</span> <span class="n">p0</span><span class="p">:</span><span class="n">p1</span><span class="p">]</span>
+            <span class="n">psf_size_use</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">psf_size</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">psf_size_use</span> <span class="o">=</span> <span class="n">psf_size_test</span>
+
+        <span class="c"># Calculate the expected shift (with no psf) due to DCR</span>
+        <span class="n">dcr_gen</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dcr_generator</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">bandpass</span><span class="p">,</span> <span class="n">pixel_scale</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pixel_scale</span><span class="p">,</span> <span class="n">weather</span><span class="o">=</span><span class="n">weather</span><span class="p">,</span>
+                                      <span class="n">observatory</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">observatory</span><span class="p">,</span> <span class="n">elevation</span><span class="o">=</span><span class="n">el</span><span class="p">,</span> <span class="n">azimuth</span><span class="o">=</span><span class="n">az</span><span class="p">)</span>
+        <span class="n">dcr_shift</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_calc_offset_phase</span><span class="p">(</span><span class="n">exposure</span><span class="o">=</span><span class="n">exposure</span><span class="p">,</span> <span class="n">dcr_gen</span><span class="o">=</span><span class="n">dcr_gen</span><span class="p">,</span>
+                                            <span class="n">size</span><span class="o">=</span><span class="n">psf_size_use</span><span class="p">)</span>
+        <span class="c"># Assume that the PSF does not change between sub-bands.</span>
+        <span class="n">regularize_psf</span> <span class="o">=</span> <span class="k">None</span>
+        <span class="c"># Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images</span>
+        <span class="c"># If the original psf is much larger than the kernel, it may be trimmed slightly by fit_psf_size above</span>
+        <span class="n">psf_model_gen</span> <span class="o">=</span> <span class="n">solve_model</span><span class="p">(</span><span class="n">psf_size_use</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ravel</span><span class="p">(</span><span class="n">psf_img</span><span class="p">),</span> <span class="n">n_step</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">n_step</span><span class="p">,</span>
+                                    <span class="n">use_nonnegative</span><span class="o">=</span><span class="k">True</span><span class="p">,</span> <span class="n">regularization</span><span class="o">=</span><span class="n">regularize_psf</span><span class="p">,</span> <span class="n">kernel_dcr</span><span class="o">=</span><span class="n">dcr_shift</span><span class="p">)</span>
+
+        <span class="c"># After solving for the (potentially) large psf, store only the central portion of size kernel_size.</span>
+        <span class="n">psf_vals</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">psf_model_gen</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">/</span><span class="bp">self</span><span class="o">.</span><span class="n">n_step</span>
+        <span class="k">return</span> <span class="n">psf_vals</span></div></div>
+
+
+<span class="k">def</span> <span class="nf">_calc_psf_kernel_subroutine</span><span class="p">(</span><span class="n">psf_img</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">size_out</span><span class="o">=</span><span class="k">None</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;Subroutine to build a covariance matrix from an image of a PSF.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    psf_img : np.ndarray</span>
+<span class="sd">        An image of the point spread function.</span>
+<span class="sd">    size : int, optional</span>
+<span class="sd">        Width of the kernel in the origin image, in pixels. Default is to use the entire image.</span>
+<span class="sd">    size_out : int, optional</span>
+<span class="sd">        Width of the kernel in the destination image, in pixels. Default is equal to size.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    np.ndarray</span>
+<span class="sd">        The covariance matrix, with dimensions (size_out**2, size**2)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">size</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+        <span class="n">y_size</span><span class="p">,</span> <span class="n">x_size</span> <span class="o">=</span> <span class="n">psf_img</span><span class="o">.</span><span class="n">shape</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">y_size</span> <span class="o">=</span> <span class="n">size</span>
+        <span class="n">x_size</span> <span class="o">=</span> <span class="n">size</span>
+    <span class="k">if</span> <span class="n">size_out</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+        <span class="n">size_out</span> <span class="o">=</span> <span class="n">size</span>
+    <span class="n">psf_y_size</span><span class="p">,</span> <span class="n">psf_x_size</span> <span class="o">=</span> <span class="n">psf_img</span><span class="o">.</span><span class="n">shape</span>
+    <span class="k">if</span> <span class="n">psf_x_size</span> <span class="o">&lt;</span> <span class="n">x_size</span><span class="p">:</span>
+        <span class="n">x0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">x_size</span><span class="o">//</span><span class="mi">2</span> <span class="o">-</span> <span class="n">psf_x_size</span><span class="o">//</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">x1</span> <span class="o">=</span> <span class="n">x0</span> <span class="o">+</span> <span class="n">psf_x_size</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">x0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">psf_x_size</span><span class="o">//</span><span class="mi">2</span> <span class="o">-</span> <span class="n">x_size</span><span class="o">//</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">x1</span> <span class="o">=</span> <span class="n">x0</span> <span class="o">+</span> <span class="n">x_size</span>
+    <span class="k">if</span> <span class="n">psf_y_size</span> <span class="o">&lt;</span> <span class="n">y_size</span><span class="p">:</span>
+        <span class="n">y0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">y_size</span><span class="o">//</span><span class="mi">2</span> <span class="o">-</span> <span class="n">psf_y_size</span><span class="o">//</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">y1</span> <span class="o">=</span> <span class="n">y0</span> <span class="o">+</span> <span class="n">psf_y_size</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">y0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">psf_y_size</span><span class="o">//</span><span class="mi">2</span> <span class="o">-</span> <span class="n">y_size</span><span class="o">//</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">y1</span> <span class="o">=</span> <span class="n">y0</span> <span class="o">+</span> <span class="n">y_size</span>
+    <span class="n">sub_image</span> <span class="o">=</span> <span class="n">psf_img</span><span class="p">[</span><span class="n">y0</span><span class="p">:</span><span class="n">y1</span><span class="p">,</span> <span class="n">x0</span><span class="p">:</span><span class="n">x1</span><span class="p">]</span>
+
+    <span class="c"># sub_image_use below will have dimensions (size*2, size*2), we want central (size_out, size_out)</span>
+    <span class="n">slice_inds</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">s_</span><span class="p">[</span><span class="n">y_size</span> <span class="o">-</span> <span class="n">size_out</span><span class="o">//</span><span class="mi">2</span><span class="p">:</span> <span class="n">y_size</span> <span class="o">-</span> <span class="n">size_out</span><span class="o">//</span><span class="mi">2</span> <span class="o">+</span> <span class="n">size_out</span><span class="p">,</span>
+                       <span class="n">x_size</span> <span class="o">-</span> <span class="n">size_out</span><span class="o">//</span><span class="mi">2</span><span class="p">:</span> <span class="n">x_size</span> <span class="o">-</span> <span class="n">size_out</span><span class="o">//</span><span class="mi">2</span> <span class="o">+</span> <span class="n">size_out</span><span class="p">]</span>
+
+    <span class="n">psf_mat</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">size_out</span><span class="o">*</span><span class="n">size_out</span><span class="p">,</span> <span class="n">x_size</span><span class="o">*</span><span class="n">y_size</span><span class="p">))</span>
+    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">y_size</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">x_size</span><span class="p">):</span>
+            <span class="n">ij</span> <span class="o">=</span> <span class="n">i</span> <span class="o">+</span> <span class="n">j</span> <span class="o">*</span> <span class="n">x_size</span>
+            <span class="n">x_shift</span> <span class="o">=</span> <span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">x_size</span> <span class="o">-</span> <span class="n">i</span><span class="p">)</span>
+            <span class="n">y_shift</span> <span class="o">=</span> <span class="p">(</span><span class="n">j</span><span class="p">,</span> <span class="n">y_size</span> <span class="o">-</span> <span class="n">j</span><span class="p">)</span>
+            <span class="n">sub_image_use</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">pad</span><span class="p">(</span><span class="n">sub_image</span><span class="p">,</span> <span class="p">(</span><span class="n">y_shift</span><span class="p">,</span> <span class="n">x_shift</span><span class="p">),</span> <span class="s">&#39;constant&#39;</span><span class="p">,</span> <span class="n">constant_values</span><span class="o">=</span><span class="mf">0.</span><span class="p">)</span>
+            <span class="n">psf_mat</span><span class="p">[:,</span> <span class="n">ij</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ravel</span><span class="p">(</span><span class="n">sub_image_use</span><span class="p">[</span><span class="n">slice_inds</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">psf_mat</span>
+
+
+<span class="k">def</span> <span class="nf">_kernel_1d</span><span class="p">(</span><span class="n">offset</span><span class="p">,</span> <span class="n">size</span><span class="p">,</span> <span class="n">n_substep</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">lanczos</span><span class="o">=</span><span class="k">None</span><span class="p">,</span> <span class="n">debug_sinc</span><span class="o">=</span><span class="k">False</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;Pre-compute the 1D sinc function values along each axis.</span>
+
+<span class="sd">    Calculate the kernel as a simple numerical integration over the width of the offset with n_substep steps</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    offset : named tuple</span>
+<span class="sd">        Tuple of start/end pixel offsets of dft locations along single axis (either x or y)</span>
+<span class="sd">    size : int</span>
+<span class="sd">        Dimension in pixels of the given axis.</span>
+<span class="sd">    n_substep : int, optional</span>
+<span class="sd">        Number of points in the numerical integration. Default is 1.</span>
+<span class="sd">    lanczos : int, optional</span>
+<span class="sd">        If set, the order of lanczos interpolation to use.</span>
+<span class="sd">    debug_sinc : bool, optional</span>
+<span class="sd">        Set to use a simple linear interpolation between nearest neighbors, instead of a sinc kernel.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    np.ndarray</span>
+<span class="sd">        An array containing the values of the calculated kernel.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">n_substep</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+        <span class="n">n_substep</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">n_substep</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">n_substep</span><span class="p">)</span>
+    <span class="n">pi</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span>
+    <span class="n">pix</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">size</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+    <span class="n">kernel</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">size</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_substep</span><span class="p">):</span>
+        <span class="n">loc</span> <span class="o">=</span> <span class="p">(</span><span class="n">size</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span><span class="o">/</span><span class="mf">2.</span> <span class="o">+</span> <span class="p">(</span><span class="n">offset</span><span class="o">.</span><span class="n">start</span><span class="o">*</span><span class="p">(</span><span class="n">n_substep</span> <span class="o">-</span> <span class="p">(</span><span class="n">n</span> <span class="o">+</span> <span class="mf">0.5</span><span class="p">))</span> <span class="o">+</span> <span class="n">offset</span><span class="o">.</span><span class="n">end</span><span class="o">*</span><span class="p">(</span><span class="n">n</span> <span class="o">+</span> <span class="mf">0.5</span><span class="p">))</span><span class="o">/</span><span class="n">n_substep</span>
+        <span class="k">if</span> <span class="n">loc</span> <span class="o">%</span> <span class="mf">1.0</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">kernel</span><span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">loc</span><span class="p">)]</span> <span class="o">+=</span> <span class="mf">1.0</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">debug_sinc</span><span class="p">:</span>
+                <span class="n">i_low</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">loc</span><span class="p">))</span>
+                <span class="n">i_high</span> <span class="o">=</span> <span class="n">i_low</span> <span class="o">+</span> <span class="mi">1</span>
+                <span class="n">frac_high</span> <span class="o">=</span> <span class="n">loc</span> <span class="o">-</span> <span class="n">i_low</span>
+                <span class="n">frac_low</span> <span class="o">=</span> <span class="mf">1.</span> <span class="o">-</span> <span class="n">frac_high</span>
+                <span class="n">kernel</span><span class="p">[</span><span class="n">i_low</span><span class="p">]</span> <span class="o">+=</span> <span class="n">frac_low</span>
+                <span class="n">kernel</span><span class="p">[</span><span class="n">i_high</span><span class="p">]</span> <span class="o">+=</span> <span class="n">frac_high</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">x</span> <span class="o">=</span> <span class="n">pi</span><span class="o">*</span><span class="p">(</span><span class="n">pix</span> <span class="o">-</span> <span class="n">loc</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">lanczos</span> <span class="ow">is</span> <span class="k">None</span><span class="p">:</span>
+                    <span class="n">kernel</span> <span class="o">+=</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">/</span><span class="n">x</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">kernel</span> <span class="o">+=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">/</span><span class="n">x</span><span class="p">)</span><span class="o">*</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">x</span><span class="o">/</span><span class="n">lanczos</span><span class="p">)</span><span class="o">/</span><span class="p">(</span><span class="n">x</span><span class="o">/</span><span class="n">lanczos</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">kernel</span><span class="o">/</span><span class="n">n_substep</span>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper"><h3>Page Contents</h3>
+
+
+      
+<form action="../../search.html" method="get">
+  <input type="text" name="q" placeholder="Search" />
+  <input type="hidden" name="check_keywords" value="yes" />
+  <input type="hidden" name="area" value="default" />
+</form>
+      
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+<footer class="footer">
+  <p class="pull-right"> &nbsp;
+    <a href="#">Back to Top</a></p>
+  <p>
+    Last built Mar 21, 2017.
+  </p>
+  <p>
+    Created using <a href="http://sphinx.pocoo.org/">Sphinx</a> 1.5.2. Page design is based on Astropy's bootstrap-astropy theme in <a href="https://github.com/astropy/astropy-helpers">astropy-helpers</a>. <br />
+    LSST documentation is proudly served through the <a href="https://fastly.com">Fastly</a> CDN.
+  </p>
+  <p>
+    &copy; Copyright 2016 University of Washington.<br/>
+  </p>
+  <p>
+    Financial support for <a href="https://www.lsst.org">LSST</a> comes from the National Science Foundation (<a href="https://www.nsf.gov">NSF</a>) through Cooperative Agreement No. 1258333, the Department of Energy (<a href="http://energy.gov">DOE</a>) Office of Science under Contract No. DE-AC02-76SF00515, and private funding raised by the <a href="https://www.lsstcorporation.org">LSST Corporation</a>. The NSF-funded <a href="https://project.lsst.org">LSST Project Office</a> for construction was established as an operating center under management of the Association of Universities for Research in Astronomy (<a href="http://www.aura-astronomy.org">AURA</a>). The DOE-funded effort to build the LSST camera is managed by the SLAC National Accelerator Laboratory (<a href="https://www.slac.stanford.edu">SLAC</a>).
+  </p>
+</footer>
+  </body>
+</html>

@@ -1,0 +1,413 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>BuildDcrModel &#8212; generateTemplate</title>
+    
+    <link rel="stylesheet" href="../_static/bootstrap-astropy.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../',
+        VERSION:     '0.1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true,
+        SOURCELINK_SUFFIX: '.txt'
+      };
+    </script>
+    <script type="text/javascript" src="../_static/jquery.js"></script>
+    <script type="text/javascript" src="../_static/underscore.js"></script>
+    <script type="text/javascript" src="../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <script type="text/javascript" src="../_static/sidebar.js"></script>
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="prev" title="GenerateTemplate" href="python.generateTemplate.GenerateTemplate.html" />
+
+<script src="https://use.typekit.net/eme3dgn.js"></script>
+<script>try{Typekit.load({ async: true });}catch(e){}</script>
+<script type="text/javascript" src="../_static/copybutton.js"></script>
+
+
+  </head>
+  <body role="document">
+<div class="topbar">
+  <a class="brand" title="Documentation Home" href="../index.html">
+    <span id="logotext">LSST Science Pipelines</span>
+  </a>
+  <ul>
+    <li><a title="General Index" href="../genindex.html">Index</a></li>
+    <li><a title="Module Index" href="../py-modindex.html">Modules</a></li>
+    <li>
+      
+      
+<form action="../search.html" method="get">
+  <input type="text" name="q" placeholder="Search" />
+  <input type="hidden" name="check_keywords" value="yes" />
+  <input type="hidden" name="area" value="default" />
+</form>
+      
+    </li>
+  </ul>
+</div>
+
+<div class="related">
+    <h3>Navigation</h3>
+    <ul>
+      <li class="right">
+	<a href="python.generateTemplate.GenerateTemplate.html" title="GenerateTemplate">
+	  &laquo; previous
+	</a>
+	
+      </li>
+      <li>
+	<a href="../index.html">generateTemplate</a>
+	 &#187;
+      </li>
+      
+      <li>BuildDcrModel</li> 
+    </ul>
+</div>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <div class="section" id="builddcrmodel">
+<h1>BuildDcrModel<a class="headerlink" href="#builddcrmodel" title="Permalink to this headline">¶</a></h1>
+<dl class="class">
+<dt id="python.buildDcrModel.BuildDcrModel">
+<em class="property">class </em><code class="descclassname">python.buildDcrModel.</code><code class="descname">BuildDcrModel</code><span class="sig-paren">(</span><em>obsids=None</em>, <em>input_repository='.'</em>, <em>band_name='g'</em>, <em>wavelength_step=10.0</em>, <em>n_step=None</em>, <em>exposures=None</em>, <em>detected_bit=32</em>, <em>warp=False</em>, <em>instrument='lsstSim'</em>, <em>debug_mode=False</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/buildDcrModel.html#BuildDcrModel"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.buildDcrModel.BuildDcrModel" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="python.generateTemplate.GenerateTemplate.html#python.generateTemplate.GenerateTemplate" title="python.generateTemplate.GenerateTemplate"><code class="xref py py-class docutils literal"><span class="pre">python.generateTemplate.GenerateTemplate</span></code></a></p>
+<p>Class that loads LSST calibrated exposures and produces airmass-matched template images.</p>
+<p>Input exposures are read with a butler, and an initial model is made by coadding the images.
+An improved model of the sky is built for a series of sub-bands within the full bandwidth of the filter
+used for the observations by iteratively forward-modeling the template using the calculated
+Differential Chromatic Refration for the exposures in each sub-band.</p>
+<p class="rubric">Attributes</p>
+<table border="1" class="docutils">
+<colgroup>
+<col width="11%" />
+<col width="89%" />
+</colgroup>
+<tbody valign="top">
+<tr class="row-odd"><td>bandpass</td>
+<td>(lsst.sims.photUtils.Bandpass object) Bandpass object returned by <code class="xref py py-obj docutils literal"><span class="pre">load_bandpass</span></code></td>
+</tr>
+<tr class="row-even"><td>bbox</td>
+<td>(lsst.afw.geom.Box2I object) A bounding box.</td>
+</tr>
+<tr class="row-odd"><td>butler</td>
+<td>(lsst.daf.persistence Butler object) The butler handles persisting and depersisting data to and from a repository.</td>
+</tr>
+<tr class="row-even"><td>debug</td>
+<td>(bool) Temporary debugging option. If set, calculations are performed on only a small region of the full images.</td>
+</tr>
+<tr class="row-odd"><td>default_repository</td>
+<td>(str) Full path to repository with the data</td>
+</tr>
+<tr class="row-even"><td>detected_bit</td>
+<td>(int) Value of the detected bit in the bit plane mask.</td>
+</tr>
+<tr class="row-odd"><td>exposure_time</td>
+<td>(float) Length of the exposure, in seconds.</td>
+</tr>
+<tr class="row-even"><td>exposures</td>
+<td>(list) List of input exposures used to calculate the model.</td>
+</tr>
+<tr class="row-odd"><td>filter_name</td>
+<td>(str) Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.</td>
+</tr>
+<tr class="row-even"><td>instrument</td>
+<td>(str) Name of the observatory. Used to format dataIds for the butler.</td>
+</tr>
+<tr class="row-odd"><td>mask</td>
+<td>(np.ndarray) Combined bit plane mask of the model, which is used as the mask plane for generated templates.</td>
+</tr>
+<tr class="row-even"><td>model</td>
+<td>(list of np.ndarrays) The DCR model to be used to generate templates. Contains one array for each wavelength step.</td>
+</tr>
+<tr class="row-odd"><td>model_base</td>
+<td>(np.ndarray) Coadded model built from the input exposures, without accounting for DCR. Used as the starting point for the iterative solution.</td>
+</tr>
+<tr class="row-even"><td>n_images</td>
+<td>(int) Number of input images used to calculate the model.</td>
+</tr>
+<tr class="row-odd"><td>n_step</td>
+<td>(int) Number of sub-filter wavelength planes to model.</td>
+</tr>
+<tr class="row-even"><td>observatory</td>
+<td>(lsst.afw.coord.coordLib.Observatory) Class containing the longitude, latitude, and altitude of the observatory.</td>
+</tr>
+<tr class="row-odd"><td>pixel_scale</td>
+<td>(lsst.afw.geom.Angle) Plate scale, as an Angle.</td>
+</tr>
+<tr class="row-even"><td>psf</td>
+<td>(lsst.meas.algorithms KernelPsf object) Representation of the point spread function (PSF) of the model.</td>
+</tr>
+<tr class="row-odd"><td>psf_size</td>
+<td>(int) Dimension of the PSF, in pixels.</td>
+</tr>
+<tr class="row-even"><td>wcs</td>
+<td>(lsst.afw.image Wcs object) World Coordinate System of the model.</td>
+</tr>
+<tr class="row-odd"><td>weights</td>
+<td>(np.ndarray) Weights of the model, calculated from the combined inverse variance of the input exposures.</td>
+</tr>
+<tr class="row-even"><td>x_size</td>
+<td>(int) Width of the model, in pixels.</td>
+</tr>
+<tr class="row-odd"><td>y_size</td>
+<td>(int) Height of the model, in pixels.</td>
+</tr>
+</tbody>
+</table>
+<p>Load images from the repository and set up parameters.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><p class="first"><strong>obsids</strong> : int or list of ints, optional</p>
+<blockquote>
+<div><p>The observation IDs of the data to load. Not used if <code class="xref py py-obj docutils literal"><span class="pre">exposures</span></code> is set.</p>
+</div></blockquote>
+<p><strong>input_repository</strong> : str, optional</p>
+<blockquote>
+<div><p>Full path to repository with the data. Defaults to working directory</p>
+</div></blockquote>
+<p><strong>band_name</strong> : str, optional</p>
+<blockquote>
+<div><p>Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.</p>
+</div></blockquote>
+<p><strong>wavelength_step</strong> : float, optional</p>
+<blockquote>
+<div><p>Wavelength resolution in nm, also the wavelength range of each sub-band plane.
+Overridden if <code class="xref py py-obj docutils literal"><span class="pre">n_step</span></code> is supplied.</p>
+</div></blockquote>
+<p><strong>n_step</strong> : int, optional</p>
+<blockquote>
+<div><p>Number of sub-band planes to use. Takes precendence over <code class="xref py py-obj docutils literal"><span class="pre">wavelength_step</span></code>.</p>
+</div></blockquote>
+<p><strong>exposures</strong> : List of lsst.afw.image.ExposureD objects, optional</p>
+<blockquote>
+<div><p>List of exposures to use to calculate the model.</p>
+</div></blockquote>
+<p><strong>detected_bit</strong> : int, optional</p>
+<blockquote>
+<div><p>Value of the detected bit in the bit plane mask. This should really be read from the data!</p>
+</div></blockquote>
+<p><strong>warp</strong> : bool, optional</p>
+<blockquote>
+<div><p>Set to true if the exposures have different wcs from the model.
+If True, the generated templates will be warped to match the wcs of each exposure.</p>
+</div></blockquote>
+<p><strong>instrument</strong> : str, optional</p>
+<blockquote>
+<div><p>Name of the observatory.</p>
+</div></blockquote>
+<p><strong>debug_mode</strong> : bool, optional</p>
+<blockquote>
+<div><p>Description</p>
+</div></blockquote>
+<p><strong>**kwargs</strong> : TYPE</p>
+<blockquote>
+<div><p>Allows additional keyword arguments to be passed to <code class="xref py py-obj docutils literal"><span class="pre">load_bandpass</span></code>.</p>
+</div></blockquote>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Raises:</th><td class="field-body"><p class="first"><strong>ValueError</strong></p>
+<blockquote class="last">
+<div><p>If  no valid exposures are found in <code class="xref py py-obj docutils literal"><span class="pre">input_repository</span></code> and <code class="xref py py-obj docutils literal"><span class="pre">exposures</span></code> is not set.</p>
+</div></blockquote>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="rubric">Methods Summary</p>
+<table border="1" class="longtable docutils">
+<colgroup>
+<col width="10%" />
+<col width="90%" />
+</colgroup>
+<tbody valign="top">
+<tr class="row-odd"><td><a class="reference internal" href="#python.buildDcrModel.BuildDcrModel.build_model" title="python.buildDcrModel.BuildDcrModel.build_model"><code class="xref py py-obj docutils literal"><span class="pre">build_model</span></code></a>([verbose,&nbsp;max_iter,&nbsp;min_iter,&nbsp;...])</td>
+<td>Build a model of the sky in multiple sub-bands.</td>
+</tr>
+<tr class="row-even"><td><a class="reference internal" href="#python.buildDcrModel.BuildDcrModel.calc_model_metric" title="python.buildDcrModel.BuildDcrModel.calc_model_metric"><code class="xref py py-obj docutils literal"><span class="pre">calc_model_metric</span></code></a>([model])</td>
+<td>Calculate a quality of fit metric for the DCR model given the set of exposures.</td>
+</tr>
+<tr class="row-odd"><td><a class="reference internal" href="#python.buildDcrModel.BuildDcrModel.calc_psf_model" title="python.buildDcrModel.BuildDcrModel.calc_psf_model"><code class="xref py py-obj docutils literal"><span class="pre">calc_psf_model</span></code></a>()</td>
+<td>Calculate the fiducial psf from a given set of exposures, accounting for DCR.</td>
+</tr>
+</tbody>
+</table>
+<p class="rubric">Methods Documentation</p>
+<dl class="method">
+<dt id="python.buildDcrModel.BuildDcrModel.build_model">
+<code class="descname">build_model</code><span class="sig-paren">(</span><em>verbose=True</em>, <em>max_iter=10</em>, <em>min_iter=None</em>, <em>gain=None</em>, <em>clamp=None</em>, <em>frequency_regularization=True</em>, <em>max_slope=None</em>, <em>test_convergence=False</em>, <em>convergence_threshold=None</em>, <em>use_variance=True</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/buildDcrModel.html#BuildDcrModel.build_model"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.buildDcrModel.BuildDcrModel.build_model" title="Permalink to this definition">¶</a></dt>
+<dd><p>Build a model of the sky in multiple sub-bands.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><p class="first"><strong>verbose</strong> : <a class="reference external" href="https://docs.python.org/2/library/functions.html#bool" title="(in Python v2.7)"><code class="xref py py-obj docutils literal"><span class="pre">bool</span></code></a>, optional</p>
+<blockquote>
+<div><p>Print additional status messages.</p>
+</div></blockquote>
+<p><strong>max_iter</strong> : <a class="reference external" href="https://docs.python.org/2/library/functions.html#int" title="(in Python v2.7)"><code class="xref py py-obj docutils literal"><span class="pre">int</span></code></a>, optional</p>
+<blockquote>
+<div><p>The maximum number of iterations of forward modeling allowed.</p>
+</div></blockquote>
+<p><strong>min_iter</strong> : int, optional</p>
+<blockquote>
+<div><p>The minimum number of iterations of forward modeling before checking for convergence.</p>
+</div></blockquote>
+<p><strong>gain</strong> : float, optional</p>
+<blockquote>
+<div><p>The weight of the new solution relative to the last solution
+when calculating the model to use for the next iteration.
+The defualt value is 1.0, and should only be changed if you know what you are doing.</p>
+</div></blockquote>
+<p><strong>clamp</strong> : float, optional</p>
+<blockquote>
+<div><p>Restrict new solutions from being more than a factor of <code class="docutils literal"><span class="pre">clamp</span></code> different from the last solution
+before <code class="xref py py-obj docutils literal"><span class="pre">gain</span></code> is applied.
+The default value is 3, chosen so that a gain of 1 restricts the change of the solution between
+iterations to less than a factor of 2.</p>
+</div></blockquote>
+<p><strong>frequency_regularization</strong> : bool, optional</p>
+<blockquote>
+<div><p>Set to restrict variations between frequency planes</p>
+</div></blockquote>
+<p><strong>max_slope</strong> : float, optional</p>
+<blockquote>
+<div><p>Maximum slope to allow between sub-band model planes.
+Only used if <code class="docutils literal"><span class="pre">frequency_regularization</span></code> is set.</p>
+</div></blockquote>
+<p><strong>test_convergence</strong> : bool, optional</p>
+<blockquote>
+<div><p>If True, then matched templates will be generated for each image for every iteration,
+and the difference with the image will be checked to see if it is less than the previous iteration
+Any images where the difference is increasing will be excluded from the next iteration.</p>
+</div></blockquote>
+<p><strong>convergence_threshold</strong> : float, optional</p>
+<blockquote>
+<div><p>Return once the convergence metric changes by less than <code class="docutils literal"><span class="pre">convergence_threshold</span></code>
+between iterations.</p>
+</div></blockquote>
+<p><strong>use_variance</strong> : bool, optional</p>
+<blockquote class="last">
+<div><p>Set to weight pixels by their inverse variance when combining images.</p>
+</div></blockquote>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="python.buildDcrModel.BuildDcrModel.calc_model_metric">
+<code class="descname">calc_model_metric</code><span class="sig-paren">(</span><em>model=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/buildDcrModel.html#BuildDcrModel.calc_model_metric"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.buildDcrModel.BuildDcrModel.calc_model_metric" title="Permalink to this definition">¶</a></dt>
+<dd><p>Calculate a quality of fit metric for the DCR model given the set of exposures.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><p class="first"><strong>model</strong> : None, optional</p>
+<blockquote>
+<div><p>The DCR model. If not set, then self.model is used.</p>
+</div></blockquote>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body"><p class="first">np.ndarray</p>
+<blockquote class="last">
+<div><p>The calculated metric for each exposure.</p>
+</div></blockquote>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="python.buildDcrModel.BuildDcrModel.calc_psf_model">
+<code class="descname">calc_psf_model</code><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/buildDcrModel.html#BuildDcrModel.calc_psf_model"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.buildDcrModel.BuildDcrModel.calc_psf_model" title="Permalink to this definition">¶</a></dt>
+<dd><p>Calculate the fiducial psf from a given set of exposures, accounting for DCR.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Returns:</th><td class="field-body"><p class="first">None</p>
+<blockquote class="last">
+<div><p>Sets self.psf with a lsst.meas.algorithms KernelPsf object.</p>
+</div></blockquote>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+</dd></dl>
+
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper"><h3>Page Contents</h3>
+<ul>
+<li><a class="reference internal" href="#">BuildDcrModel</a></li>
+</ul>
+
+
+  <h4>Previous topic</h4>
+  <p class="topless"><a href="python.generateTemplate.GenerateTemplate.html"
+                        title="previous chapter">GenerateTemplate</a></p>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/py-api/python.buildDcrModel.BuildDcrModel.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+      
+<form action="../search.html" method="get">
+  <input type="text" name="q" placeholder="Search" />
+  <input type="hidden" name="check_keywords" value="yes" />
+  <input type="hidden" name="area" value="default" />
+</form>
+      
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+<footer class="footer">
+  <p class="pull-right">
+    <a href="../_sources/py-api/python.buildDcrModel.BuildDcrModel.rst.txt"
+       rel="nofollow">Page Source</a> &nbsp;
+    <a href="#">Back to Top</a></p>
+  <p>
+    Last built Mar 21, 2017.
+  </p>
+  <p>
+    Created using <a href="http://sphinx.pocoo.org/">Sphinx</a> 1.5.2. Page design is based on Astropy's bootstrap-astropy theme in <a href="https://github.com/astropy/astropy-helpers">astropy-helpers</a>. <br />
+    LSST documentation is proudly served through the <a href="https://fastly.com">Fastly</a> CDN.
+  </p>
+  <p>
+    &copy; Copyright 2016 University of Washington.<br/>
+  </p>
+  <p>
+    Financial support for <a href="https://www.lsst.org">LSST</a> comes from the National Science Foundation (<a href="https://www.nsf.gov">NSF</a>) through Cooperative Agreement No. 1258333, the Department of Energy (<a href="http://energy.gov">DOE</a>) Office of Science under Contract No. DE-AC02-76SF00515, and private funding raised by the <a href="https://www.lsstcorporation.org">LSST Corporation</a>. The NSF-funded <a href="https://project.lsst.org">LSST Project Office</a> for construction was established as an operating center under management of the Association of Universities for Research in Astronomy (<a href="http://www.aura-astronomy.org">AURA</a>). The DOE-funded effort to build the LSST camera is managed by the SLAC National Accelerator Laboratory (<a href="https://www.slac.stanford.edu">SLAC</a>).
+  </p>
+</footer>
+  </body>
+</html>

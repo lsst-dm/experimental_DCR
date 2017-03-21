@@ -1,0 +1,705 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>GenerateTemplate &#8212; generateTemplate</title>
+    
+    <link rel="stylesheet" href="../_static/bootstrap-astropy.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../',
+        VERSION:     '0.1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true,
+        SOURCELINK_SUFFIX: '.txt'
+      };
+    </script>
+    <script type="text/javascript" src="../_static/jquery.js"></script>
+    <script type="text/javascript" src="../_static/underscore.js"></script>
+    <script type="text/javascript" src="../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <script type="text/javascript" src="../_static/sidebar.js"></script>
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="BuildDcrModel" href="python.buildDcrModel.BuildDcrModel.html" />
+    <link rel="prev" title="Experimental DCR docs" href="../index.html" />
+
+<script src="https://use.typekit.net/eme3dgn.js"></script>
+<script>try{Typekit.load({ async: true });}catch(e){}</script>
+<script type="text/javascript" src="../_static/copybutton.js"></script>
+
+
+  </head>
+  <body role="document">
+<div class="topbar">
+  <a class="brand" title="Documentation Home" href="../index.html">
+    <span id="logotext">LSST Science Pipelines</span>
+  </a>
+  <ul>
+    <li><a title="General Index" href="../genindex.html">Index</a></li>
+    <li><a title="Module Index" href="../py-modindex.html">Modules</a></li>
+    <li>
+      
+      
+<form action="../search.html" method="get">
+  <input type="text" name="q" placeholder="Search" />
+  <input type="hidden" name="check_keywords" value="yes" />
+  <input type="hidden" name="area" value="default" />
+</form>
+      
+    </li>
+  </ul>
+</div>
+
+<div class="related">
+    <h3>Navigation</h3>
+    <ul>
+      <li class="right">
+	<a href="python.buildDcrModel.BuildDcrModel.html" title="BuildDcrModel">
+	  next &raquo;
+	</a>
+      </li>
+      <li class="right">
+	<a href="../index.html" title="Experimental DCR docs">
+	  &laquo; previous
+	</a>
+	 |
+      </li>
+      <li>
+	<a href="../index.html">generateTemplate</a>
+	 &#187;
+      </li>
+      
+      <li>GenerateTemplate</li> 
+    </ul>
+</div>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <div class="section" id="generatetemplate">
+<h1>GenerateTemplate<a class="headerlink" href="#generatetemplate" title="Permalink to this headline">¶</a></h1>
+<dl class="class">
+<dt id="python.generateTemplate.GenerateTemplate">
+<em class="property">class </em><code class="descclassname">python.generateTemplate.</code><code class="descname">GenerateTemplate</code><span class="sig-paren">(</span><em>model_repository=None</em>, <em>band_name='g'</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/generateTemplate.html#GenerateTemplate"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.generateTemplate.GenerateTemplate" title="Permalink to this definition">¶</a></dt>
+<dd><p>Lightweight object with only the minimum needed to generate DCR-matched template exposures.</p>
+<p>A model must first be generated with DcrCorrection (below). That model can then be used directly, or
+persisted and later read back in. GenerateTemplate requires much less memory than DcrCorrection,
+since it does not store the input exposures. This class will generate template exposures suitable for
+image differencing that are matched to existing exposures in a repository.</p>
+<p class="rubric">Attributes</p>
+<table border="1" class="docutils">
+<colgroup>
+<col width="6%" />
+<col width="94%" />
+</colgroup>
+<tbody valign="top">
+<tr class="row-odd"><td>bandpass</td>
+<td>(lsst.sims.photUtils.Bandpass object) Bandpass object returned by load_bandpass</td>
+</tr>
+<tr class="row-even"><td>bbox</td>
+<td>(lsst.afw.geom.Box2I object) A bounding box.</td>
+</tr>
+<tr class="row-odd"><td>butler</td>
+<td>(lsst.daf.persistence Butler object) The butler handles persisting and depersisting data to and from a repository.</td>
+</tr>
+<tr class="row-even"><td>debug</td>
+<td>(bool) Temporary debugging option. If set, only a small region [y0: y0 + dy, x0: x0 + dx] of the full images are used.</td>
+</tr>
+<tr class="row-odd"><td>default_repository</td>
+<td>(str) Full path to repository with the data.</td>
+</tr>
+<tr class="row-even"><td>detected_bit</td>
+<td>(int) Value of the detected bit in the <code class="docutils literal"><span class="pre">mask</span></code>.</td>
+</tr>
+<tr class="row-odd"><td>exposure_time</td>
+<td>(float) Length of the exposure, in seconds.</td>
+</tr>
+<tr class="row-even"><td>filter_name</td>
+<td>(str) Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y. Filter names are restricted by the filter profiles stored in lsst.sims.photUtils.Bandpass. If other filters are used, the profiles should be provided with a new Bandpass class.</td>
+</tr>
+<tr class="row-odd"><td>instrument</td>
+<td>(str) Name of the observatory. Used to format dataIds for the butler.</td>
+</tr>
+<tr class="row-even"><td>mask</td>
+<td>(np.ndarray) Mask plane of the model. This mask is saved as the mask plane of the template exposure.</td>
+</tr>
+<tr class="row-odd"><td>model</td>
+<td>(list of np.ndarrays) The DCR model to be used to generate templates, calculate with <code class="docutils literal"><span class="pre">BuildDcrModel.build_model</span></code>. Contains one array for each wavelength step.</td>
+</tr>
+<tr class="row-even"><td>n_step</td>
+<td>(int) Number of sub-filter wavelength planes to model.</td>
+</tr>
+<tr class="row-odd"><td>observatory</td>
+<td>(lsst.afw.coord.coordLib.Observatory) Class containing the longitude, latitude, and altitude of the observatory.</td>
+</tr>
+<tr class="row-even"><td>pixel_scale</td>
+<td>(lsst.afw.geom.Angle) Plate scale, as an Angle.</td>
+</tr>
+<tr class="row-odd"><td>psf</td>
+<td>(lsst.meas.algorithms KernelPsf object) Representation of the point spread function (PSF) of the model.</td>
+</tr>
+<tr class="row-even"><td>psf_size</td>
+<td>(int) Dimension of the PSF, in pixels.</td>
+</tr>
+<tr class="row-odd"><td>wcs</td>
+<td>(lsst.afw.image Wcs object) World Coordinate System of the model.</td>
+</tr>
+<tr class="row-even"><td>weights</td>
+<td>(np.ndarray) Weights of the model. Calculated as the sum of the inverse variances of the input exposures to <code class="docutils literal"><span class="pre">BuildDcrModel.build_model</span></code>. The same <code class="docutils literal"><span class="pre">weights</span></code> are used for each wavelength step of the <code class="docutils literal"><span class="pre">model</span></code>.</td>
+</tr>
+<tr class="row-odd"><td>x_size</td>
+<td>(int) Width of the model, in pixels.</td>
+</tr>
+<tr class="row-even"><td>y_size</td>
+<td>(int) Height of the model, in pixels.</td>
+</tr>
+</tbody>
+</table>
+<p>Restore a persisted DCR model created with DcrCorrection.</p>
+<p>Only run when restoring a model or for testing; otherwise superceded by DcrCorrection __init__.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><p class="first"><strong>model_repository</strong> : None, optional</p>
+<blockquote>
+<div><p>Path to the repository where the previously-generated DCR model is stored.</p>
+</div></blockquote>
+<p><strong>band_name</strong> : str, optional</p>
+<blockquote>
+<div><p>Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.</p>
+</div></blockquote>
+<p><strong>**kwargs</strong> : TYPE</p>
+<blockquote class="last">
+<div><p>Any additional keyword arguments to pass to load_bandpass</p>
+</div></blockquote>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="rubric">Methods Summary</p>
+<table border="1" class="longtable docutils">
+<colgroup>
+<col width="10%" />
+<col width="90%" />
+</colgroup>
+<tbody valign="top">
+<tr class="row-odd"><td><a class="reference internal" href="#python.generateTemplate.GenerateTemplate.build_matched_psf" title="python.generateTemplate.GenerateTemplate.build_matched_psf"><code class="xref py py-obj docutils literal"><span class="pre">build_matched_psf</span></code></a>(el,&nbsp;rotation_angle,&nbsp;weather)</td>
+<td>Sub-routine to calculate the PSF as elongated by DCR for a given exposure.</td>
+</tr>
+<tr class="row-even"><td><a class="reference internal" href="#python.generateTemplate.GenerateTemplate.build_matched_template" title="python.generateTemplate.GenerateTemplate.build_matched_template"><code class="xref py py-obj docutils literal"><span class="pre">build_matched_template</span></code></a>(exposure[,&nbsp;model,&nbsp;...])</td>
+<td>Sub-routine to calculate the sum of the model images shifted by DCR for a given exposure.</td>
+</tr>
+<tr class="row-odd"><td><a class="reference internal" href="#python.generateTemplate.GenerateTemplate.calc_psf_model_single" title="python.generateTemplate.GenerateTemplate.calc_psf_model_single"><code class="xref py py-obj docutils literal"><span class="pre">calc_psf_model_single</span></code></a>(exposure)</td>
+<td>Calculate the fiducial psf for a single exposure, accounting for DCR.</td>
+</tr>
+<tr class="row-even"><td><a class="reference internal" href="#python.generateTemplate.GenerateTemplate.create_exposure" title="python.generateTemplate.GenerateTemplate.create_exposure"><code class="xref py py-obj docutils literal"><span class="pre">create_exposure</span></code></a>(array,&nbsp;elevation,&nbsp;azimuth[,&nbsp;...])</td>
+<td>Convert a numpy array to an LSST exposure, and units of electron counts.</td>
+</tr>
+<tr class="row-odd"><td><a class="reference internal" href="#python.generateTemplate.GenerateTemplate.export_model" title="python.generateTemplate.GenerateTemplate.export_model"><code class="xref py py-obj docutils literal"><span class="pre">export_model</span></code></a>([model_repository])</td>
+<td>Persist a DcrModel with metadata to a repository.</td>
+</tr>
+<tr class="row-even"><td><a class="reference internal" href="#python.generateTemplate.GenerateTemplate.generate_templates_from_model" title="python.generateTemplate.GenerateTemplate.generate_templates_from_model"><code class="xref py py-obj docutils literal"><span class="pre">generate_templates_from_model</span></code></a>([obsids,&nbsp;...])</td>
+<td>Use the previously generated model and construct a dcr template image.</td>
+</tr>
+<tr class="row-odd"><td><a class="reference internal" href="#python.generateTemplate.GenerateTemplate.load_bandpass" title="python.generateTemplate.GenerateTemplate.load_bandpass"><code class="xref py py-obj docutils literal"><span class="pre">load_bandpass</span></code></a>([band_name,&nbsp;wavelength_step,&nbsp;...])</td>
+<td>Load in Bandpass object from sims_photUtils.</td>
+</tr>
+<tr class="row-even"><td><a class="reference internal" href="#python.generateTemplate.GenerateTemplate.load_model" title="python.generateTemplate.GenerateTemplate.load_model"><code class="xref py py-obj docutils literal"><span class="pre">load_model</span></code></a>([model_repository,&nbsp;band_name,&nbsp;...])</td>
+<td>Depersist a DCR model from a repository and set up the metadata.</td>
+</tr>
+<tr class="row-odd"><td><a class="reference internal" href="#python.generateTemplate.GenerateTemplate.read_exposures" title="python.generateTemplate.GenerateTemplate.read_exposures"><code class="xref py py-obj docutils literal"><span class="pre">read_exposures</span></code></a>([obsids,&nbsp;input_repository,&nbsp;...])</td>
+<td>Initialize a butler and read exposures from the given repository.</td>
+</tr>
+<tr class="row-even"><td><a class="reference internal" href="#python.generateTemplate.GenerateTemplate.write_exposure" title="python.generateTemplate.GenerateTemplate.write_exposure"><code class="xref py py-obj docutils literal"><span class="pre">write_exposure</span></code></a>(exposure[,&nbsp;...])</td>
+<td>Persist an exposure using a butler.</td>
+</tr>
+</tbody>
+</table>
+<p class="rubric">Methods Documentation</p>
+<dl class="method">
+<dt id="python.generateTemplate.GenerateTemplate.build_matched_psf">
+<code class="descname">build_matched_psf</code><span class="sig-paren">(</span><em>el</em>, <em>rotation_angle</em>, <em>weather</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/generateTemplate.html#GenerateTemplate.build_matched_psf"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.generateTemplate.GenerateTemplate.build_matched_psf" title="Permalink to this definition">¶</a></dt>
+<dd><p>Sub-routine to calculate the PSF as elongated by DCR for a given exposure.</p>
+<p>Once the matched templates incorporate variable seeing, this function should also match the seeing.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><p class="first"><strong>el</strong> : lsst.afw.geom.Angle</p>
+<blockquote>
+<div><p>Elevation angle of the observation. If not set, it is read from the exposure.</p>
+</div></blockquote>
+<p><strong>rotation_angle</strong> : lsst.afw.geom.Angle</p>
+<blockquote>
+<div><p>Sky rotation angle of the observation. If not set it is calculated from the exposure metadata.</p>
+</div></blockquote>
+<p><strong>weather</strong> : lsst.afw.coord Weather</p>
+<blockquote>
+<div><p>Class containing the measured temperature, pressure, and humidity
+at the observatory during an observation</p>
+</div></blockquote>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body"><p class="first">lsst.meas.algorithms KernelPsf object</p>
+<blockquote class="last">
+<div><p>Designed to be passed to a lsst.afw.image ExposureD through the method setPsf()</p>
+</div></blockquote>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="python.generateTemplate.GenerateTemplate.build_matched_template">
+<code class="descname">build_matched_template</code><span class="sig-paren">(</span><em>exposure</em>, <em>model=None</em>, <em>el=None</em>, <em>rotation_angle=None</em>, <em>return_weights=True</em>, <em>weather=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/generateTemplate.html#GenerateTemplate.build_matched_template"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.generateTemplate.GenerateTemplate.build_matched_template" title="Permalink to this definition">¶</a></dt>
+<dd><p>Sub-routine to calculate the sum of the model images shifted by DCR for a given exposure.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><p class="first"><strong>exposure</strong> : lsst.afw.image.ExposureD object</p>
+<blockquote>
+<div><p>Single exposure to create a DCR-matched template for from the model.</p>
+</div></blockquote>
+<p><strong>model</strong> : List of numpy ndarrays, optional</p>
+<blockquote>
+<div><p>The DCR model. If not set, then self.model is used.</p>
+</div></blockquote>
+<p><strong>el</strong> : lsst.afw.geom.Angle, optional</p>
+<blockquote>
+<div><p>Elevation angle of the observation. If not set, it is read from the exposure.</p>
+</div></blockquote>
+<p><strong>rotation_angle</strong> : lsst.afw.geom.Angle, optional</p>
+<blockquote>
+<div><p>Sky rotation angle of the observation. If not set it is calculated from the exposure metadata.</p>
+</div></blockquote>
+<p><strong>return_weights</strong> : bool, optional</p>
+<blockquote>
+<div><p>Set to True to return the variance plane, as well as the image.</p>
+</div></blockquote>
+<p><strong>weather</strong> : lsst.afw.coord Weather, optional</p>
+<blockquote>
+<div><p>Class containing the measured temperature, pressure, and humidity
+at the observatory during an observation
+Weather data is read from the exposure metadata if not supplied.</p>
+</div></blockquote>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body"><p class="first">np.ndarrary or (np.ndarray, np.ndarray)</p>
+<blockquote class="last">
+<div><p>Returns a numpy ndarray of the image values for the template.
+If <code class="docutils literal"><span class="pre">return_weights</span></code> is set, then it returns a tuple of the image and variance arrays.</p>
+</div></blockquote>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="python.generateTemplate.GenerateTemplate.calc_psf_model_single">
+<code class="descname">calc_psf_model_single</code><span class="sig-paren">(</span><em>exposure</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/generateTemplate.html#GenerateTemplate.calc_psf_model_single"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.generateTemplate.GenerateTemplate.calc_psf_model_single" title="Permalink to this definition">¶</a></dt>
+<dd><p>Calculate the fiducial psf for a single exposure, accounting for DCR.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><p class="first"><strong>exposure</strong> : lsst.afw.image.ExposureD object</p>
+<blockquote>
+<div><p>A single LSST exposure object</p>
+</div></blockquote>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body"><p class="first">np.ndarray</p>
+<blockquote class="last">
+<div><p>Returns the fiducial PSF for an exposure, after taking out DCR effects.</p>
+</div></blockquote>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="python.generateTemplate.GenerateTemplate.create_exposure">
+<code class="descname">create_exposure</code><span class="sig-paren">(</span><em>array</em>, <em>elevation</em>, <em>azimuth</em>, <em>variance=None</em>, <em>era=None</em>, <em>snap=0</em>, <em>exposureId=0</em>, <em>ra=nan rad</em>, <em>dec=nan rad</em>, <em>boresightRotAngle=nan rad</em>, <em>weather=Weather(20</em>, <em>101325</em>, <em>10)</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/generateTemplate.html#GenerateTemplate.create_exposure"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.generateTemplate.GenerateTemplate.create_exposure" title="Permalink to this definition">¶</a></dt>
+<dd><p>Convert a numpy array to an LSST exposure, and units of electron counts.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><p class="first"><strong>array</strong> : np.ndarray</p>
+<blockquote>
+<div><p>Numpy array to use as the data for the exposure</p>
+</div></blockquote>
+<p><strong>elevation</strong> : lsst.afw.geom Angle</p>
+<blockquote>
+<div><p>Elevation angle of the observation</p>
+</div></blockquote>
+<p><strong>azimuth</strong> : lsst.afw.geom Angle</p>
+<blockquote>
+<div><p>Azimuth angle of the observation</p>
+</div></blockquote>
+<p><strong>variance</strong> : np.ndarray, optional</p>
+<blockquote>
+<div><p>Numpy array to use as the variance plane of the exposure.
+If None, the absoulte value of &#8216;array&#8217; is used for the variance plane.</p>
+</div></blockquote>
+<p><strong>era</strong> : lsst.afw.geom Angle, optional</p>
+<blockquote>
+<div><p>Earth rotation angle (ERA) of the observation.
+If not set it will be calculated from the latitude, longitude, RA, Dec, and elevation angle</p>
+</div></blockquote>
+<p><strong>snap</strong> : int, optional</p>
+<blockquote>
+<div><p>Snap ID to add to the metadata of the exposure. Required to mimic Phosim output.</p>
+</div></blockquote>
+<p><strong>exposureId</strong> : int, optional</p>
+<blockquote>
+<div><p>Observation ID of the exposure, a long int.</p>
+</div></blockquote>
+<p><strong>ra</strong> : lsst.afw.geom Angle, optional</p>
+<blockquote>
+<div><p>The right ascension of the boresight of the target field.</p>
+</div></blockquote>
+<p><strong>dec</strong> : lsst.afw.geom Angle, optional</p>
+<blockquote>
+<div><p>The declination of the boresight of the target field</p>
+</div></blockquote>
+<p><strong>boresightRotAngle</strong> : lsst.afw.geom Angle, optional</p>
+<blockquote>
+<div><p>The rotation angle of the field around the boresight.</p>
+</div></blockquote>
+<p><strong>weather</strong> : lsst.afw.coord Weather, optional</p>
+<blockquote>
+<div><p>Class containing the measured temperature, pressure, and humidity
+at the observatory during an observation
+Weather data is read from the exposure metadata if not supplied.</p>
+</div></blockquote>
+<p><strong>**kwargs :</strong></p>
+<blockquote>
+<div><p>Any additional keyword arguments will be added to the metadata of the exposure.</p>
+</div></blockquote>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body"><p class="first last">lsst.afw.image.ExposureD object</p>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="python.generateTemplate.GenerateTemplate.export_model">
+<code class="descname">export_model</code><span class="sig-paren">(</span><em>model_repository=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/generateTemplate.html#GenerateTemplate.export_model"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.generateTemplate.GenerateTemplate.export_model" title="Permalink to this definition">¶</a></dt>
+<dd><p>Persist a DcrModel with metadata to a repository.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><p class="first"><strong>model_repository</strong> : None, optional</p>
+<blockquote>
+<div><p>Full path to the directory of the repository to save the dcrModel in
+If not set, uses the existing self.butler</p>
+</div></blockquote>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body"><p class="first last">None</p>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="python.generateTemplate.GenerateTemplate.generate_templates_from_model">
+<code class="descname">generate_templates_from_model</code><span class="sig-paren">(</span><em>obsids=None</em>, <em>exposures=None</em>, <em>input_repository=None</em>, <em>output_repository=None</em>, <em>instrument='lsstSim'</em>, <em>warp=False</em>, <em>verbose=True</em>, <em>output_obsid_offset=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/generateTemplate.html#GenerateTemplate.generate_templates_from_model"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.generateTemplate.GenerateTemplate.generate_templates_from_model" title="Permalink to this definition">¶</a></dt>
+<dd><p>Use the previously generated model and construct a dcr template image.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><p class="first"><strong>obsids</strong> : int, or list of ints, optional</p>
+<blockquote>
+<div><p>Single, or list of observation IDs in <code class="docutils literal"><span class="pre">input_repository</span></code> to load and create matched
+templates for.
+Ignored if exposures are supplied directly.</p>
+</div></blockquote>
+<p><strong>exposures</strong> : List or generator of lsst.afw.image.ExposureD objects, optional</p>
+<blockquote>
+<div><p>List or generator of exposure objects that will have matched templates created.
+Intended primarily for unit tests that separate reading and writing from processing data.</p>
+</div></blockquote>
+<p><strong>input_repository</strong> : str, optional</p>
+<blockquote>
+<div><p>Path to the repository where the exposure data to be matched are stored.
+Ignored if exposures are supplied directly.</p>
+</div></blockquote>
+<p><strong>output_repository</strong> : str, optional</p>
+<blockquote>
+<div><p>Path to repository directory where templates will be saved.
+The templates will not be written to disk if <code class="docutils literal"><span class="pre">output_repository</span></code> is None.</p>
+</div></blockquote>
+<p><strong>instrument</strong> : str, optional</p>
+<blockquote>
+<div><p>Name of the observatory.</p>
+</div></blockquote>
+<p><strong>warp</strong> : bool, optional</p>
+<blockquote>
+<div><p>Set to true if the exposures have different wcs from the model.
+If True, the generated templates will be warped to match the wcs of each exposure.</p>
+</div></blockquote>
+<p><strong>verbose</strong> : bool, optional</p>
+<blockquote>
+<div><p>Set to True to print progress messages.</p>
+</div></blockquote>
+<p><strong>output_obsid_offset</strong> : int, optional</p>
+<blockquote>
+<div><p>Optional offset to add to the output obsids.
+Use if writing to the same repository as the input to avoid over-writing the input data.</p>
+</div></blockquote>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Yields:</th><td class="field-body"><p class="first">Returns a generator that builds DCR-matched templates for each exposure.</p>
+</td>
+</tr>
+<tr class="field-odd field"><th class="field-name">Raises:</th><td class="field-body"><p class="first"><strong>ValueError</strong></p>
+<blockquote class="last">
+<div><p>If a butler has not been previously instantiated and input_repository is not supplied.</p>
+</div></blockquote>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="staticmethod">
+<dt id="python.generateTemplate.GenerateTemplate.load_bandpass">
+<em class="property">static </em><code class="descname">load_bandpass</code><span class="sig-paren">(</span><em>band_name='g'</em>, <em>wavelength_step=None</em>, <em>use_mirror=True</em>, <em>use_lens=True</em>, <em>use_atmos=True</em>, <em>use_filter=True</em>, <em>use_detector=True</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/generateTemplate.html#GenerateTemplate.load_bandpass"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.generateTemplate.GenerateTemplate.load_bandpass" title="Permalink to this definition">¶</a></dt>
+<dd><p>Load in Bandpass object from sims_photUtils.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><p class="first"><strong>band_name</strong> : str, optional</p>
+<blockquote>
+<div><p>Common name of the filter used. For LSST, use u, g, r, i, z, or y</p>
+</div></blockquote>
+<p><strong>wavelength_step</strong> : float, optional</p>
+<blockquote>
+<div><p>Wavelength resolution in nm, also the wavelength range of each sub-band plane.
+If not set, the entire band range is used.</p>
+</div></blockquote>
+<p><strong>use_mirror</strong> : bool, optional</p>
+<blockquote>
+<div><p>Set to include the mirror in the filter throughput calculation.</p>
+</div></blockquote>
+<p><strong>use_lens</strong> : bool, optional</p>
+<blockquote>
+<div><p>Set to use the LSST lens in the filter throughput calculation</p>
+</div></blockquote>
+<p><strong>use_atmos</strong> : bool, optional</p>
+<blockquote>
+<div><p>Set to use the standard atmosphere transmission in the filter throughput calculation</p>
+</div></blockquote>
+<p><strong>use_filter</strong> : bool, optional</p>
+<blockquote>
+<div><p>Set to use the LSST filters in the filter throughput calculation.</p>
+</div></blockquote>
+<p><strong>use_detector</strong> : bool, optional</p>
+<blockquote>
+<div><p>Set to use the LSST detector efficiency in the filter throughput calculation.</p>
+</div></blockquote>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body"><p class="first last">Returns a lsst.sims.photUtils.Bandpass object.</p>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="python.generateTemplate.GenerateTemplate.load_model">
+<code class="descname">load_model</code><span class="sig-paren">(</span><em>model_repository=None</em>, <em>band_name='g'</em>, <em>instrument='lsstSim'</em>, <em>detected_bit=32</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/generateTemplate.html#GenerateTemplate.load_model"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.generateTemplate.GenerateTemplate.load_model" title="Permalink to this definition">¶</a></dt>
+<dd><p>Depersist a DCR model from a repository and set up the metadata.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><p class="first"><strong>model_repository</strong> : None, optional</p>
+<blockquote>
+<div><p>Full path to the directory of the repository to load the <code class="docutils literal"><span class="pre">dcrModel</span></code> from.
+If not set, uses the existing self.butler</p>
+</div></blockquote>
+<p><strong>band_name</strong> : str, optional</p>
+<blockquote>
+<div><p>Common name of the filter used. For LSST, use u, g, r, i, z, or y</p>
+</div></blockquote>
+<p><strong>**kwargs :</strong></p>
+<blockquote>
+<div><p>Any additional keyword arguments to pass to <code class="docutils literal"><span class="pre">load_bandpass</span></code></p>
+</div></blockquote>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body"><p class="first last">None, but loads self.model and sets up all the needed quantities such as the psf and bandpass objects.</p>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="python.generateTemplate.GenerateTemplate.read_exposures">
+<code class="descname">read_exposures</code><span class="sig-paren">(</span><em>obsids=None</em>, <em>input_repository=None</em>, <em>data_type='calexp'</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/generateTemplate.html#GenerateTemplate.read_exposures"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.generateTemplate.GenerateTemplate.read_exposures" title="Permalink to this definition">¶</a></dt>
+<dd><p>Initialize a butler and read exposures from the given repository.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><p class="first"><strong>obsids</strong> : int or list of ints, optional</p>
+<blockquote>
+<div><p>Single, or list of observation IDs in <code class="docutils literal"><span class="pre">input_repository</span></code> to load and create matched
+templates for.</p>
+</div></blockquote>
+<p><strong>input_repository</strong> : str, optional</p>
+<blockquote>
+<div><p>Path to the repository where the exposure data to be matched are stored.</p>
+</div></blockquote>
+<p><strong>data_type</strong> : str, optional</p>
+<blockquote>
+<div><p>The type of data to be persisted. Expected values are <code class="docutils literal"><span class="pre">'calexp'</span></code> or <code class="docutils literal"><span class="pre">'dcrModel'</span></code></p>
+</div></blockquote>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Yields:</th><td class="field-body"><p class="first">lsst.afw.image.ExposureD object</p>
+<blockquote>
+<div><p>The specified exposures from the given repository.</p>
+</div></blockquote>
+</td>
+</tr>
+<tr class="field-odd field"><th class="field-name">Raises:</th><td class="field-body"><p class="first"><strong>ValueError</strong></p>
+<blockquote class="last">
+<div><p>If no repository is set.</p>
+</div></blockquote>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="python.generateTemplate.GenerateTemplate.write_exposure">
+<code class="descname">write_exposure</code><span class="sig-paren">(</span><em>exposure</em>, <em>output_repository=None</em>, <em>data_type='calexp'</em>, <em>subfilter=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/python/generateTemplate.html#GenerateTemplate.write_exposure"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#python.generateTemplate.GenerateTemplate.write_exposure" title="Permalink to this definition">¶</a></dt>
+<dd><p>Persist an exposure using a butler.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><p class="first"><strong>exposure</strong> : lsst.afw.image.ExposureD object</p>
+<blockquote>
+<div><p>The exposure to be persisted to the given repository.</p>
+</div></blockquote>
+<p><strong>output_repository</strong> : str, optional</p>
+<blockquote>
+<div><p>If specified, initialize a new butler set to write to the given <code class="docutils literal"><span class="pre">output_repository</span></code>.
+Otherwise, the previously initialized butler is used.</p>
+</div></blockquote>
+<p><strong>data_type</strong> : str, optional</p>
+<blockquote>
+<div><p>The type of data to be persisted. Expected values are <code class="docutils literal"><span class="pre">'calexp'</span></code> or <code class="docutils literal"><span class="pre">'dcrModel'</span></code></p>
+</div></blockquote>
+<p><strong>subfilter</strong> : int, optional</p>
+<blockquote>
+<div><p>The DCR model subfilter index, only used for <code class="docutils literal"><span class="pre">`data_type`='dcrModel'</span></code></p>
+</div></blockquote>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body"><p class="first">None</p>
+<blockquote>
+<div><p>The exposure is persisted to the repository.</p>
+</div></blockquote>
+</td>
+</tr>
+<tr class="field-odd field"><th class="field-name">Raises:</th><td class="field-body"><p class="first"><strong>ValueError</strong></p>
+<blockquote class="last">
+<div><p>If an unknown <code class="docutils literal"><span class="pre">data_type</span></code> is supplied.</p>
+</div></blockquote>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+</dd></dl>
+
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper"><h3>Page Contents</h3>
+<ul>
+<li><a class="reference internal" href="#">GenerateTemplate</a></li>
+</ul>
+
+
+  <h4>Previous topic</h4>
+  <p class="topless"><a href="../index.html"
+                        title="previous chapter">Experimental DCR docs</a></p>
+  <h4>Next topic</h4>
+  <p class="topless"><a href="python.buildDcrModel.BuildDcrModel.html"
+                        title="next chapter">BuildDcrModel</a></p>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/py-api/python.generateTemplate.GenerateTemplate.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+      
+<form action="../search.html" method="get">
+  <input type="text" name="q" placeholder="Search" />
+  <input type="hidden" name="check_keywords" value="yes" />
+  <input type="hidden" name="area" value="default" />
+</form>
+      
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+<footer class="footer">
+  <p class="pull-right">
+    <a href="../_sources/py-api/python.generateTemplate.GenerateTemplate.rst.txt"
+       rel="nofollow">Page Source</a> &nbsp;
+    <a href="#">Back to Top</a></p>
+  <p>
+    Last built Mar 21, 2017.
+  </p>
+  <p>
+    Created using <a href="http://sphinx.pocoo.org/">Sphinx</a> 1.5.2. Page design is based on Astropy's bootstrap-astropy theme in <a href="https://github.com/astropy/astropy-helpers">astropy-helpers</a>. <br />
+    LSST documentation is proudly served through the <a href="https://fastly.com">Fastly</a> CDN.
+  </p>
+  <p>
+    &copy; Copyright 2016 University of Washington.<br/>
+  </p>
+  <p>
+    Financial support for <a href="https://www.lsst.org">LSST</a> comes from the National Science Foundation (<a href="https://www.nsf.gov">NSF</a>) through Cooperative Agreement No. 1258333, the Department of Energy (<a href="http://energy.gov">DOE</a>) Office of Science under Contract No. DE-AC02-76SF00515, and private funding raised by the <a href="https://www.lsstcorporation.org">LSST Corporation</a>. The NSF-funded <a href="https://project.lsst.org">LSST Project Office</a> for construction was established as an operating center under management of the Association of Universities for Research in Astronomy (<a href="http://www.aura-astronomy.org">AURA</a>). The DOE-funded effort to build the LSST camera is managed by the SLAC National Accelerator Laboratory (<a href="https://www.slac.stanford.edu">SLAC</a>).
+  </p>
+</footer>
+  </body>
+</html>

@@ -34,7 +34,7 @@ from .dcr_utils import wrap_warpExposure
 from .dcr_utils import solve_model
 from .generateTemplate import GenerateTemplate
 
-__all__ = ("BuildDcrModel")
+__all__ = ["BuildDcrModel"]
 
 
 class BuildDcrModel(GenerateTemplate):
