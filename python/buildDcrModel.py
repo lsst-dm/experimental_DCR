@@ -153,6 +153,7 @@ class BuildDcrModel(GenerateTemplate):
         """
         self.filter_name = band_name
         self.default_repository = input_repository
+        self.instrument = instrument
         self.butler = None  # Placeholder. The butler is instantiated in read_exposures.
         if exposures is None:
             exposures = self.read_exposures(obsids, input_repository=input_repository)
@@ -162,7 +163,6 @@ class BuildDcrModel(GenerateTemplate):
             raise ValueError("No valid exposures found.")
 
         self.debug = debug_mode
-        self.instrument = instrument
         self.n_images = len(self.exposures)
         self.detected_bit = detected_bit
         psf_size_arr = []
