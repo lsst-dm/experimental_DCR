@@ -77,25 +77,21 @@ class DcrTemplateTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         # np.save(data_file, model_test)
         model_ref = np.load(data_file)
         for m_i in range(len(model_test)):
-            m_test = model_test[m_i].getMaskedImage().getImage().getArray()
-            m_ref = model_ref[m_i].getMaskedImage().getImage().getArray()
-            self.assertFloatsAlmostEqual(m_test, m_ref)
+            m_test = model_test[m_i].getMaskedImage()
+            m_ref = model_ref[m_i].getMaskedImage()
+            self.assertMaskedImagesNearlyEqual(m_test, m_ref)
 
     def test_warp_exposure(self):
         """Test that an exposure warped to its own wcs is unchanged."""
         wcs = self.exposure.getWcs()
         bbox = self.exposure.getBBox()
+        image_ref = self.exposure.getMaskedImage().clone()
         wrap_warpExposure(self.exposure, wcs, bbox)
-        array_warped = self.exposure.getMaskedImage().getImage().getArray()
-        y_size, x_size = array_warped.shape
-        n_pix = y_size*x_size
-        # For some reason the edges are all NAN.
-        min_fraction = 0.25
-        valid_inds = np.isfinite(array_warped)
-        self.assertGreater(np.sum(valid_inds)/n_pix, min_fraction)
-        array_ref = self.array[valid_inds]
-        array_warped = array_warped[valid_inds]
-        self.assertFloatsAlmostEqual(array_ref, array_warped, rtol=1e-7)
+        image_warped = self.exposure.getMaskedImage()
+        mask = image_warped.getMask()
+        no_data_bit = mask.getPlaneBitMask('NO_DATA')
+        no_data_mask = (mask.getArray() & no_data_bit) == no_data_bit
+        self.assertMaskedImagesNearlyEqual(image_ref, image_warped, rtol=1e-7, skipMask=no_data_mask)
 
     def test_rotation_angle(self):
         """Test that we can calculate the same rotation angle that was originally supplied in setup."""

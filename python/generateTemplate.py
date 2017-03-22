@@ -82,8 +82,6 @@ class GenerateTemplate:
         If set, only a small region [y0: y0 + dy, x0: x0 + dx] of the full images are used.
     default_repository : str
         Full path to repository with the data.
-    detected_bit : int
-        Value of the detected bit in the ``mask``.
     exposure_time : float
         Length of the exposure, in seconds.
     filter_name : str
@@ -111,7 +109,7 @@ class GenerateTemplate:
         World Coordinate System of the model.
     weights : np.ndarray
         Weights of the model. Calculated as the sum of the inverse variances of the input exposures to
-        ``BuildDcrModel.build_model``. The same ``weights`` are used for each wavelength step of the ``model``.
+        ``BuildDcrModel.build_model``. The same ``weights`` are used for each wavelength step of the ``model``
     x_size : int
         Width of the model, in pixels.
     y_size : int
@@ -178,6 +176,7 @@ class GenerateTemplate:
             If a butler has not been previously instantiated and input_repository is not supplied.
         """
         self.instrument = instrument
+
         if self.psf is None:
             self.calc_psf_model()
 
@@ -427,14 +426,15 @@ class GenerateTemplate:
         else:
             inverse_var[variance > 0] = 1.
 
-        mask = exposure.getMaskedImage().getMask().getArray()
-        ind_cut = (mask | self.detected_bit) != self.detected_bit
+        mask = exposure.getMaskedImage().getMask()
+        detected_bit = mask.getPlaneBitMask('DETECTED')
+        ind_cut = (mask.getArray() | detected_bit) != detected_bit
         inverse_var[ind_cut] = 0.
         # Create a buffer of lower-weight pixels surrounding masked pixels.
         ind_cut2 = binary_dilation(ind_cut, iterations=2)
         inverse_var[ind_cut2] /= 2.
         if use_only_detected:
-            ind_cut3 = (mask & self.detected_bit) != self.detected_bit
+            ind_cut3 = (mask.getArray() & detected_bit) != detected_bit
             inverse_var[ind_cut3] = 0.
 
         if self.debug:
@@ -855,13 +855,12 @@ class GenerateTemplate:
             wl_start, wl_end = wave_gen.next()
             exp = self.create_exposure(self.model[f], variance=self.weights,
                                        elevation=Angle(np.pi/2), azimuth=Angle(0),
-                                       detectbit=self.detected_bit,
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
                                        telescop=self.instrument)
             self.write_exposure(exp, output_repository=model_repository, data_type="dcrModel", subfilter=f)
 
     def load_model(self, model_repository=None, band_name='g',
-                   instrument='lsstSim', detected_bit=32, **kwargs):
+                   instrument='lsstSim', **kwargs):
         """Depersist a DCR model from a repository and set up the metadata.
 
         Parameters
@@ -893,7 +892,6 @@ class GenerateTemplate:
 
         self.wcs = dcrModel.getWcs()
         self.n_step = len(self.model)
-        self.detected_bit = detected_bit
         y_size, x_size = dcrModel.getDimensions()
         self.x_size = x_size
         self.y_size = y_size

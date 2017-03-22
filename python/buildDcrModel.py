@@ -58,8 +58,6 @@ class BuildDcrModel(GenerateTemplate):
         If set, calculations are performed on only a small region of the full images.
     default_repository : str
         Full path to repository with the data
-    detected_bit : int
-        Value of the detected bit in the bit plane mask.
     exposure_time : float
         Length of the exposure, in seconds.
     exposures : list
@@ -115,7 +113,7 @@ class BuildDcrModel(GenerateTemplate):
     """
 
     def __init__(self, obsids=None, input_repository='.', band_name='g',
-                 wavelength_step=10., n_step=None, exposures=None, detected_bit=32,
+                 wavelength_step=10., n_step=None, exposures=None,
                  warp=False, instrument='lsstSim', debug_mode=False, **kwargs):
         """Load images from the repository and set up parameters.
 
@@ -134,8 +132,6 @@ class BuildDcrModel(GenerateTemplate):
             Number of sub-band planes to use. Takes precendence over `wavelength_step`.
         exposures : List of lsst.afw.image.ExposureD objects, optional
             List of exposures to use to calculate the model.
-        detected_bit : int, optional
-            Value of the detected bit in the bit plane mask. This should really be read from the data!
         warp : bool, optional
             Set to true if the exposures have different wcs from the model.
             If True, the generated templates will be warped to match the wcs of each exposure.
@@ -164,7 +160,6 @@ class BuildDcrModel(GenerateTemplate):
 
         self.debug = debug_mode
         self.n_images = len(self.exposures)
-        self.detected_bit = detected_bit
         psf_size_arr = []
         hour_angle_arr = []
         ref_exp_i = 0
@@ -595,19 +590,21 @@ class BuildDcrModel(GenerateTemplate):
         np.ndarray
             The combined mask plane.
         """
-        mask_arr = (exp.getMaskedImage().getMask().getArray() for exp in self.exposures)
+        mask_arr = (exp.getMaskedImage().getMask() for exp in self.exposures)
 
         detected_mask = None
         mask_use = None
         for mask in mask_arr:
+            mask_vals = mask.getArray()
             if mask_use is None:
-                mask_use = mask
+                mask_use = mask_vals
             else:
-                mask_use = np.bitwise_and(mask_use, mask)
+                mask_use = np.bitwise_and(mask_use, mask_vals)
 
+            detected_bit = mask.getPlaneBitMask('DETECTED')
             if detected_mask is None:
-                detected_mask = mask & self.detected_bit
+                detected_mask = mask_vals & detected_bit
             else:
-                detected_mask = np.bitwise_or(detected_mask, (mask & self.detected_bit))
-        mask = np.bitwise_or(mask_use, detected_mask)
-        return mask
+                detected_mask = np.bitwise_or(detected_mask, (mask_vals & detected_bit))
+        mask_vals_return = np.bitwise_or(mask_use, detected_mask)
+        return mask_vals_return

@@ -45,8 +45,9 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         exposures = np.load(data_file)
         # Use BasicBuildDcrModel here to save execution time.
         self.dcrModel = BasicBuildDcrModel(band_name='g', n_step=3, exposures=exposures)
+        detected_bit = self.dcrModel.exposures[0].getMaskedImage().getMask().getPlaneBitMask('DETECTED')
         for exp in self.dcrModel.exposures:
-            exp.getMaskedImage().getMask().getArray()[:, :] = self.dcrModel.detected_bit
+            exp.getMaskedImage().getMask().getArray()[:, :] = detected_bit
 
     def tearDown(self):
         """Clean up."""

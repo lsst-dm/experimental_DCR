@@ -56,8 +56,9 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         # Use BasicBuildDcrModel here to save execution time.
         self.dcrModel = BasicBuildDcrModel(band_name=band_name, n_step=self.n_step, exposures=exposures)
         self.ref_vals = []
+        detected_bit = self.dcrModel.exposures[0].getMaskedImage().getMask().getPlaneBitMask('DETECTED')
         for exp in self.dcrModel.exposures:
-            exp.getMaskedImage().getMask().getArray()[:, :] = self.dcrModel.detected_bit
+            exp.getMaskedImage().getMask().getArray()[:, :] = detected_bit
             self.ref_vals.append(exp.getMaskedImage().getImage().getArray())
 
     def tearDown(self):
@@ -97,7 +98,8 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         data_file = "test_data/calculate_new_model_vals.npy"
         use_variance = True
         rand_gen = np.random
-        rand_gen.seed(5)
+        random_seed = 5
+        rand_gen.seed(random_seed)
         n_step = self.dcrModel.n_step
         x_size = self.dcrModel.x_size
         y_size = self.dcrModel.y_size

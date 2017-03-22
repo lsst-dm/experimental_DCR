@@ -74,8 +74,6 @@ class BasicGenerateTemplate(GenerateTemplate):
     debug : bool
         Temporary debugging option.
         If set, only a small region [y0: y0 + dy, x0: x0 + dx] of the full images are used.
-    detected_bit : int
-        Value of the detected bit in the `mask`.
     exposure_time : float
         Length of the exposure, in seconds.
     filter_name : str
@@ -133,7 +131,6 @@ class BasicGenerateTemplate(GenerateTemplate):
         self.butler = None
         self.debug = False
         self.instrument = 'lsstSim'
-        self.detected_bit = 32
 
         bandpass_init = BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
@@ -178,8 +175,6 @@ class BasicBuildDcrModel(BuildDcrModel):
     debug : bool
         Temporary debugging option.
         If set, calculations are performed on only a small region of the full images.
-    detected_bit : int
-        Value of the detected bit in the bit plane mask.
     exposure_time : float
         Length of the exposure, in seconds.
     exposures : list
@@ -228,7 +223,6 @@ class BasicBuildDcrModel(BuildDcrModel):
         self.mask = None
         self.model_base = None
         self.instrument = 'lsstSim'
-        self.detected_bit = 32
         self.filter_name = band_name
 
         self.exposures = exposures
@@ -278,8 +272,11 @@ class DcrModelTestBase:
         pixel_scale = Angle(afwGeom.arcsecToRad(0.25))
         size = 20
         lsst_lat = lsst_observatory.getLatitude()
-        # NOTE that this array is randomly generated with a new seed for each instance.
-        self.array = np.random.random(size=(size, size))
+        # NOTE that this array is randomly generated
+        random_seed = 3
+        rand_gen = np.random
+        rand_gen.seed(random_seed)
+        self.array = rand_gen.random(size=(size, size))
         self.dcrTemplate = BasicGenerateTemplate(size=size, band_name=band_name,
                                                  n_step=n_step, pixel_scale=pixel_scale)
         dec = self.dcrTemplate.wcs.getSkyOrigin().getLatitude()
