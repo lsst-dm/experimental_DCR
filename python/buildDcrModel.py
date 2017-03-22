@@ -366,7 +366,7 @@ class BuildDcrModel(GenerateTemplate):
 
         exp_cut = [False for exp_i in range(self.n_images)]
         final_soln_iter = None
-        converge_error = False
+        did_converge = False
         for sol_iter in range(int(max_iter)):
             new_solution, inverse_var_arr = self._calculate_new_model(last_solution, exp_cut,
                                                                       use_variance=use_variance)
@@ -409,7 +409,6 @@ class BuildDcrModel(GenerateTemplate):
                 if (self.n_images - n_exp_cut) < min_images:
                     print("Exiting iterative solution: Too few images left.")
                     final_soln_iter = sol_iter - 1
-                    converge_error = True
                     break
                 last_convergence_metric = np.mean(last_convergence_metric_full[np.logical_not(exp_cut)])
                 last_convergence_metric_full = convergence_metric_full
@@ -420,13 +419,13 @@ class BuildDcrModel(GenerateTemplate):
                     if convergence_metric > last_convergence_metric:
                         print("BREAK from lack of convergence")
                         final_soln_iter = sol_iter - 1
-                        converge_error = True
                         break
                     convergence_check2 = (1 - convergence_threshold)*last_convergence_metric
                     if convergence_metric > convergence_check2:
                         print("BREAK after reaching convergence threshold")
                         final_soln_iter = sol_iter
                         last_solution = new_solution_use
+                        did_converge = True
                         break
                 last_convergence_metric = convergence_metric
             last_solution = new_solution_use
@@ -436,7 +435,7 @@ class BuildDcrModel(GenerateTemplate):
             print("Final solution from iteration: %i" % final_soln_iter)
         self.model = last_solution
         self.weights = np.sum(inverse_var_arr, axis=0)/self.n_step
-        return converge_error
+        return did_converge
 
     def _calculate_new_model(self, last_solution, exp_cut, use_variance):
         """Sub-routine to calculate a new model from the residuals of forward-modeling the previous solution.

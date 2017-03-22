@@ -150,9 +150,9 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
 
     def test_build_model_convergence_failure(self):
         """Test that the iterative solver fails to converge if given a negative gain."""
-        converge_error = self.dcrModel._build_model_subroutine(initial_solution=1, verbose=False, gain=-2,
-                                                               test_convergence=True)
-        self.assertTrue(converge_error)
+        did_converge = self.dcrModel._build_model_subroutine(initial_solution=1, verbose=False, gain=-2,
+                                                             test_convergence=True)
+        self.assertFalse(did_converge)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
