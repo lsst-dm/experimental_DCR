@@ -21,8 +21,10 @@
 #
 
 from __future__ import print_function, division, absolute_import
-import numpy as np
+from itertools import izip
 import unittest
+
+import numpy as np
 
 import lsst.utils.tests
 
@@ -91,8 +93,8 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         model_arr = [model for model in model_vals_gen]
         # np.save(data_file, model_arr)
         model_ref = np.load(data_file)
-        for f, model in enumerate(model_arr):
-            self.assertFloatsAlmostEqual(model, model_ref[f])
+        for m_new, m_ref in izip(model_arr, model_ref):
+            self.assertFloatsAlmostEqual(m_new, m_ref)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):

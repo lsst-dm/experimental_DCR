@@ -22,8 +22,10 @@
 
 from __future__ import print_function, division, absolute_import
 import copy
-import numpy as np
+from itertools import izip
 import unittest
+
+import numpy as np
 
 import lsst.utils.tests
 
@@ -79,8 +81,8 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         model_vals = self.dcrModel.model
         # np.save(data_file, model_vals)
         model_ref = np.load(data_file)
-        for f, model in enumerate(model_vals):
-            self.assertFloatsAlmostEqual(model, model_ref[f])
+        for m_new, m_ref in izip(model_vals, model_ref):
+            self.assertFloatsAlmostEqual(m_new, m_ref)
 
     def test_build_matched_template(self):
         """Compare the image and variance plane of the template to previously computed values."""
@@ -109,10 +111,10 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
                                                                            use_variance)
         # np.save(data_file, (new_solution, inverse_var_arr))
         new_solution_ref, inverse_var_arr_ref = np.load(data_file)
-        for f, soln in enumerate(new_solution):
-            self.assertFloatsAlmostEqual(soln, new_solution_ref[f])
-        for f, var in enumerate(inverse_var_arr):
-            self.assertFloatsAlmostEqual(var, inverse_var_arr_ref[f])
+        for soln_new, soln_ref in izip(new_solution, new_solution_ref):
+            self.assertFloatsAlmostEqual(soln_new, soln_ref)
+        for inv_var_new, inv_var_ref in izip(inverse_var_arr, inverse_var_arr_ref):
+            self.assertFloatsAlmostEqual(inv_var_new, inv_var_ref)
 
     def test_clamp_model_solution(self):
         """Test that extreme solutions are reduced."""

@@ -383,7 +383,7 @@ class GenerateTemplate:
         psf_vals = self.psf.computeKernelImage().getArray()
         psf_vals_out = np.zeros((self.psf_size, self.psf_size))
 
-        for f, dcr in enumerate(dcr_gen):
+        for dcr in dcr_gen:
             shift = (dcr.dy, dcr.dx)
             psf_vals_out += scipy_shift(psf_vals, shift)
         psf_image = afwImage.ImageD(self.psf_size, self.psf_size)
