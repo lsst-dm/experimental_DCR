@@ -182,7 +182,8 @@ class BuildDcrModel(GenerateTemplate):
         self.y_size = y_size
         self.pixel_scale = self.exposures[ref_exp_i].getWcs().pixelScale()
         self.exposure_time = self.exposures[ref_exp_i].getInfo().getVisitInfo().getExposureTime()
-        self.psf_size = int(np.min(psf_size_arr))
+        # Use the largest input PSF to calculate the fiducial PSF so that no information is lost.
+        self.psf_size = int(np.max(psf_size_arr))
         self.psf = None
         self.mask = self._combine_masks()
 
@@ -216,11 +217,17 @@ class BuildDcrModel(GenerateTemplate):
             # Use the measured PSF as the solution of the shifted PSFs.
             psf_img = exp.getPsf().computeKernelImage().getArray()
             psf_y_size, psf_x_size = psf_img.shape
-            x0 = int(psf_x_size//2 - self.psf_size//2)
-            x1 = x0 + self.psf_size
-            y0 = int(psf_y_size//2 - self.psf_size//2)
-            y1 = y0 + self.psf_size
-            psf_mat[exp_i*n_pix: (exp_i + 1)*n_pix] = np.ravel(psf_img[y0:y1, x0:x1])
+            if self.psf_size > psf_x_size:
+                i0 = int(self.psf_size//2 - psf_x_size//2)
+                i1 = i0 + psf_x_size
+                psf_img_use = np.zeros((self.psf_size, self.psf_size))
+                psf_img_use[i0:i1, i0:i1] = psf_img
+            else:
+                i0 = int(psf_x_size//2 - self.psf_size//2)
+                i1 = i0 + self.psf_size
+                psf_img_use = psf_img[i0:i1, i0:i1]
+
+            psf_mat[exp_i*n_pix: (exp_i + 1)*n_pix] = np.ravel(psf_img_use)
 
         dcr_shift = self._build_dcr_kernel(size=self.psf_size, bandpass=bandpass, n_step=n_step)
         psf_model_gen = solve_model(self.psf_size, psf_mat, n_step=n_step, kernel_dcr=dcr_shift)
