@@ -413,6 +413,8 @@ class GenerateTemplate:
         Returns
         -------
         Returns a tuple of the image and weights (inverse variance) arrays.
+        The image and weights are returned separately instead of as a MaskedImage,
+        so that all the math and logic can be contained in one place.
         If `calculate_dcr_gen` is set, returns a tuple of the image, weights, and dcr generator.
         """
         img_vals = exposure.getMaskedImage().getImage().getArray()

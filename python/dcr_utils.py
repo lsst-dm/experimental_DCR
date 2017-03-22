@@ -141,12 +141,15 @@ def calculate_rotation_angle(exposure):
     -------
     lsst.afw.geom.Angle
         The rotation of the image axis, East from North.
+        A rotation angle of 0 degrees is defined with North along the +y axis and East along the +x axis.
+        A rotation angle of 90 degrees is defined with North along the +x axis and East along the -y axis.
     """
     visitInfo = exposure.getInfo().getVisitInfo()
 
     az = visitInfo.getBoresightAzAlt().getLongitude()
     hour_angle = visitInfo.getBoresightHourAngle()
     # Some simulated data contains invalid hour_angle metadata.
+    # Once DM-9900 is completed, invalid data should instead raise an exception.
     if np.isfinite(hour_angle.asRadians()):
         dec = visitInfo.getBoresightRaDec().getDec()
         lat = visitInfo.getObservatory().getLatitude()

@@ -59,13 +59,9 @@ class PersistanceTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         # Instantiating the butler takes several seconds, so all butler-related tests are condensed into one.
         model_repository = "test_data"
 
-        # First test that the model values are not changed from what is expected
-
-        # The type "dcrTemplate" is read in as a 32 bit float,
-        # set in the lsst.obs.lsstSim.LsstSimMapper policy
-        # model = np.float32(self.dcrTemplate.model)
         self.dcrTemplate.export_model(model_repository=model_repository)
 
+        # First test that the model values are not changed from what is expected
         # This requires the full GenerateTemplate class, not just the lightweight test class.
         dcrTemplate2 = GenerateTemplate(model_repository=model_repository)
         # Note that butler.get() reads the FITS file in 32 bit precision.

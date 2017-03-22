@@ -117,7 +117,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
             self.assertFloatsAlmostEqual(inv_var_new, inv_var_ref)
 
     def test_clamp_model_solution(self):
-        """Test that extreme solutions are reduced."""
+        """Test that extreme solutions that changed by more than a factor of ``clamp`` are reduced."""
         clamp = 3.
         rand_gen = np.random
         rand_gen.seed(5)
