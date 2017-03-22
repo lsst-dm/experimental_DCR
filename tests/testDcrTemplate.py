@@ -96,7 +96,7 @@ class DcrTemplateTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
     def test_rotation_angle(self):
         """Test that we can calculate the same rotation angle that was originally supplied in setup."""
         rotation_angle = calculate_rotation_angle(self.exposure)
-        self.assertFloatsAlmostEqual(self.rotation_angle.asDegrees(), rotation_angle.asDegrees())
+        self.assertAnglesNearlyEqual(self.rotation_angle, rotation_angle)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
