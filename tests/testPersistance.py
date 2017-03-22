@@ -21,7 +21,8 @@
 #
 
 from __future__ import print_function, division, absolute_import
-import numpy as np
+
+from itertools import izip
 import unittest
 
 import lsst.utils.tests
@@ -62,19 +63,48 @@ class PersistanceTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
 
         # The type "dcrTemplate" is read in as a 32 bit float,
         # set in the lsst.obs.lsstSim.LsstSimMapper policy
-        model = np.float32(self.dcrTemplate.model)
+        # model = np.float32(self.dcrTemplate.model)
         self.dcrTemplate.export_model(model_repository=model_repository)
 
         # This requires the full GenerateTemplate class, not just the lightweight test class.
         dcrTemplate2 = GenerateTemplate(model_repository=model_repository)
         # Note that butler.get() reads the FITS file in 32 bit precision.
-        self.assertFloatsAlmostEqual(model, dcrTemplate2.model)
+        for m_new, m_ref in izip(dcrTemplate2.model, self.dcrTemplate.model):
+            self.assertFloatsAlmostEqual(m_new, m_ref, rtol=1e-7)
 
         # Next, test that the required parameters have been restored
         param_ref = self.dcrTemplate.__dict__
         param_new = dcrTemplate2.__dict__
-        for key in param_ref.keys():
+        for key in param_ref:
             self.assertIn(key, param_new)
+        # If the parameters are present, now check that they have the correct values.
+        # Note that this only tests floats, np.ndarrays, and strings.
+        for key in param_ref:
+            val_new = param_new.get(key)
+            val_ref = param_ref.get(key)
+            valid_float = False
+            valid_string = False
+            # Check whether the key value is a type we can test with assertFloatsAlmostEqual
+            # by testing the reference value against itself.
+            try:
+                self.assertFloatsAlmostEqual(val_ref, val_ref)
+                valid_float = True
+            except:
+                if isinstance(val_ref, str):
+                    valid_string = True
+            if valid_float:
+                print("Checking value of key: %s" % key)
+                self.assertFloatsAlmostEqual(val_new, val_ref)
+            elif valid_string:
+                print("Checking value of key: %s" % key)
+                print(val_new)
+                print(val_ref)
+                try:
+                    self.assertEqual(val_new, val_ref)
+                except:
+                    print("Failed for some reason!")
+            else:
+                print("Skipping key: %s" % key)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
