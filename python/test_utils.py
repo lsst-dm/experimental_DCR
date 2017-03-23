@@ -286,8 +286,8 @@ class DcrModelTestBase:
         ha_term1 = np.sin(self.elevation.asRadians())
         ha_term2 = np.sin(dec.asRadians())*np.sin(lsst_lat.asRadians())
         ha_term3 = np.cos(dec.asRadians())*np.cos(lsst_lat.asRadians())
-        hour_angle = Angle(np.arccos((ha_term1 - ha_term2) / ha_term3))
-        p_angle = parallactic_angle(hour_angle, dec, lsst_lat)
+        self.hour_angle = Angle(np.arccos((ha_term1 - ha_term2) / ha_term3))
+        p_angle = parallactic_angle(self.hour_angle, dec, lsst_lat)
         self.rotation_angle = Angle(p_angle)
         self.dcr_gen = self.dcrTemplate._dcr_generator(self.dcrTemplate.bandpass,
                                                        pixel_scale=self.dcrTemplate.pixel_scale,

@@ -57,6 +57,15 @@ class BandpassTestCase(lsst.utils.tests.TestCase):
         n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
         self.assertEqual(n_step + 1, len(bandpass_vals))
 
+    def test_bandpass(self):
+        """Verify the calculated bandpass values."""
+        data_file = "test_data/bandpass.npy"
+        bp_wavelen, bandpass_vals = self.bandpass.getBandpass()
+        # np.save(data_file, (bp_wavelen, bandpass_vals))
+        bp_wavelen_ref, bandpass_vals_ref = np.load(data_file)
+        self.assertFloatsAlmostEqual(bp_wavelen, bp_wavelen_ref)
+        self.assertFloatsAlmostEqual(bandpass_vals, bandpass_vals_ref)
+
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
     """Test for memory leaks."""

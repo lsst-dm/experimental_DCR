@@ -109,6 +109,8 @@ class BuildDcrModel(GenerateTemplate):
                                                                    output_repository="./test_data_templates/")
     im_arr = []
     for exp in template_exposure_gen:
+        # The exposures are written to the given ``output_repository``
+        # and returned as the yield value of the generator
         im_arr.append(exp.getMaskedImage().getImage().getArray())
     """
 
@@ -138,7 +140,7 @@ class BuildDcrModel(GenerateTemplate):
         instrument : str, optional
             Name of the observatory.
         debug_mode : bool, optional
-            Description
+            Temporary debugging option.
         **kwargs : TYPE
             Allows additional keyword arguments to be passed to `load_bandpass`.
 

@@ -35,24 +35,17 @@ class PersistanceTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
     """Tests that read and write exposures and dcr models to disk."""
 
     def test_create_exposure(self):
-        """Test that the data retrieved from an exposure is the same as what it was initialized with.
-
-        Raises
-        ------
-        Exception
-            Any exception is collected and passed up to the caller
-        """
+        """Test that the data retrieved from an exposure is the same as what it was initialized with."""
         self.assertFloatsAlmostEqual(self.exposure.getMaskedImage().getImage().getArray(), self.array)
-        meta = self.exposure.getMetadata()
+
         # Check that the required metadata is present:
-        try:
-            meta.get("ZENITH")
-        except Exception as e:
-            raise e
-        try:
-            meta.get("AZIMUTH")
-        except Exception as e:
-            raise e
+        visitInfo = self.exposure.getInfo().getVisitInfo()
+        el = visitInfo.getBoresightAzAlt().getLatitude()
+        az = visitInfo.getBoresightAzAlt().getLongitude()
+        self.assertAnglesNearlyEqual(el, self.elevation)
+        self.assertAnglesNearlyEqual(az, self.azimuth)
+        hour_angle = visitInfo.getBoresightHourAngle()
+        self.assertAnglesNearlyEqual(hour_angle, self.hour_angle)
 
     def test_persist_dcr_model_roundtrip(self):
         """Test that an exposure can be persisted and later depersisted from a repository."""
@@ -93,8 +86,6 @@ class PersistanceTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
                 self.assertFloatsAlmostEqual(val_new, val_ref)
             elif valid_string:
                 print("Checking value of key: %s" % key)
-                print(val_new)
-                print(val_ref)
                 try:
                     self.assertEqual(val_new, val_ref)
                 except:
