@@ -782,7 +782,7 @@ class GenerateTemplate:
             afwImage.Filter.define(afwImage.FilterProperty(self.filter_name, filterPolicy))
             exposure.setFilter(afwImage.Filter(self.filter_name))
             # Need to reset afwImage.Filter to prevent an error in future calls to daf_persistence.Butler
-            afwImage.FilterProperty_reset()
+            afwImage.FilterProperty.reset()
         if self.debug:
             array_temp = array
             array = np.zeros_like(exposure.getMaskedImage().getImage().getArray())
