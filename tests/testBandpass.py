@@ -61,6 +61,7 @@ class BandpassTestCase(lsst.utils.tests.TestCase):
         """Verify the calculated bandpass values."""
         data_file = "test_data/bandpass.npy"
         bp_wavelen, bandpass_vals = self.bandpass.getBandpass()
+        # Uncomment the following code to over-write the reference data:
         # np.save(data_file, (bp_wavelen, bandpass_vals), allow_pickle=False)
         bp_wavelen_ref, bandpass_vals_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(bp_wavelen, bp_wavelen_ref)

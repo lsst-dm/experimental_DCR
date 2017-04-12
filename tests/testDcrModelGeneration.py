@@ -30,6 +30,7 @@ import numpy as np
 import lsst.daf.persistence as daf_persistence
 import lsst.utils.tests
 
+from python.dcr_utils import solve_model
 from python.test_utils import BasicBuildDcrModel
 
 
@@ -86,6 +87,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         data_file = "test_data/build_model_vals.npy"
         self.dcrModel.build_model(verbose=False)
         model_vals = self.dcrModel.model
+        # Uncomment the following code to over-write the reference data:
         # np.save(data_file, model_vals, allow_pickle=False)
         model_ref = np.load(data_file)
         for m_new, m_ref in izip(model_vals, model_ref):
@@ -97,6 +99,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         exposure = self.dcrModel.exposures[0]
         self.dcrModel.build_model(verbose=False)
         template, variance = self.dcrModel.build_matched_template(exposure)
+        # Uncomment the following code to over-write the reference data:
         # np.save(data_file, (template, variance), allow_pickle=False)
         template_ref, variance_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(template, template_ref)
@@ -113,6 +116,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         y_size = self.dcrModel.y_size
         last_solution = [rand_gen.random((y_size, x_size)) for f in range(n_step)]
         new_solution, inverse_var_arr = self.dcrModel._calculate_new_model(last_solution)
+        # Uncomment the following code to over-write the reference data:
         # np.save(data_file, (new_solution, inverse_var_arr), allow_pickle=False)
         new_solution_ref, inverse_var_arr_ref = np.load(data_file)
         for soln_new, soln_ref in izip(new_solution, new_solution_ref):
@@ -157,6 +161,50 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         did_converge = self.dcrModel._build_model_subroutine(initial_solution=1, verbose=False, gain=-2,
                                                              test_convergence=True)
         self.assertFalse(did_converge)
+
+    def test_calculate_psf(self):
+        """Compare the result of calc_psf_model (run in setUp) to previously computed values."""
+        data_file = "test_data/calculate_psf.npy"
+        self.dcrModel.calc_psf_model()
+        psf_new = self.dcrModel.psf.computeKernelImage().getArray()
+        # Uncomment the following code to over-write the reference data:
+        # np.save(data_file, psf_new, allow_pickle=False)
+        psf_ref = np.load(data_file)
+        self.assertFloatsAlmostEqual(psf_ref, psf_new)
+
+    def test_build_dcr_kernel(self):
+        """Compare the result of _build_dcr_kernel to previously computed values."""
+        data_file = "test_data/build_dcr_kernel_vals.npy"
+        kernel_size = 5
+        kernel = self.dcrModel._build_dcr_kernel(kernel_size)
+        # Uncomment the following code to over-write the reference data:
+        # np.save(data_file, kernel, allow_pickle=False)
+        kernel_ref = np.load(data_file)
+        self.assertFloatsAlmostEqual(kernel, kernel_ref)
+
+    def test_solve_model(self):
+        """Compare the result of _solve_model to previously computed values."""
+        data_file = "test_data/solve_model_vals.npy"
+        y_size, x_size = self.dcrModel.exposures[0].getDimensions()
+        kernel_size = 5
+        n_step = self.dcrModel.n_step
+        pix_radius = kernel_size//2
+        # Make j and i different slightly so we can tell if the indices get swapped
+        i = x_size//2 + 1
+        j = y_size//2 - 1
+        slice_inds = np.s_[j - pix_radius: j + pix_radius + 1, i - pix_radius: i + pix_radius + 1]
+        image_arr = []
+        for exp in self.dcrModel.exposures:
+            image_arr.append(np.ravel(exp.getMaskedImage().getImage().getArray()[slice_inds]))
+        image_vals = np.hstack(image_arr)
+        dcr_kernel = self.dcrModel._build_dcr_kernel(kernel_size)
+        model_vals_gen = solve_model(kernel_size, image_vals, n_step=n_step, kernel_dcr=dcr_kernel)
+        model_arr = [model for model in model_vals_gen]
+        # Uncomment the following code to over-write the reference data:
+        # np.save(data_file, model_arr, allow_pickle=False)
+        model_ref = np.load(data_file)
+        for m_new, m_ref in izip(model_arr, model_ref):
+            self.assertFloatsAlmostEqual(m_new, m_ref)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):

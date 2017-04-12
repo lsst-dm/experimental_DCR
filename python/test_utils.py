@@ -74,6 +74,8 @@ class BasicGenerateTemplate(GenerateTemplate):
     debug : bool
         Temporary debugging option.
         If set, only a small region [y0: y0 + dy, x0: x0 + dx] of the full images are used.
+    default_repository : str
+        Full path to repository with the data.
     exposure_time : float
         Length of the exposure, in seconds.
     filter_name : str
@@ -129,6 +131,7 @@ class BasicGenerateTemplate(GenerateTemplate):
         rand_gen = np.random
         rand_gen.seed(seed)
         self.butler = None
+        self.default_repository = None
         self.debug = False
         self.instrument = 'lsstSim'
 
@@ -175,6 +178,8 @@ class BasicBuildDcrModel(BuildDcrModel):
     debug : bool
         Temporary debugging option.
         If set, calculations are performed on only a small region of the full images.
+    default_repository : str
+        Full path to repository with the data.
     exposure_time : float
         Length of the exposure, in seconds.
     exposures : list
@@ -219,6 +224,7 @@ class BasicBuildDcrModel(BuildDcrModel):
             A list of LSST exposures to use as input to the DCR calculation.
         """
         self.butler = None
+        self.default_repository = None
         self.debug = False
         self.mask = None
         self.model_base = None
