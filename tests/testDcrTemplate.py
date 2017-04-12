@@ -21,6 +21,7 @@
 #
 
 from __future__ import print_function, division, absolute_import
+from itertools import izip
 import numpy as np
 import unittest
 
@@ -63,22 +64,24 @@ class DcrTemplateTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
 
     def test_generate_template(self):
         """Compare the result of generate_templates_from_model to previously computed values."""
-        data_file = "test_data/template.npy"
+        repository = "./test_data/"
         elevation_arr = np.radians([50., 70., 85.])
         az = Angle(0.)
         # Note that self.array is randomly generated each call. That's okay, because the template should
         # depend only on the metadata.
-        exposures = [self.dcrTemplate.create_exposure(self.array, variance=None,
-                                                      elevation=Angle(el), azimuth=az)
-                     for el in elevation_arr]
-        model_gen = self.dcrTemplate.generate_templates_from_model(exposures=exposures)
-        model_test = [model for model in model_gen]
-        # np.save(data_file, model_test)
-        model_ref = np.load(data_file)
-        for m_i in range(len(model_test)):
-            m_test = model_test[m_i].getMaskedImage()
-            m_ref = model_ref[m_i].getMaskedImage()
-            self.assertMaskedImagesNearlyEqual(m_test, m_ref)
+        exposures = []
+        obsids = np.arange(len(elevation_arr)) + 500
+        for el, obsid in zip(elevation_arr, obsids):
+            exposures.append(self.dcrTemplate.create_exposure(self.array, variance=None, exposureId=obsid,
+                                                              elevation=Angle(el), azimuth=az))
+        template_gen = self.dcrTemplate.generate_templates_from_model(exposures=exposures)
+        # Uncomment the following code to re-generate the reference data:
+        # for exposure in model_gen:
+        #     self.dcrTemplate.write_exposure(exposure, output_repository=repository)
+        template_ref_gen = self.dcrTemplate.read_exposures(obsids=obsids, input_repository=repository)
+
+        for template_test, template_ref in izip(template_gen, template_ref_gen):
+            self.assertMaskedImagesNearlyEqual(template_test.getMaskedImage(), template_ref.getMaskedImage())
 
     def test_warp_exposure(self):
         """Test that an exposure warped to its own wcs is unchanged."""

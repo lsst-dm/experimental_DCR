@@ -27,6 +27,7 @@ import unittest
 
 import numpy as np
 
+import lsst.daf.persistence as daf_persistence
 import lsst.utils.tests
 
 from python.test_utils import BasicBuildDcrModel
@@ -47,14 +48,19 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         The list of reference values used to set up the input exposures.
     """
 
-    def setUp(self):
+    @classmethod
+    def setUpClass(self):
         """Define parameters used by every test."""
         band_name = 'g'
         self.n_step = 3
         self.n_images = 5
 
-        data_file = "test_data/exposures.npy"
-        exposures = np.load(data_file)
+        butler = daf_persistence.Butler(inputs="./test_data/")
+        exposures = []
+        n_exp = 6
+        for exp_i in range(n_exp):
+            dataId = {'visit': exp_i, 'raft': '2,2', 'sensor': '1,1', 'filter': 'g'}
+            exposures.append(butler.get("calexp", dataId=dataId))
         # Use BasicBuildDcrModel here to save execution time.
         self.dcrModel = BasicBuildDcrModel(band_name=band_name, n_step=self.n_step, exposures=exposures)
         self.ref_vals = []
@@ -63,7 +69,8 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
             exp.getMaskedImage().getMask().getArray()[:, :] = detected_bit
             self.ref_vals.append(exp.getMaskedImage().getImage().getArray())
 
-    def tearDown(self):
+    @classmethod
+    def tearDownClass(self):
         """Clean up."""
         del self.dcrModel
 
@@ -79,7 +86,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         data_file = "test_data/build_model_vals.npy"
         self.dcrModel.build_model(verbose=False)
         model_vals = self.dcrModel.model
-        # np.save(data_file, model_vals)
+        # np.save(data_file, model_vals, allow_pickle=False)
         model_ref = np.load(data_file)
         for m_new, m_ref in izip(model_vals, model_ref):
             self.assertFloatsAlmostEqual(m_new, m_ref)
@@ -90,7 +97,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         exposure = self.dcrModel.exposures[0]
         self.dcrModel.build_model(verbose=False)
         template, variance = self.dcrModel.build_matched_template(exposure)
-        # np.save(data_file, (template, variance))
+        # np.save(data_file, (template, variance), allow_pickle=False)
         template_ref, variance_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(template, template_ref)
         self.assertFloatsAlmostEqual(variance, variance_ref)
@@ -139,8 +146,8 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
     def test_calc_model_metric(self):
         """Test that the DCR model convergence metric is calculated consistently."""
         model_file = "test_data/build_model_vals.npy"
-        metric_ref = np.array([0.0326935547581, 0.0299110561613, 0.0312179049219,
-                               0.0347479538541, 0.0391646266206, 0.0421978090644])
+        metric_ref = np.array([0.0326935559509, 0.0299110529484, 0.0312179049219,
+                               0.0347479542217, 0.0391646272523, 0.0421978103681])
         model = np.load(model_file)
         metric = self.dcrModel.calc_model_metric(model=model)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)

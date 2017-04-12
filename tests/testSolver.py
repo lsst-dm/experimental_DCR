@@ -26,6 +26,7 @@ import unittest
 
 import numpy as np
 
+import lsst.daf.persistence as daf_persistence
 import lsst.utils.tests
 
 from python.dcr_utils import solve_model
@@ -41,17 +42,23 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         Class that loads LSST calibrated exposures and produces airmass-matched template images.
     """
 
-    def setUp(self):
+    @classmethod
+    def setUpClass(self):
         """Define parameters used by every test."""
-        data_file = "test_data/exposures.npy"
-        exposures = np.load(data_file)
+        butler = daf_persistence.Butler(inputs="./test_data/")
+        exposures = []
+        n_exp = 6
+        for exp_i in range(n_exp):
+            dataId = {'visit': exp_i, 'raft': '2,2', 'sensor': '1,1', 'filter': 'g'}
+            exposures.append(butler.get("calexp", dataId=dataId))
         # Use BasicBuildDcrModel here to save execution time.
         self.dcrModel = BasicBuildDcrModel(band_name='g', n_step=3, exposures=exposures)
         detected_bit = self.dcrModel.exposures[0].getMaskedImage().getMask().getPlaneBitMask('DETECTED')
         for exp in self.dcrModel.exposures:
             exp.getMaskedImage().getMask().getArray()[:, :] = detected_bit
 
-    def tearDown(self):
+    @classmethod
+    def tearDownClass(self):
         """Clean up."""
         del self.dcrModel
 
@@ -60,7 +67,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         data_file = "test_data/calculate_psf.npy"
         self.dcrModel.calc_psf_model()
         psf_new = self.dcrModel.psf.computeKernelImage().getArray()
-        # np.save(data_file, psf_new)
+        # np.save(data_file, psf_new, allow_pickle=False)
         psf_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(psf_ref, psf_new)
 
@@ -69,7 +76,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         data_file = "test_data/build_dcr_kernel_vals.npy"
         kernel_size = 5
         kernel = self.dcrModel._build_dcr_kernel(kernel_size)
-        # np.save(data_file, kernel)
+        # np.save(data_file, kernel, allow_pickle=False)
         kernel_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(kernel, kernel_ref)
 
@@ -91,7 +98,7 @@ class SolverTestCase(lsst.utils.tests.TestCase):
         dcr_kernel = self.dcrModel._build_dcr_kernel(kernel_size)
         model_vals_gen = solve_model(kernel_size, image_vals, n_step=n_step, kernel_dcr=dcr_kernel)
         model_arr = [model for model in model_vals_gen]
-        # np.save(data_file, model_arr)
+        # np.save(data_file, model_arr, allow_pickle=False)
         model_ref = np.load(data_file)
         for m_new, m_ref in izip(model_arr, model_ref):
             self.assertFloatsAlmostEqual(m_new, m_ref)

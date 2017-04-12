@@ -40,7 +40,7 @@ class KernelTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         psf_size = psf.computeKernelImage().getArray().shape[0]
         phase_arr = BasicGenerateTemplate._calc_offset_phase(exposure=self.exposure,
                                                              dcr_gen=self.dcr_gen, size=psf_size)
-        # np.save(data_file, phase_arr)
+        # np.save(data_file, phase_arr, allow_pickle=False)
         phase_arr_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref)
 
