@@ -208,7 +208,7 @@ class GenerateTemplate:
                 obsid_out = obsid
             exposure = self.create_exposure(template, variance=variance, snap=0,
                                             boresightRotAngle=rotation_angle, weather=weather,
-                                            elevation=el, azimuth=az, obsid=obsid_out)
+                                            elevation=el, azimuth=az, exposureId=obsid_out)
             if warp:
                 wrap_warpExposure(exposure, wcs_exp, bbox_exp)
             if output_repository is not None:
