@@ -446,7 +446,7 @@ class BuildDcrModel(GenerateTemplate):
         self.weights = np.sum(inverse_var_arr, axis=0)/self.n_step
         return did_converge
 
-    def _calculate_new_model(self, last_solution, exp_cut, use_variance):
+    def _calculate_new_model(self, last_solution, exp_cut=None, use_variance=True):
         """Sub-routine to calculate a new model from the residuals of forward-modeling the previous solution.
 
         Parameters
@@ -464,6 +464,8 @@ class BuildDcrModel(GenerateTemplate):
         """
         residual_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
         inverse_var_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        if exp_cut is None:
+            exp_cut = [False for exp_i in range(self.n_images)]
         for exp_i, exp in enumerate(self.exposures):
             if exp_cut[exp_i]:
                 continue

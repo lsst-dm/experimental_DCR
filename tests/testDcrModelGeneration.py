@@ -98,7 +98,6 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
     def test_calculate_new_model(self):
         """Compare the new model prediction for one iteration of the solver to previously-computed values."""
         data_file = "test_data/calculate_new_model_vals.npy"
-        use_variance = True
         rand_gen = np.random
         random_seed = 5
         rand_gen.seed(random_seed)
@@ -106,10 +105,8 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         x_size = self.dcrModel.x_size
         y_size = self.dcrModel.y_size
         last_solution = [rand_gen.random((y_size, x_size)) for f in range(n_step)]
-        exp_cut = [False for exp_i in range(self.dcrModel.n_images)]
-        new_solution, inverse_var_arr = self.dcrModel._calculate_new_model(last_solution, exp_cut,
-                                                                           use_variance)
-        # np.save(data_file, (new_solution, inverse_var_arr))
+        new_solution, inverse_var_arr = self.dcrModel._calculate_new_model(last_solution)
+        # np.save(data_file, (new_solution, inverse_var_arr), allow_pickle=False)
         new_solution_ref, inverse_var_arr_ref = np.load(data_file)
         for soln_new, soln_ref in izip(new_solution, new_solution_ref):
             self.assertFloatsAlmostEqual(soln_new, soln_ref)
