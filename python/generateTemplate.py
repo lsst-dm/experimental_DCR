@@ -117,7 +117,7 @@ class GenerateTemplate:
         Height of the model, in pixels.
     """
 
-    def __init__(self, model_repository=None, band_name='g', **kwargs):
+    def __init__(self, model_repository=None, band_name='g', butler=None, **kwargs):
         """Restore a persisted DCR model created with BuildDcrModel.
 
         Only run when restoring a model or for testing; otherwise superceded by BuildDcrModel __init__.
@@ -128,10 +128,12 @@ class GenerateTemplate:
             Path to the repository where the previously-generated DCR model is stored.
         band_name : str, optional
             Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
+        butler : None, lsst.daf.persistence Butler object
+            Optionally pass in a pre-initialized butler to manage persistence to and from a repository.
         **kwargs : TYPE
             Any additional keyword arguments to pass to load_bandpass
         """
-        self.butler = None
+        self.butler = butler
         self.default_repository = model_repository
         self.load_model(model_repository=model_repository, band_name=band_name, **kwargs)
 
@@ -782,7 +784,7 @@ class GenerateTemplate:
             afwImage.Filter.define(afwImage.FilterProperty(self.filter_name, filterPolicy))
             exposure.setFilter(afwImage.Filter(self.filter_name))
             # Need to reset afwImage.Filter to prevent an error in future calls to daf_persistence.Butler
-            afwImage.FilterProperty_reset()
+            afwImage.FilterProperty.reset()
         if self.debug:
             array_temp = array
             array = np.zeros_like(exposure.getMaskedImage().getImage().getArray())
