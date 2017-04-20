@@ -218,7 +218,7 @@ class GenerateTemplate:
             yield exposure
 
     def read_exposures(self, obsids=None, input_repository=None, data_type="calexp"):
-        """Initialize a butler and read exposures from the given repository.
+        """Initialize a butler and read data from the given repository.
 
         Parameters
         ----------
@@ -232,8 +232,10 @@ class GenerateTemplate:
 
         Yields
         ------
-        lsst.afw.image.ExposureF object
+        lsst.afw.image ExposureF object
             The specified exposures from the given repository.
+        lsst.afw.table SourceTable object
+            Reads the source catalogs for the given dataId instead, if ``data_type="src"``.
 
         Raises
         ------
@@ -262,13 +264,16 @@ class GenerateTemplate:
                     dataIds.append(dataId)
                 else:
                     break
+        elif data_type == "src":
+            dataIds = self._build_dataId(obsids, self.filter_name, instrument=self.instrument)
         else:
             raise ValueError("Invalid `data_type`")
         for dataId in dataIds:
             yield butler.get(data_type, dataId=dataId)
 
-    def write_exposure(self, exposure, output_repository=None, data_type="calexp", subfilter=None):
-        """Persist an exposure using a butler.
+    def write_exposure(self, exposure, output_repository=None, data_type="calexp",
+                       subfilter=None, obsid=None):
+        """Persist data using a butler.
 
         Parameters
         ----------
@@ -281,23 +286,27 @@ class GenerateTemplate:
             The type of data to be persisted. Expected values are ``'calexp'`` or ``'dcrModel'``
         subfilter : int, optional
             The DCR model subfilter index, only used for ```data_type`='dcrModel'``
+        obsid : int, optional
+            Observation ID of the data to persist.
 
         Returns
         -------
         None
-            The exposure is persisted to the repository.
+            The data is persisted to the repository.
 
         Raises
         ------
         ValueError
             If an unknown ``data_type`` is supplied.
         """
-        visitInfo = exposure.getInfo().getVisitInfo()
-        obsid_out = visitInfo.getExposureId()
+        if obsid is None:
+            obsid = exposure.getInfo().getVisitInfo().getExposureId()
         if data_type == "calexp":
-            dataId_out = self._build_dataId(obsid_out, self.filter_name, instrument=self.instrument)[0]
+            dataId_out = self._build_dataId(obsid, self.filter_name, instrument=self.instrument)[0]
         elif data_type == "dcrModel":
             dataId_out = self._build_model_dataId(self.filter_name, subfilter)
+        elif data_type == "src":
+            dataId_out = self._build_dataId(obsid, self.filter_name, instrument=self.instrument)[0]
         else:
             raise ValueError("Invalid `data_type`")
         if output_repository is not None:
