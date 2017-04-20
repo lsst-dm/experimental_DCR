@@ -282,7 +282,7 @@ class DcrModelTestBase:
         random_seed = 3
         rand_gen = np.random
         rand_gen.seed(random_seed)
-        self.array = rand_gen.random(size=(size, size))
+        self.array = np.float32(rand_gen.random(size=(size, size)))
         self.dcrTemplate = BasicGenerateTemplate(size=size, band_name=band_name,
                                                  n_step=n_step, pixel_scale=pixel_scale)
         dec = self.dcrTemplate.wcs.getSkyOrigin().getLatitude()
