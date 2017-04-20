@@ -347,7 +347,10 @@ class GenerateTemplate:
         if rotation_angle is None:
             rotation_angle = calculate_rotation_angle(exposure)
         if weather is None:
-            weather = exposure.getInfo().getVisitInfo().getWeather()
+            try:
+                weather = exposure.getInfo().getVisitInfo().getWeather()
+            except:
+                weather = lsst_weather
         dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                       observatory=self.observatory, weather=weather,
                                       elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
@@ -851,6 +854,8 @@ class GenerateTemplate:
         exposure.getInfo().setVisitInfo(visitInfo)
 
         # Set the DCR-matched PSF
+        if self.psf is None:
+            self.calc_psf_model()
         psf_single = self.build_matched_psf(elevation, calculate_rotation_angle(exposure), weather)
         exposure.setPsf(psf_single)
         return exposure
