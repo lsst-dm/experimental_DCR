@@ -149,7 +149,7 @@ class GenerateTemplate:
             Single, or list of observation IDs in ``input_repository`` to load and create matched
             templates for.
             Ignored if exposures are supplied directly.
-        exposures : List or generator of lsst.afw.image.ExposureD objects, optional
+        exposures : List or generator of lsst.afw.image.ExposureF objects, optional
             List or generator of exposure objects that will have matched templates created.
             Intended primarily for unit tests that separate reading and writing from processing data.
         input_repository : str, optional
@@ -171,7 +171,7 @@ class GenerateTemplate:
 
         Yields
         ------
-        lsst.afw.image ExposureD object.
+        lsst.afw.image ExposureF object.
             Returns a generator that builds DCR-matched templates for each exposure.
             The exposure is also written to disk if ``output_repository`` is set.
 
@@ -232,7 +232,7 @@ class GenerateTemplate:
 
         Yields
         ------
-        lsst.afw.image.ExposureD object
+        lsst.afw.image.ExposureF object
             The specified exposures from the given repository.
 
         Raises
@@ -272,7 +272,7 @@ class GenerateTemplate:
 
         Parameters
         ----------
-        exposure : lsst.afw.image.ExposureD object
+        exposure : lsst.afw.image.ExposureF object
             The exposure to be persisted to the given repository.
         output_repository : str, optional
             If specified, initialize a new butler set to write to the given ``output_repository``.
@@ -306,13 +306,13 @@ class GenerateTemplate:
             butler = self.butler
         butler.put(exposure, data_type, dataId=dataId_out)
 
-    def build_matched_template(self, exposure, model=None, el=None, rotation_angle=None,
+    def build_matched_template(self, exposure=None, model=None, el=None, rotation_angle=None,
                                return_weights=True, weather=None):
         """Sub-routine to calculate the sum of the model images shifted by DCR for a given exposure.
 
         Parameters
         ----------
-        exposure : lsst.afw.image.ExposureD object
+        exposure : lsst.afw.image.ExposureF object, optional if all metadata is supplied directly.
             Single exposure to create a DCR-matched template for from the model.
         model : List of numpy ndarrays, optional
             The DCR model. If not set, then self.model is used.
@@ -380,7 +380,7 @@ class GenerateTemplate:
         Returns
         -------
         lsst.meas.algorithms KernelPsf object
-            Designed to be passed to a lsst.afw.image ExposureD through the method setPsf()
+            Designed to be passed to a lsst.afw.image ExposureF through the method setPsf()
         """
         dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                       observatory=self.observatory, weather=weather,
@@ -403,7 +403,7 @@ class GenerateTemplate:
 
         Parameters
         ----------
-        exposure : lsst.afw.image.ExposureD object
+        exposure : lsst.afw.image.ExposureF object
             Input single exposure to extract the image and variance planes
         airmass_weight : bool, optional
             Set to True to scale the variance by the airmass of the observation.
@@ -771,9 +771,9 @@ class GenerateTemplate:
 
         Returns
         -------
-        lsst.afw.image.ExposureD object
+        lsst.afw.image.ExposureF object
         """
-        exposure = afwImage.ExposureD(self.bbox)
+        exposure = afwImage.ExposureF(self.bbox)
         exposure.setWcs(self.wcs)
         # We need the filter name in the exposure metadata, and it can't just be set directly
         try:
@@ -925,7 +925,7 @@ class GenerateTemplate:
         ----------
         dcr_gen : generator
              A dcr generator of offsets, returned by ``_dcr_generator``.
-        exposure : lsst.afw.image.ExposureD object, optional
+        exposure : lsst.afw.image.ExposureF object, optional
             An LSST exposure object. Only needed if size is not specified.
         size : int, optional
             Width in pixels of the region used in the origin image. Default is entire image
@@ -968,7 +968,7 @@ class GenerateTemplate:
             If set, calculate the covariance matrix between the region of pixels in
             the origin image and a region twice as wide in the destination image.
             This helps avoid edge effects when computing A^T A.
-        exposure : lsst.afw.image.ExposureD object, optional
+        exposure : lsst.afw.image.ExposureF object, optional
             If not supplied, the covariance matrix for all exposures in ``self.exposures`` is calculated.
         bandpass : lsst.sims.photUtils.Bandpass object
             Bandpass object returned by load_bandpass
@@ -1015,7 +1015,7 @@ class GenerateTemplate:
 
         Parameters
         ----------
-        exposure : lsst.afw.image.ExposureD object
+        exposure : lsst.afw.image.ExposureF object
             A single LSST exposure object
 
         Returns

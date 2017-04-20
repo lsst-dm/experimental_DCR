@@ -132,7 +132,7 @@ class BuildDcrModel(GenerateTemplate):
             Overridden if `n_step` is supplied.
         n_step : int, optional
             Number of sub-band planes to use. Takes precendence over `wavelength_step`.
-        exposures : List of lsst.afw.image.ExposureD objects, optional
+        exposures : List of lsst.afw.image.ExposureF objects, optional
             List of exposures to use to calculate the model.
         warp : bool, optional
             Set to true if the exposures have different wcs from the model.
