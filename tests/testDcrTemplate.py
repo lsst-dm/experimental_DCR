@@ -70,7 +70,7 @@ class DcrTemplateTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         """Test that the dataIds for the `dcrModel` data type are correct."""
         subfilter = 1
         band_ref = 'g'
-        ref_id = {'filter': band_ref, 'tract': 0, 'patch': '0', 'subfilter': subfilter}
+        ref_id = {'filter': band_ref, 'tract': 0, 'patch': '0,0', 'subfilter': subfilter}
         dataId = BasicGenerateTemplate._build_model_dataId(band_ref, subfilter=subfilter)
         self.assertEqual(ref_id, dataId)
 
