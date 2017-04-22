@@ -524,9 +524,9 @@ class GenerateTemplate:
         Return a dataId for the butler to use to load a dcrModel from a repository
         """
         if subfilter is None:
-            dataId = {'filter': band, 'tract': 0, 'patch': '0'}
+            dataId = {'filter': band, 'tract': 0, 'patch': '0,0'}
         else:
-            dataId = {'filter': band, 'tract': 0, 'patch': '0', 'subfilter': subfilter}
+            dataId = {'filter': band, 'tract': 0, 'patch': '0,0', 'subfilter': subfilter}
         return(dataId)
 
     @staticmethod
