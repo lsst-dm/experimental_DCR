@@ -43,7 +43,7 @@ class DcrTemplateTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
     def setUpClass(self):
         """Set up one instance of the butler for all tests of persistence."""
         self.repository = "./test_data/"
-        self.butler = daf_persistence.Butler(inputs=self.repository)
+        self.butler = daf_persistence.Butler(inputs=self.repository, outputs=self.repository)
 
     @classmethod
     def tearDownClass(self):
