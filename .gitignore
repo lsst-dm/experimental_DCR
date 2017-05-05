@@ -101,3 +101,6 @@ test_data/calexp/v122-fg/R22/bkgd-S11.fits
 test_data/calexp/v122-fg/R22/S11.fits
 test_data/calexp/v123-fg/R22/bkgd-S11.fits
 test_data/calexp/v123-fg/R22/S11.fits
+test_data/dcrCoadd/g0/0/0,0.fits
+test_data/dcrCoadd/g1/0/0,0.fits
+test_data/dcrCoadd/g2/0/0,0.fits

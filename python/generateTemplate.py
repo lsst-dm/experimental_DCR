@@ -228,7 +228,7 @@ class GenerateTemplate:
         input_repository : str, optional
             Path to the repository where the exposure data to be matched are stored.
         data_type : str, optional
-            The type of data to be persisted. Expected values are ``'calexp'`` or ``'dcrModel'``
+            The type of data to be persisted. Expected values are ``'calexp'`` or ``'dcrCoadd'``
 
         Yields
         ------
@@ -254,13 +254,13 @@ class GenerateTemplate:
             raise ValueError("Can't initialize butler: input_repository not set.")
         if data_type == "calexp":
             dataIds = self._build_dataId(obsids, self.filter_name, instrument=self.instrument)
-        elif data_type == "dcrModel":
+        elif data_type == "dcrCoadd":
             # We want to read in all of the model planes, but we don't know ahead of time how many there are.
             max_ids = 100
             dataId_test = (self._build_model_dataId(self.filter_name, subfilter=f) for f in range(max_ids))
             dataIds = []
             for dataId in dataId_test:
-                if butler.datasetExists("dcrModel", dataId=dataId):
+                if butler.datasetExists("dcrCoadd", dataId=dataId):
                     dataIds.append(dataId)
                 else:
                     break
@@ -283,9 +283,9 @@ class GenerateTemplate:
             If specified, initialize a new butler set to write to the given ``output_repository``.
             Otherwise, the previously initialized butler is used.
         data_type : str, optional
-            The type of data to be persisted. Expected values are ``'calexp'`` or ``'dcrModel'``
+            The type of data to be persisted. Expected values are ``'calexp'`` or ``'dcrCoadd'``
         subfilter : int, optional
-            The DCR model subfilter index, only used for ```data_type`='dcrModel'``
+            The DCR model subfilter index, only used for ```data_type`='dcrCoadd'``
         obsid : int, optional
             Observation ID of the data to persist.
 
@@ -303,7 +303,7 @@ class GenerateTemplate:
             obsid = exposure.getInfo().getVisitInfo().getExposureId()
         if data_type == "calexp":
             dataId_out = self._build_dataId(obsid, self.filter_name, instrument=self.instrument)[0]
-        elif data_type == "dcrModel":
+        elif data_type == "dcrCoadd":
             dataId_out = self._build_model_dataId(self.filter_name, subfilter)
         elif data_type == "src":
             dataId_out = self._build_dataId(obsid, self.filter_name, instrument=self.instrument)[0]
@@ -510,7 +510,7 @@ class GenerateTemplate:
 
     @staticmethod
     def _build_model_dataId(band, subfilter=None):
-        """Construct a dataId dictionary for the butler to find a dcrModel.
+        """Construct a dataId dictionary for the butler to find a dcrCoadd.
 
         Parameters
         ----------
@@ -521,7 +521,7 @@ class GenerateTemplate:
 
         Returns
         -------
-        Return a dataId for the butler to use to load a dcrModel from a repository
+        Return a dataId for the butler to use to load a dcrCoadd from a repository
         """
         if subfilter is None:
             dataId = {'filter': band, 'tract': 0, 'patch': '0,0'}
@@ -866,7 +866,7 @@ class GenerateTemplate:
         Parameters
         ----------
         model_repository : None, optional
-            Full path to the directory of the repository to save the dcrModel in
+            Full path to the directory of the repository to save the dcrCoadd in
             If not set, uses the existing self.butler
 
         Returns
@@ -880,7 +880,7 @@ class GenerateTemplate:
                                        elevation=Angle(np.pi/2), azimuth=Angle(0),
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
                                        telescop=self.instrument)
-            self.write_exposure(exp, output_repository=model_repository, data_type="dcrModel", subfilter=f)
+            self.write_exposure(exp, output_repository=model_repository, data_type="dcrCoadd", subfilter=f)
 
     def load_model(self, model_repository=None, band_name='g',
                    instrument='lsstSim', **kwargs):
@@ -889,7 +889,7 @@ class GenerateTemplate:
         Parameters
         ----------
         model_repository : None, optional
-            Full path to the directory of the repository to load the ``dcrModel`` from.
+            Full path to the directory of the repository to load the ``dcrCoadd`` from.
             If not set, uses the existing self.butler
         band_name : str, optional
             Common name of the filter used. For LSST, use u, g, r, i, z, or y
@@ -903,30 +903,30 @@ class GenerateTemplate:
         self.instrument = instrument
         self.filter_name = band_name
         model_arr = []
-        dcrModel_gen = self.read_exposures(data_type="dcrModel", input_repository=model_repository)
-        for dcrModel in dcrModel_gen:
-            model_arr.append(dcrModel.getMaskedImage().getImage().getArray())
+        dcrCoadd_gen = self.read_exposures(data_type="dcrCoadd", input_repository=model_repository)
+        for dcrCoadd in dcrCoadd_gen:
+            model_arr.append(dcrCoadd.getMaskedImage().getImage().getArray())
 
         self.model = model_arr
         # The weights should be identical for all subfilters.
-        self.weights = dcrModel.getMaskedImage().getVariance().getArray()
+        self.weights = dcrCoadd.getMaskedImage().getVariance().getArray()
         # The masks should be identical for all subfilters
-        self.mask = dcrModel.getMaskedImage().getMask().getArray()
+        self.mask = dcrCoadd.getMaskedImage().getMask().getArray()
 
-        self.wcs = dcrModel.getWcs()
+        self.wcs = dcrCoadd.getWcs()
         self.n_step = len(self.model)
-        y_size, x_size = dcrModel.getDimensions()
+        y_size, x_size = dcrCoadd.getDimensions()
         self.x_size = x_size
         self.y_size = y_size
         self.pixel_scale = self.wcs.pixelScale()
-        self.exposure_time = dcrModel.getInfo().getVisitInfo().getExposureTime()
-        self.observatory = dcrModel.getInfo().getVisitInfo().getObservatory()
-        self.bbox = dcrModel.getBBox()
+        self.exposure_time = dcrCoadd.getInfo().getVisitInfo().getExposureTime()
+        self.observatory = dcrCoadd.getInfo().getVisitInfo().getObservatory()
+        self.bbox = dcrCoadd.getBBox()
         bandpass_init = self.load_bandpass(band_name=band_name, **kwargs)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / self.n_step
         self.bandpass = self.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
 
-        self.psf = dcrModel.getPsf()
+        self.psf = dcrCoadd.getPsf()
         psf_avg = self.psf.computeKernelImage().getArray()
         self.psf_size = psf_avg.shape[0]
         self.debug = False
