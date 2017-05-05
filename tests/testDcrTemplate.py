@@ -33,10 +33,10 @@ from python.dcr_utils import wrap_warpExposure
 from python.dcr_utils import calculate_rotation_angle
 from python.generateTemplate import GenerateTemplate
 from python.test_utils import BasicGenerateTemplate
-from python.test_utils import DcrModelTestBase
+from python.test_utils import DcrCoaddTestBase
 
 
-class DcrTemplateTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
+class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
     """Tests for the functions in the GenerateTemplate class."""
 
     @classmethod
@@ -67,7 +67,7 @@ class DcrTemplateTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
             self.assertEqual(ref_dataid, dataId[i])
 
     def test_model_dataId(self):
-        """Test that the dataIds for the `dcrModel` data type are correct."""
+        """Test that the dataIds for the `dcrCoadd` data type are correct."""
         subfilter = 1
         band_ref = 'g'
         ref_id = {'filter': band_ref, 'tract': 0, 'patch': '0,0', 'subfilter': subfilter}

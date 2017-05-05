@@ -1,4 +1,4 @@
-"""Lightweight instances of the classes GenerateTemplate and BuildDcrModel for unit testing."""
+"""Lightweight instances of the classes GenerateTemplate and BuildDcrCoadd for unit testing."""
 # LSST Data Management System
 # Copyright 2016 LSST Corporation.
 #
@@ -29,11 +29,11 @@ import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
 from .generateTemplate import GenerateTemplate
-from .buildDcrModel import BuildDcrModel
+from .buildDcrCoadd import BuildDcrCoadd
 from .dcr_utils import parallactic_angle
 from .lsst_defaults import lsst_observatory
 
-__all__ = ["BasicBandpass", "BasicGenerateTemplate", "BasicBuildDcrModel", "DcrModelTestBase"]
+__all__ = ["BasicBandpass", "BasicGenerateTemplate", "BasicBuildDcrCoadd", "DcrCoaddTestBase"]
 
 nanFloat = float("nan")
 nanAngle = Angle(nanFloat)
@@ -85,7 +85,7 @@ class BasicGenerateTemplate(GenerateTemplate):
     mask : np.ndarray
         Mask plane of the model. This mask is saved as the mask plane of the template exposure.
     model : list of np.ndarrays
-        The DCR model to be used to generate templates, calculate with `BuildDcrModel.build_model`.
+        The DCR model to be used to generate templates, calculate with `BuildDcrCoadd.build_model`.
         Contains one array for each wavelength step.
     n_step : int
         Number of sub-filter wavelength planes to model.
@@ -101,7 +101,7 @@ class BasicGenerateTemplate(GenerateTemplate):
         World Coordinate System of the model.
     weights : np.ndarray
         Weights of the model. Calculated as the sum of the inverse variances of the input exposures to
-        `BuildDcrModel.build_model`. The same `weights` are used for each wavelength step of the `model`.
+        `BuildDcrCoadd.build_model`. The same `weights` are used for each wavelength step of the `model`.
     x_size : int
         Width of the model, in pixels.
     y_size : int
@@ -164,8 +164,8 @@ class BasicGenerateTemplate(GenerateTemplate):
         self.psf = measAlg.KernelPsf(psfK)
 
 
-class BasicBuildDcrModel(BuildDcrModel):
-    """Dummy BuildDcrModel object for testing without a repository.
+class BasicBuildDcrCoadd(BuildDcrCoadd):
+    """Dummy BuildDcrCoadd object for testing without a repository.
 
     Attributes
     ----------
@@ -212,7 +212,7 @@ class BasicBuildDcrModel(BuildDcrModel):
     """
 
     def __init__(self, band_name='g', n_step=3, exposures=None):
-        """Initialize the lightweight version of BuildDcrModel for testing.
+        """Initialize the lightweight version of BuildDcrCoadd for testing.
 
         Parameters
         ----------
@@ -250,7 +250,7 @@ class BasicBuildDcrModel(BuildDcrModel):
         self.psf_size = psf.shape[0]
 
 
-class DcrModelTestBase:
+class DcrCoaddTestBase:
     """Base class many unit tests can inherit from to simplify setup.
 
     Attributes

@@ -34,10 +34,10 @@ from .dcr_utils import wrap_warpExposure
 from .dcr_utils import solve_model
 from .generateTemplate import GenerateTemplate
 
-__all__ = ["BuildDcrModel"]
+__all__ = ["BuildDcrCoadd"]
 
 
-class BuildDcrModel(GenerateTemplate):
+class BuildDcrCoadd(GenerateTemplate):
     """Class that loads LSST calibrated exposures and produces airmass-matched template images.
 
     Input exposures are read with a butler, and an initial model is made by coadding the images.
@@ -98,14 +98,14 @@ class BuildDcrModel(GenerateTemplate):
     -------
 
     Set up:
-    dcrModel = BuildDcrModel(n_step=3, input_repository="./test_data/",
+    dcrCoadd = BuildDcrCoadd(n_step=3, input_repository="./test_data/",
                              obsids=np.arange(100, 124, 3), band_name='g')
 
     Generate the model:
-    dcrModel.build_model(max_iter=10)
+    dcrCoadd.build_model(max_iter=10)
 
     Use the model to make matched templates for several observations:
-    template_exposure_gen = dcrModel.generate_templates_from_model(obsids=[108, 109, 110],
+    template_exposure_gen = dcrCoadd.generate_templates_from_model(obsids=[108, 109, 110],
                                                                    output_repository="./test_data_templates/")
     im_arr = []
     for exp in template_exposure_gen:
