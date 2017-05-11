@@ -20,14 +20,20 @@
 # the GNU General Public License along with this program.  If not,
 # see <http://www.lsstcorp.org/LegalNotices/>.
 #
-import lsst.afw.table as afwTable
-import lsst.meas.base as measBase
+from __future__ import print_function, division, absolute_import
+import numpy as np
+
 import lsst.afw.coord as afwCoord
-import lsst.afw.table as afwTable
-import lsst.afw.geom as afwGeom
 import lsst.afw.detection as afwDet
+import lsst.afw.geom as afwGeom
+from lsst.afw.geom import Angle
+import lsst.afw.table as afwTable
+from lsst.meas.algorithms.detection import SourceDetectionTask
+import lsst.meas.base as measBase
+from lsst.meas.base import SingleFrameMeasurementTask
 
 from .generateTemplate import GenerateTemplate
+from .lsst_defaults import lsst_weather
 
 
 class MeasureSources(GenerateTemplate):
@@ -60,22 +66,56 @@ class MeasureSources(GenerateTemplate):
         self.load_model(model_repository=model_repository, band_name=band_name, **kwargs)
 
     def measure_spectrum(self, obsids, input_repository=None):
-        catalog_gen = self.read_exposures(obsids=obsids, input_repository=input_repository, data_type="src")
-        measurement_config = measBase.ForcedMeasurementConfig()
-        measurement_config.plugins.names = ["base_TransformedCentroid", "base_PsfFlux"]
-        measurement_config.slots.shape = None
+        # catalog_gen = self.read_exposures(obsids=obsids, input_repository=input_repository, data_type="src")
 
-        measurement = measBase.ForcedMeasurementTask(schema, config=measurement_config)
-        for sourceCat in catalog_gen:
-            # Update the coordinates of the catalog in-place to match the model
-            afwTable.utils.updateRefCentroids(self.wcs, sourceCat)
+        # Generate a mock template at Zenith to perform initial source detection
+        zenith_el = Angle(np.pi/2)
+        zenith_rotation = Angle(0.0)
+        zenith_template, variance = self.build_matched_template(el=zenith_el, rotation_angle=zenith_rotation)
+        ref_exposure = self.create_exposure(zenith_template, variance=variance, snap=0,
+                                            boresightRotAngle=zenith_rotation, weather=lsst_weather,
+                                            elevation=zenith_el, azimuth=zenith_rotation, exposureId=-1)
 
-            measCat = measurement.generateMeasCat(exposure, sourceCat, self.wcs)
+        # schema = sourceCat.getSchema()
+        # measurement_config = measBase.ForcedMeasurementConfig()
+        # measurement_config.plugins.names = ["base_TransformedCentroid", "base_PsfFlux"]
+        # measurement_config.slots.shape = None
+        # measurement = measBase.ForcedMeasurementTask(schema, config=measurement_config)
 
-            measurement.attachTransformedFootprints(measCat, sourceCat, exposure, self.wcs)
-            measurement.run(measCat, exposure, sourceCat, self.wcs)
-            xv_full = catalog.getX()
-            yv_full = catalog.getY()
+        # # Update the coordinates of the reference catalog in-place to match the model
+        # afwTable.utils.updateRefCentroids(self.wcs, sourceCat)
+
+        # measCat = measurement.generateMeasCat(exposure, sourceCat, self.wcs)
+
+        # measurement.attachTransformedFootprints(measCat, sourceCat, exposure, self.wcs)
+        # measurement.run(measCat, exposure, sourceCat, self.wcs)
+        # xv_full = catalog.getX()
+        # yv_full = catalog.getY()
+
+        measure_config = SingleFrameMeasurementTask.ConfigClass()
+        schema = afwTable.SourceTable.makeMinimalSchema()
+        measure_config.plugins.names.clear()
+        plugin_list = ["base_SdssCentroid", "base_SdssShape", "base_CircularApertureFlux",
+                       "base_GaussianFlux"]
+        for plugin in plugin_list:
+            measure_config.plugins.names.add(plugin)
+        measure_config.slots.psfFlux = "base_GaussianFlux"
+        measure_config.slots.apFlux = "base_CircularApertureFlux_3_0"
+        measureTask = SingleFrameMeasurementTask(schema, config=measure_config)
+        detect_config = SourceDetectionTask.ConfigClass()
+        detect_config.background.isNanSafe = True
+        detect_config.thresholdValue = 3
+        detectionTask = SourceDetectionTask(config=detect_config, schema=schema)
+
+        model_exp = [self.create_exposure(model, variance=variance, snap=0, oresightRotAngle=Angle(0.0),
+                                          bweather=self.exposures[0].getInfo().getVisitInfo().getWeather(),
+                                          elevation=Angle(np.pi/2), azimuth=Angle(0.0), exposureId=-1)
+                     for model in self.model]
+
+        tab = afwTable.SourceTable.make(schema)
+        refCat = detectionTask.run(tab, ref_exposure)
+        measureTask.run(refCat.sources, ref_exposure)
+
 
 
 def make_sourceCat_from_astropy(astropy_catalog, exposure):
