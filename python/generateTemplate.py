@@ -874,9 +874,13 @@ class GenerateTemplate:
         None
         """
         wave_gen = self._wavelength_iterator(self.bandpass, use_midpoint=False)
+        variance = np.zeros_like(self.weights)
+        variance[self.weights > 0] = 1./self.weights[self.weights > 0]
+        variance /= self.n_step
         for f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
-            exp = self.create_exposure(self.model[f], variance=self.weights,
+
+            exp = self.create_exposure(self.model[f], variance=variance,
                                        elevation=Angle(np.pi/2), azimuth=Angle(0),
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
                                        telescop=self.instrument)
@@ -908,8 +912,9 @@ class GenerateTemplate:
             model_arr.append(dcrCoadd.getMaskedImage().getImage().getArray())
 
         self.model = model_arr
+        self.n_step = len(self.model)
         # The weights should be identical for all subfilters.
-        self.weights = dcrCoadd.getMaskedImage().getVariance().getArray()
+        self.weights = dcrCoadd.getMaskedImage().getVariance().getArray()*self.n_step
         # The masks should be identical for all subfilters
         self.mask = dcrCoadd.getMaskedImage().getMask().getArray()
 

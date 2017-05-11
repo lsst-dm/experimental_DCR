@@ -484,6 +484,7 @@ class BuildDcrCoadd(GenerateTemplate):
                 img_residual = img - last_model
                 residual_shift = scipy_shift(img_residual, inv_shift)
                 inv_var_shift = scipy_shift(inverse_var, inv_shift)
+                inv_var_shift[inv_var_shift < 0] = 0.
 
                 residual_arr[f] += residual_shift*inv_var_shift  # *weights_shift
                 inverse_var_arr[f] += inv_var_shift
