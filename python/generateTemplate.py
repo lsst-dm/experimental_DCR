@@ -217,7 +217,7 @@ class GenerateTemplate:
                 self.write_exposure(exposure, output_repository=output_repository)
             yield exposure
 
-    def read_exposures(self, obsids=None, input_repository=None, data_type="calexp"):
+    def read_exposures(self, obsids=None, input_repository=None, datasetType="calexp"):
         """Initialize a butler and read data from the given repository.
 
         Parameters
@@ -227,7 +227,7 @@ class GenerateTemplate:
             templates for.
         input_repository : str, optional
             Path to the repository where the exposure data to be matched are stored.
-        data_type : str, optional
+        datasetType : str, optional
             The type of data to be persisted. Expected values are ``'calexp'`` or ``'dcrCoadd'``
 
         Yields
@@ -235,7 +235,7 @@ class GenerateTemplate:
         lsst.afw.image ExposureF object
             The specified exposures from the given repository.
         lsst.afw.table SourceTable object
-            Reads the source catalogs for the given dataId instead, if ``data_type="src"``.
+            Reads the source catalogs for the given dataId instead, if ``datasetType="src"``.
 
         Raises
         ------
@@ -252,9 +252,9 @@ class GenerateTemplate:
             butler = self.butler
         if butler is None:
             raise ValueError("Can't initialize butler: input_repository not set.")
-        if data_type == "calexp":
+        if datasetType == "calexp":
             dataIds = self._build_dataId(obsids, self.filter, instrument=self.instrument)
-        elif data_type == "dcrCoadd":
+        elif datasetType == "dcrCoadd":
             # We want to read in all of the model planes, but we don't know ahead of time how many there are.
             max_ids = 100
             dataId_test = (self._build_model_dataId(self.filter, subfilter=f) for f in range(max_ids))
@@ -264,7 +264,7 @@ class GenerateTemplate:
                     dataIds.append(dataId)
                 else:
                     break
-        elif data_type == "src":
+        elif datasetType == "src":
             dataIds = self._build_dataId(obsids, self.filter, instrument=self.instrument)
         elif datasetType == "src":
             if hasattr(obsids, '__iter__'):
@@ -274,11 +274,11 @@ class GenerateTemplate:
             refList = [self.makeDataRef(datasetType, butler=butler, filter_name=self.filter_name, visit=obs)
                        for obs in obsids_list]
         else:
-            raise ValueError("Invalid `data_type`")
+            raise ValueError("Invalid `datasetType`")
         for dataId in dataIds:
-            yield butler.get(data_type, dataId=dataId)
+            yield butler.get(datasetType, dataId=dataId)
 
-    def write_exposure(self, exposure, output_repository=None, data_type="calexp",
+    def write_exposure(self, exposure, output_repository=None, datasetType="calexp",
                        subfilter=None, obsid=None):
         """Persist data using a butler.
 
@@ -289,10 +289,10 @@ class GenerateTemplate:
         output_repository : str, optional
             If specified, initialize a new butler set to write to the given ``output_repository``.
             Otherwise, the previously initialized butler is used.
-        data_type : str, optional
+        datasetType : str, optional
             The type of data to be persisted. Expected values are ``'calexp'`` or ``'dcrCoadd'``
         subfilter : int, optional
-            The DCR model subfilter index, only used for ```data_type`='dcrCoadd'``
+            The DCR model subfilter index, only used for ```datasetType`='dcrCoadd'``
         obsid : int, optional
             Observation ID of the data to persist.
 
@@ -304,25 +304,25 @@ class GenerateTemplate:
         Raises
         ------
         ValueError
-            If an unknown ``data_type`` is supplied.
+            If an unknown ``datasetType`` is supplied.
         """
         if obsid is None:
             obsid = exposure.getInfo().getVisitInfo().getExposureId()
-        if data_type == "calexp":
+        if datasetType == "calexp":
             dataId_out = self._build_dataId(obsid, self.filter, instrument=self.instrument)[0]
-        elif data_type == "dcrCoadd":
+        elif datasetType == "dcrCoadd":
             dataId_out = self._build_model_dataId(self.filter, subfilter)
-        elif data_type == "deepCoadd":
+        elif datasetType == "deepCoadd":
             dataId_out = self._build_model_dataId(self.filter)
-        elif data_type == "src":
+        elif datasetType == "src":
             dataId_out = self._build_dataId(obsid, self.filter, instrument=self.instrument)[0]
         else:
-            raise ValueError("Invalid `data_type`")
+            raise ValueError("Invalid `datasetType`")
         if output_repository is not None:
             butler = daf_persistence.Butler(outputs=output_repository)
         else:
             butler = self.butler
-        butler.put(exposure, data_type, dataId=dataId_out)
+        butler.put(exposure, datasetType, dataId=dataId_out)
 
     def build_matched_template(self, exposure=None, model=None, el=None, rotation_angle=None,
                                return_weights=True, weather=None):
@@ -905,7 +905,7 @@ class GenerateTemplate:
         ref_exp = self.create_exposure(image_use, variance=var_use, mask=mask_use, bbox=patch_bbox,
                                        elevation=Angle(np.pi/2), azimuth=Angle(0),
                                        telescop=self.instrument)
-        self.write_exposure(ref_exp, output_repository=model_repository, data_type="deepCoadd")
+        self.write_exposure(ref_exp, output_repository=model_repository, datasetType="deepCoadd")
         variance /= self.n_step
         for f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
@@ -918,7 +918,7 @@ class GenerateTemplate:
                                        elevation=Angle(np.pi/2), azimuth=Angle(0),
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
                                        telescop=self.instrument)
-            self.write_exposure(exp, output_repository=model_repository, data_type="dcrCoadd", subfilter=f)
+            self.write_exposure(exp, output_repository=model_repository, datasetType="dcrCoadd", subfilter=f)
 
     def load_model(self, model_repository=None, filter_name='g',
                    instrument='lsstSim', **kwargs):
@@ -941,7 +941,7 @@ class GenerateTemplate:
         self.instrument = instrument
         self.filter_name = filter_name
         model_arr = []
-        dcrCoadd_gen = self.read_exposures(data_type="dcrCoadd", input_repository=model_repository)
+        dcrCoadd_gen = self.read_exposures(datasetType="dcrCoadd", input_repository=model_repository)
         for dcrCoadd in dcrCoadd_gen:
             model_in = dcrCoadd.getMaskedImage().getImage().getArray()
             var_in = dcrCoadd.getMaskedImage().getVariance().getArray()
