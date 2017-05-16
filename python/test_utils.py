@@ -39,12 +39,12 @@ nanFloat = float("nan")
 nanAngle = Angle(nanFloat)
 
 
-def BasicBandpass(band_name='g', wavelength_step=1.):
+def BasicBandpass(filter_name='g', wavelength_step=1.):
     """Return a dummy bandpass object for testing.
 
     Parameters
     ----------
-    band_name : str, optional
+    filter_name : str, optional
         Common name of the filter used. For LSST, use u, g, r, i, z, or y
     wavelength_step : float, optional
         Wavelength resolution in nm, also the wavelength range of each sub-band plane.
@@ -54,7 +54,7 @@ def BasicBandpass(band_name='g', wavelength_step=1.):
     -------
     Returns a lsst.sims.photUtils.Bandpass object.
     """
-    bandpass = GenerateTemplate.load_bandpass(band_name=band_name, wavelength_step=wavelength_step,
+    bandpass = GenerateTemplate.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step,
                                               use_mirror=False, use_lens=False, use_atmos=False,
                                               use_filter=False, use_detector=False)
     return(bandpass)
@@ -108,7 +108,7 @@ class BasicGenerateTemplate(GenerateTemplate):
         Height of the model, in pixels.
     """
 
-    def __init__(self, size=None, n_step=3, band_name='g', exposure_time=30.,
+    def __init__(self, size=None, n_step=3, filter_name='g', exposure_time=30.,
                  pixel_scale=Angle(afwGeom.arcsecToRad(0.25)), wavelength_step=None):
         """Initialize the lightweight version of GenerateTemplate for testing.
 
@@ -118,7 +118,7 @@ class BasicGenerateTemplate(GenerateTemplate):
             Number of pixels on a side of the image and model.
         n_step : int, optional
             Number of sub-filter wavelength planes to model. Optional if `wavelength_step` supplied.
-        band_name : str, optional
+        filter_name : str, optional
             Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
         exposure_time : float, optional
             Length of the exposure, in seconds. Needed only for exporting to FITS.
@@ -135,9 +135,9 @@ class BasicGenerateTemplate(GenerateTemplate):
         self.debug = False
         self.instrument = 'lsstSim'
 
-        bandpass_init = BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
+        bandpass_init = BasicBandpass(filter_name=filter_name, wavelength_step=wavelength_step)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
-        self.bandpass = BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
+        self.bandpass = BasicBandpass(filter_name=filter_name, wavelength_step=wavelength_step)
         self.model = [rand_gen.random(size=(size, size)) for f in range(n_step)]
         self.weights = np.ones((size, size))
         self.mask = np.zeros((size, size), dtype=np.int32)
@@ -148,7 +148,7 @@ class BasicGenerateTemplate(GenerateTemplate):
         self.pixel_scale = pixel_scale
         self.psf_size = 5
         self.exposure_time = exposure_time
-        self.filter_name = band_name
+        self.filter_name = filter_name
         self.observatory = lsst_observatory
         self.bbox = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(size, size))
         self.wcs = self._create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=Angle(0.),
@@ -211,12 +211,12 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
         Height of the model, in pixels.
     """
 
-    def __init__(self, band_name='g', n_step=3, exposures=None):
+    def __init__(self, filter_name='g', n_step=3, exposures=None):
         """Initialize the lightweight version of BuildDcrCoadd for testing.
 
         Parameters
         ----------
-        band_name : str, optional
+        filter_name : str, optional
             Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
         n_step : int, optional
             Number of sub-filter wavelength planes to model.
@@ -229,13 +229,13 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
         self.mask = None
         self.model_base = None
         self.instrument = 'lsstSim'
-        self.filter_name = band_name
+        self.filter_name = filter_name
 
         self.exposures = exposures
 
-        bandpass_init = BasicBandpass(band_name=band_name, wavelength_step=None)
+        bandpass_init = BasicBandpass(filter_name=filter_name, wavelength_step=None)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
-        self.bandpass = BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
+        self.bandpass = BasicBandpass(filter_name=filter_name, wavelength_step=wavelength_step)
         self.n_step = n_step
         self.n_images = len(exposures)
         y_size, x_size = exposures[0].getDimensions()
@@ -273,7 +273,7 @@ class DcrCoaddTestBase:
 
     def setUp(self):
         """Define parameters used by every test."""
-        band_name = 'g'
+        filter_name = 'g'
         n_step = 3
         pixel_scale = Angle(afwGeom.arcsecToRad(0.25))
         size = 20
@@ -283,7 +283,7 @@ class DcrCoaddTestBase:
         rand_gen = np.random
         rand_gen.seed(random_seed)
         self.array = np.float32(rand_gen.random(size=(size, size)))
-        self.dcrTemplate = BasicGenerateTemplate(size=size, band_name=band_name,
+        self.dcrTemplate = BasicGenerateTemplate(size=size, filter_name=filter_name,
                                                  n_step=n_step, pixel_scale=pixel_scale)
         dec = self.dcrTemplate.wcs.getSkyOrigin().getLatitude()
         ra = self.dcrTemplate.wcs.getSkyOrigin().getLongitude()

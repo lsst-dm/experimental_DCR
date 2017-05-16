@@ -99,7 +99,7 @@ class BuildDcrCoadd(GenerateTemplate):
 
     Set up:
     dcrCoadd = BuildDcrCoadd(n_step=3, input_repository="./test_data/",
-                             obsids=np.arange(100, 124, 3), band_name='g')
+                             obsids=np.arange(100, 124, 3), filter_name='g')
 
     Generate the model:
     dcrCoadd.build_model(max_iter=10)
@@ -114,7 +114,7 @@ class BuildDcrCoadd(GenerateTemplate):
         im_arr.append(exp.getMaskedImage().getImage().getArray())
     """
 
-    def __init__(self, obsids=None, input_repository='.', band_name='g',
+    def __init__(self, obsids=None, input_repository='.', filter_name='g',
                  wavelength_step=10., n_step=None, exposures=None,
                  warp=False, instrument='lsstSim', debug_mode=False, **kwargs):
         """Load images from the repository and set up parameters.
@@ -125,7 +125,7 @@ class BuildDcrCoadd(GenerateTemplate):
             The observation IDs of the data to load. Not used if `exposures` is set.
         input_repository : str, optional
             Full path to repository with the data. Defaults to working directory
-        band_name : str, optional
+        filter_name : str, optional
             Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
         wavelength_step : float, optional
             Wavelength resolution in nm, also the wavelength range of each sub-band plane.
@@ -149,7 +149,7 @@ class BuildDcrCoadd(GenerateTemplate):
         ValueError
             If  no valid exposures are found in `input_repository` and `exposures` is not set.
         """
-        self.filter_name = band_name
+        self.filter_name = filter_name
         self.default_repository = input_repository
         self.instrument = instrument
         self.butler = None  # Placeholder. The butler is instantiated in read_exposures.
@@ -189,16 +189,16 @@ class BuildDcrCoadd(GenerateTemplate):
         self.psf = None
         self.mask = self._combine_masks()
 
-        bandpass = self.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
+        bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
         if n_step is not None:
             wavelength_step = (bandpass.wavelen_max - bandpass.wavelen_min) / n_step
-            bandpass = self.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
+            bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
         else:
             n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
         if n_step >= self.n_images:
             print("Warning! Under-constrained system. Reducing number of frequency planes.")
             wavelength_step *= n_step / self.n_images
-            bandpass = self.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
+            bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
             n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
         self.n_step = n_step
         self.bandpass = bandpass
@@ -212,7 +212,7 @@ class BuildDcrCoadd(GenerateTemplate):
             Sets self.psf with a lsst.meas.algorithms KernelPsf object.
         """
         n_step = 1
-        bandpass = self.load_bandpass(band_name=self.filter_name, wavelength_step=None)
+        bandpass = self.load_bandpass(filter_name=self.filter_name, wavelength_step=None)
         n_pix = self.psf_size**2
         psf_mat = np.zeros(self.n_images*self.psf_size**2)
         for exp_i, exp in enumerate(self.exposures):
