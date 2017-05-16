@@ -305,6 +305,8 @@ class GenerateTemplate:
             dataId_out = self._build_dataId(obsid, self.filter_name, instrument=self.instrument)[0]
         elif data_type == "dcrCoadd":
             dataId_out = self._build_model_dataId(self.filter_name, subfilter)
+        elif data_type == "deepCoadd":
+            dataId_out = self._build_model_dataId(self.filter_name)
         elif data_type == "src":
             dataId_out = self._build_dataId(obsid, self.filter_name, instrument=self.instrument)[0]
         else:
@@ -446,6 +448,7 @@ class GenerateTemplate:
             inverse_var[variance > 0] = 1.
 
         mask = exposure.getMaskedImage().getMask()
+        # Mask all pixels with any flag other than 'DETECTED' set
         detected_bit = mask.getPlaneBitMask('DETECTED')
         ind_cut = (mask.getArray() | detected_bit) != detected_bit
         inverse_var[ind_cut] = 0.
@@ -743,8 +746,8 @@ class GenerateTemplate:
                            end=refract_end_pixels*np.cos(rotation_angle.asRadians()))
                 yield dcr(dx=dx, dy=dy)
 
-    def create_exposure(self, array, elevation, azimuth, variance=None, era=None, snap=0,
-                        exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanAngle,
+    def create_exposure(self, array, elevation, azimuth, variance=None, mask=None, bbox=None,
+                        exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanAngle, era=None, snap=0,
                         weather=lsst_weather, **kwargs):
         """Convert a numpy array to an LSST exposure with all the required metadata.
 
@@ -766,6 +769,8 @@ class GenerateTemplate:
             If not set it will be calculated from the latitude, longitude, RA, Dec, and elevation angle
         snap : int, optional
             Snap ID to add to the metadata of the exposure. Required to mimic Phosim output.
+        bbox : None, optional
+            Bounding box of the exposure. If ``None`` will be set to ``self.bbox``
         exposureId : int, optional
             Observation ID of the exposure, a long int.
         ra : lsst.afw.geom Angle, optional
@@ -778,14 +783,18 @@ class GenerateTemplate:
             Class containing the measured temperature, pressure, and humidity
             at the observatory during an observation
             Weather data is read from the exposure metadata if not supplied.
-        **kwargs :
+        **kwargs
             Any additional keyword arguments will be added to the metadata of the exposure.
 
         Returns
         -------
         lsst.afw.image.ExposureF object
         """
-        exposure = afwImage.ExposureF(self.bbox)
+        if bbox is None:
+            bbox = self.bbox
+        if mask is None:
+            mask = self.mask
+        exposure = afwImage.ExposureF(bbox)
         exposure.setWcs(self.wcs)
         # We need the filter name in the exposure metadata, and it can't just be set directly
         try:
@@ -810,8 +819,7 @@ class GenerateTemplate:
             variance = np.abs(array)
         exposure.getMaskedImage().getVariance().getArray()[:, :] = variance
 
-        if self.mask is not None:
-            exposure.getMaskedImage().getMask().getArray()[:, :] = self.mask
+        exposure.getMaskedImage().getMask().getArray()[:, :] = mask
         ha_term1 = np.sin(elevation.asRadians())
         ha_term2 = np.sin(dec.asRadians())*np.sin(self.observatory.getLatitude().asRadians())
         ha_term3 = np.cos(dec.asRadians())*np.cos(self.observatory.getLatitude().asRadians())
@@ -873,14 +881,30 @@ class GenerateTemplate:
         -------
         None
         """
+        skyMap = self.butler.get("dcrCoadd_skyMap")
+        tract = 0
+        patch = (0, 0)
+        patchInfo = skyMap[tract].getPatchInfo(patch)
+        patch_bbox = patchInfo.getOuterBBox()
         wave_gen = self._wavelength_iterator(self.bandpass, use_midpoint=False)
         variance = np.zeros_like(self.weights)
         variance[self.weights > 0] = 1./self.weights[self.weights > 0]
+        reference_image = np.sum(self.model, axis=0)
+        image_use, var_use, mask_use = _resize_image(reference_image, variance, self.mask, self.bbox,
+                                                     patch_bbox, expand=True)
+        ref_exp = self.create_exposure(image_use, variance=var_use, mask=mask_use, bbox=patch_bbox,
+                                       elevation=Angle(np.pi/2), azimuth=Angle(0),
+                                       telescop=self.instrument)
+        self.write_exposure(ref_exp, output_repository=model_repository, data_type="deepCoadd")
         variance /= self.n_step
         for f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
 
-            exp = self.create_exposure(self.model[f], variance=variance,
+            image_use, var_use, mask_use = _resize_image(self.model[f], variance, self.mask,
+                                                         bbox_old=self.bbox, bbox_new=patch_bbox,
+                                                         expand=True)
+
+            exp = self.create_exposure(image_use, variance=var_use, mask=mask_use, bbox=patch_bbox,
                                        elevation=Angle(np.pi/2), azimuth=Angle(0),
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
                                        telescop=self.instrument)
@@ -909,14 +933,19 @@ class GenerateTemplate:
         model_arr = []
         dcrCoadd_gen = self.read_exposures(data_type="dcrCoadd", input_repository=model_repository)
         for dcrCoadd in dcrCoadd_gen:
-            model_arr.append(dcrCoadd.getMaskedImage().getImage().getArray())
+            model_in = dcrCoadd.getMaskedImage().getImage().getArray()
+            var_in = dcrCoadd.getMaskedImage().getVariance().getArray()
+            mask_in = dcrCoadd.getMaskedImage().getMask().getArray()
+            model_use, var_use, mask_use = _resize_image(model_in, var_in, mask_in,
+                                                         bbox_old=dcrCoadd.getBBox(), expand=False)
+            model_arr.append(model_use)
 
         self.model = model_arr
         self.n_step = len(self.model)
         # The weights should be identical for all subfilters.
-        self.weights = dcrCoadd.getMaskedImage().getVariance().getArray()*self.n_step
+        self.weights = var_use*self.n_step
         # The masks should be identical for all subfilters
-        self.mask = dcrCoadd.getMaskedImage().getMask().getArray()
+        self.mask = mask_use
 
         self.wcs = dcrCoadd.getWcs()
         self.n_step = len(self.model)
@@ -1179,3 +1208,27 @@ def _kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False):
                 else:
                     kernel += (np.sin(x)/x)*(np.sin(x/lanczos)/(x/lanczos))
     return kernel/n_substep
+
+
+def _resize_image(image, variance, mask, bbox_old, bbox_new=None, bitmask=255, expand=True):
+    """Temporary function to resize an image to match a given bounding box."""
+    if bbox_new is None:
+        x_full, y_full = bbox_old.getDimensions()
+        x_size = np.sum([((mask[:, i] & bitmask) == 0).any() for i in range(x_full)])
+        y_size = np.sum([((mask[j, :] & bitmask) == 0).any() for j in range(y_full)])
+        bbox_new = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(x_size, y_size))
+    image_return = np.zeros(bbox_new.getDimensions(), dtype=image.dtype)
+    variance_return = np.zeros(bbox_new.getDimensions(), dtype=variance.dtype)
+    mask_return = np.zeros(bbox_new.getDimensions(), dtype=mask.dtype) + bitmask
+
+    if expand:
+        slice_inds = bbox_old.getSlices()
+        image_return[slice_inds] = image
+        variance_return[slice_inds] = variance
+        mask_return[slice_inds] = mask
+    else:
+        slice_inds = bbox_new.getSlices()
+        image_return = image[slice_inds]
+        variance_return = variance[slice_inds]
+        mask_return = mask[slice_inds]
+    return (image_return, variance_return, mask_return)
