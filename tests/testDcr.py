@@ -45,10 +45,10 @@ class DCRTestCase(lsst.utils.tests.TestCase):
 
     def setUp(self):
         """Define parameters used by every test."""
-        band_name = 'g'
+        filter = 'g'
         wavelength_step = 10.0  # nanometers
         self.pixel_scale = Angle(afwGeom.arcsecToRad(0.25))  # angle/pixel
-        self.bandpass = BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
+        self.bandpass = BasicBandpass(filter=filter, wavelength_step=wavelength_step)
 
     def tearDown(self):
         """Clean up."""

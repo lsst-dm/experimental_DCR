@@ -117,7 +117,7 @@ class GenerateTemplate:
         Height of the model, in pixels.
     """
 
-    def __init__(self, model_repository=None, band_name='g', butler=None, **kwargs):
+    def __init__(self, model_repository=None, filter='g', butler=None, **kwargs):
         """Restore a persisted DCR model created with BuildDcrModel.
 
         Only run when restoring a model or for testing; otherwise superceded by BuildDcrModel __init__.
@@ -126,7 +126,7 @@ class GenerateTemplate:
         ----------
         model_repository : None, optional
             Path to the repository where the previously-generated DCR model is stored.
-        band_name : str, optional
+        filter : str, optional
             Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
         butler : None, lsst.daf.persistence Butler object
             Optionally pass in a pre-initialized butler to manage persistence to and from a repository.
@@ -135,7 +135,7 @@ class GenerateTemplate:
         """
         self.butler = butler
         self.default_repository = model_repository
-        self.load_model(model_repository=model_repository, band_name=band_name, **kwargs)
+        self.load_model(model_repository=model_repository, filter=filter, **kwargs)
 
     def generate_templates_from_model(self, obsids=None, exposures=None,
                                       input_repository=None, output_repository=None,
@@ -562,13 +562,13 @@ class GenerateTemplate:
         return(afwImage.makeWcs(crval, crpix, cd1_1, cd1_2, cd2_1, cd2_2))
 
     @staticmethod
-    def load_bandpass(band_name='g', wavelength_step=None, use_mirror=True, use_lens=True, use_atmos=True,
+    def load_bandpass(filter='g', wavelength_step=None, use_mirror=True, use_lens=True, use_atmos=True,
                       use_filter=True, use_detector=True):
         """Load in Bandpass object from sims_photUtils.
 
         Parameters
         ----------
-        band_name : str, optional
+        filter : str, optional
             Common name of the filter used. For LSST, use u, g, r, i, z, or y
         wavelength_step : float, optional
             Wavelength resolution in nm, also the wavelength range of each sub-band plane.
@@ -627,7 +627,7 @@ class GenerateTemplate:
         """
         band_dict = {'u': (324.0, 395.0), 'g': (405.0, 552.0), 'r': (552.0, 691.0),
                      'i': (818.0, 921.0), 'z': (922.0, 997.0), 'y': (975.0, 1075.0)}
-        band_range = band_dict[band_name]
+        band_range = band_dict[filter]
         if wavelength_step is None:
             wavelength_step = band_range[1] - band_range[0]
         bandpass = BandpassMod(wavelen_min=band_range[0], wavelen_max=band_range[1],
@@ -637,7 +637,7 @@ class GenerateTemplate:
         mirror_list = ['baseline/m1.dat', 'baseline/m2.dat', 'baseline/m3.dat']
         atmos_list = ['atmos/atmos_11.dat']
         detector_list = ['baseline/detector.dat']
-        filter_list = ['baseline/filter_' + band_name + '.dat']
+        filter_list = ['baseline/filter_' + filter + '.dat']
         component_list = []
         if use_mirror:
             component_list += mirror_list
@@ -910,7 +910,7 @@ class GenerateTemplate:
                                        telescop=self.instrument)
             self.write_exposure(exp, output_repository=model_repository, data_type="dcrCoadd", subfilter=f)
 
-    def load_model(self, model_repository=None, band_name='g',
+    def load_model(self, model_repository=None, filter='g',
                    instrument='lsstSim', **kwargs):
         """Depersist a DCR model from a repository and set up the metadata.
 
@@ -919,7 +919,7 @@ class GenerateTemplate:
         model_repository : None, optional
             Full path to the directory of the repository to load the ``dcrCoadd`` from.
             If not set, uses the existing self.butler
-        band_name : str, optional
+        filter : str, optional
             Common name of the filter used. For LSST, use u, g, r, i, z, or y
         **kwargs :
             Any additional keyword arguments to pass to ``load_bandpass``
@@ -929,7 +929,7 @@ class GenerateTemplate:
         None, but loads self.model and sets up all the needed quantities such as the psf and bandpass objects.
         """
         self.instrument = instrument
-        self.filter = band_name
+        self.filter = filter
         model_arr = []
         dcrCoadd_gen = self.read_exposures(data_type="dcrCoadd", input_repository=model_repository)
         for dcrCoadd in dcrCoadd_gen:
@@ -956,9 +956,9 @@ class GenerateTemplate:
         self.exposure_time = dcrCoadd.getInfo().getVisitInfo().getExposureTime()
         self.observatory = dcrCoadd.getInfo().getVisitInfo().getObservatory()
         self.bbox = dcrCoadd.getBBox()
-        bandpass_init = self.load_bandpass(band_name=band_name, **kwargs)
+        bandpass_init = self.load_bandpass(filter=filter, **kwargs)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / self.n_step
-        self.bandpass = self.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
+        self.bandpass = self.load_bandpass(filter=filter, wavelength_step=wavelength_step, **kwargs)
 
         self.psf = dcrCoadd.getPsf()
         psf_avg = self.psf.computeKernelImage().getArray()

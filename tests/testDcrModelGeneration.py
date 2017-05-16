@@ -52,7 +52,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
     @classmethod
     def setUpClass(self):
         """Define parameters used by every test."""
-        band_name = 'g'
+        filter = 'g'
         self.n_step = 3
         self.n_images = 5
 
@@ -63,7 +63,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
             dataId = {'visit': exp_i, 'raft': '2,2', 'sensor': '1,1', 'filter': 'g'}
             exposures.append(butler.get("calexp", dataId=dataId))
         # Use BasicBuildDcrCoadd here to save execution time.
-        self.dcrCoadd = BasicBuildDcrCoadd(band_name=band_name, n_step=self.n_step, exposures=exposures)
+        self.dcrCoadd = BasicBuildDcrCoadd(filter=filter, n_step=self.n_step, exposures=exposures)
         self.ref_vals = []
         detected_bit = self.dcrCoadd.exposures[0].getMaskedImage().getMask().getPlaneBitMask('DETECTED')
         for exp in self.dcrCoadd.exposures:

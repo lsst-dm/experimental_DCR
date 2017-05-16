@@ -34,7 +34,7 @@ class BandpassTestCase(lsst.utils.tests.TestCase):
 
     Attributes
     ----------
-    band_name : str
+    filter : str
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
     bandpass : lsst.sims.photUtils.Bandpass object
         Bandpass object returned by load_bandpass
@@ -45,9 +45,9 @@ class BandpassTestCase(lsst.utils.tests.TestCase):
 
     def setUp(self):
         """Define parameters used by every test."""
-        self.band_name = 'g'
+        self.filter = 'g'
         self.wavelength_step = 10.
-        self.bandpass = BasicGenerateTemplate.load_bandpass(band_name=self.band_name,
+        self.bandpass = BasicGenerateTemplate.load_bandpass(filter=self.filter,
                                                             wavelength_step=self.wavelength_step)
 
     def test_step_bandpass(self):
