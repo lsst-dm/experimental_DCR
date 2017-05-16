@@ -62,7 +62,7 @@ class BuildDcrCoadd(GenerateTemplate):
         Length of the exposure, in seconds.
     exposures : list
         List of input exposures used to calculate the model.
-    filter_name : str
+    filter : str
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
     instrument : str
         Name of the observatory. Used to format dataIds for the butler.
@@ -149,7 +149,7 @@ class BuildDcrCoadd(GenerateTemplate):
         ValueError
             If  no valid exposures are found in `input_repository` and `exposures` is not set.
         """
-        self.filter_name = band_name
+        self.filter = band_name
         self.default_repository = input_repository
         self.instrument = instrument
         self.butler = None  # Placeholder. The butler is instantiated in read_exposures.
@@ -212,7 +212,7 @@ class BuildDcrCoadd(GenerateTemplate):
             Sets self.psf with a lsst.meas.algorithms KernelPsf object.
         """
         n_step = 1
-        bandpass = self.load_bandpass(band_name=self.filter_name, wavelength_step=None)
+        bandpass = self.load_bandpass(band_name=self.filter, wavelength_step=None)
         n_pix = self.psf_size**2
         psf_mat = np.zeros(self.n_images*self.psf_size**2)
         for exp_i, exp in enumerate(self.exposures):

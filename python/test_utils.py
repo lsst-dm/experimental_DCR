@@ -78,7 +78,7 @@ class BasicGenerateTemplate(GenerateTemplate):
         Full path to repository with the data.
     exposure_time : float
         Length of the exposure, in seconds.
-    filter_name : str
+    filter : str
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
     instrument : str
         Name of the observatory. Used to format dataIds for the butler.
@@ -148,7 +148,7 @@ class BasicGenerateTemplate(GenerateTemplate):
         self.pixel_scale = pixel_scale
         self.psf_size = 5
         self.exposure_time = exposure_time
-        self.filter_name = band_name
+        self.filter = band_name
         self.observatory = lsst_observatory
         self.bbox = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(size, size))
         self.wcs = self._create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=Angle(0.),
@@ -184,7 +184,7 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
         Length of the exposure, in seconds.
     exposures : list
         List of input exposures used to calculate the model.
-    filter_name : str
+    filter : str
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
     instrument : str
         Name of the observatory. Used to format dataIds for the butler.
@@ -229,7 +229,7 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
         self.mask = None
         self.model_base = None
         self.instrument = 'lsstSim'
-        self.filter_name = band_name
+        self.filter = band_name
 
         self.exposures = exposures
 

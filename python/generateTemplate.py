@@ -85,7 +85,7 @@ class GenerateTemplate:
         Full path to repository with the data.
     exposure_time : float
         Length of the exposure, in seconds.
-    filter_name : str
+    filter : str
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
         Filter names are restricted by the filter profiles stored in lsst.sims.photUtils.Bandpass.
         If other filters are used, the profiles should be provided with a new Bandpass class.
@@ -253,11 +253,11 @@ class GenerateTemplate:
         if butler is None:
             raise ValueError("Can't initialize butler: input_repository not set.")
         if data_type == "calexp":
-            dataIds = self._build_dataId(obsids, self.filter_name, instrument=self.instrument)
+            dataIds = self._build_dataId(obsids, self.filter, instrument=self.instrument)
         elif data_type == "dcrCoadd":
             # We want to read in all of the model planes, but we don't know ahead of time how many there are.
             max_ids = 100
-            dataId_test = (self._build_model_dataId(self.filter_name, subfilter=f) for f in range(max_ids))
+            dataId_test = (self._build_model_dataId(self.filter, subfilter=f) for f in range(max_ids))
             dataIds = []
             for dataId in dataId_test:
                 if butler.datasetExists("dcrCoadd", dataId=dataId):
@@ -265,7 +265,7 @@ class GenerateTemplate:
                 else:
                     break
         elif data_type == "src":
-            dataIds = self._build_dataId(obsids, self.filter_name, instrument=self.instrument)
+            dataIds = self._build_dataId(obsids, self.filter, instrument=self.instrument)
         else:
             raise ValueError("Invalid `data_type`")
         for dataId in dataIds:
@@ -302,13 +302,13 @@ class GenerateTemplate:
         if obsid is None:
             obsid = exposure.getInfo().getVisitInfo().getExposureId()
         if data_type == "calexp":
-            dataId_out = self._build_dataId(obsid, self.filter_name, instrument=self.instrument)[0]
+            dataId_out = self._build_dataId(obsid, self.filter, instrument=self.instrument)[0]
         elif data_type == "dcrCoadd":
-            dataId_out = self._build_model_dataId(self.filter_name, subfilter)
+            dataId_out = self._build_model_dataId(self.filter, subfilter)
         elif data_type == "deepCoadd":
-            dataId_out = self._build_model_dataId(self.filter_name)
+            dataId_out = self._build_model_dataId(self.filter)
         elif data_type == "src":
-            dataId_out = self._build_dataId(obsid, self.filter_name, instrument=self.instrument)[0]
+            dataId_out = self._build_dataId(obsid, self.filter, instrument=self.instrument)[0]
         else:
             raise ValueError("Invalid `data_type`")
         if output_repository is not None:
@@ -798,12 +798,12 @@ class GenerateTemplate:
         exposure.setWcs(self.wcs)
         # We need the filter name in the exposure metadata, and it can't just be set directly
         try:
-            exposure.setFilter(afwImage.Filter(self.filter_name))
+            exposure.setFilter(afwImage.Filter(self.filter))
         except:
             filterPolicy = pexPolicy.Policy()
             filterPolicy.add("lambdaEff", self.bandpass.calc_eff_wavelen())
-            afwImage.Filter.define(afwImage.FilterProperty(self.filter_name, filterPolicy))
-            exposure.setFilter(afwImage.Filter(self.filter_name))
+            afwImage.Filter.define(afwImage.FilterProperty(self.filter, filterPolicy))
+            exposure.setFilter(afwImage.Filter(self.filter))
             # Need to reset afwImage.Filter to prevent an error in future calls to daf_persistence.Butler
             afwImage.FilterProperty.reset()
         if self.debug:
@@ -929,7 +929,7 @@ class GenerateTemplate:
         None, but loads self.model and sets up all the needed quantities such as the psf and bandpass objects.
         """
         self.instrument = instrument
-        self.filter_name = band_name
+        self.filter = band_name
         model_arr = []
         dcrCoadd_gen = self.read_exposures(data_type="dcrCoadd", input_repository=model_repository)
         for dcrCoadd in dcrCoadd_gen:
