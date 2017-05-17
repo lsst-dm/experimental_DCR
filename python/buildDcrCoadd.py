@@ -64,8 +64,6 @@ class BuildDcrCoadd(GenerateTemplate):
         List of input exposures used to calculate the model.
     filter : str
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-    instrument : str
-        Name of the observatory. Used to format dataIds for the butler.
     mask : np.ndarray
         Combined bit plane mask of the model, which is used as the mask plane for generated templates.
     model : list of np.ndarrays
@@ -116,7 +114,7 @@ class BuildDcrCoadd(GenerateTemplate):
 
     def __init__(self, obsids=None, input_repository='.', filter='g',
                  wavelength_step=10., n_step=None, exposures=None,
-                 warp=False, instrument='lsstSim', debug_mode=False, **kwargs):
+                 warp=False, debug_mode=False, **kwargs):
         """Load images from the repository and set up parameters.
 
         Parameters
@@ -137,8 +135,6 @@ class BuildDcrCoadd(GenerateTemplate):
         warp : bool, optional
             Set to true if the exposures have different wcs from the model.
             If True, the generated templates will be warped to match the wcs of each exposure.
-        instrument : str, optional
-            Name of the observatory.
         debug_mode : bool, optional
             Temporary debugging option.
         **kwargs : TYPE
@@ -151,7 +147,6 @@ class BuildDcrCoadd(GenerateTemplate):
         """
         self.filter = filter
         self.default_repository = input_repository
-        self.instrument = instrument
         self.butler = None  # Placeholder. The butler is instantiated in read_exposures.
         if exposures is None:
             exposures = self.read_exposures(obsids, input_repository=input_repository)
