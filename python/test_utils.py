@@ -80,8 +80,6 @@ class BasicGenerateTemplate(GenerateTemplate):
         Length of the exposure, in seconds.
     filter_name : str
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-    instrument : str
-        Name of the observatory. Used to format dataIds for the butler.
     mask : np.ndarray
         Mask plane of the model. This mask is saved as the mask plane of the template exposure.
     model : list of np.ndarrays
@@ -133,7 +131,6 @@ class BasicGenerateTemplate(GenerateTemplate):
         self.butler = None
         self.default_repository = None
         self.debug = False
-        self.instrument = 'lsstSim'
 
         bandpass_init = BasicBandpass(filter_name=filter_name, wavelength_step=wavelength_step)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
@@ -186,8 +183,6 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
         List of input exposures used to calculate the model.
     filter_name : str
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-    instrument : str
-        Name of the observatory. Used to format dataIds for the butler.
     mask : np.ndarray
         Combined bit plane mask of the model, which is used as the mask plane for generated templates.
     model_base : np.ndarray
@@ -228,7 +223,6 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
         self.debug = False
         self.mask = None
         self.model_base = None
-        self.instrument = 'lsstSim'
         self.filter_name = filter_name
 
         self.exposures = exposures

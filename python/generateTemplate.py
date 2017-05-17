@@ -89,8 +89,6 @@ class GenerateTemplate:
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
         Filter names are restricted by the filter profiles stored in lsst.sims.photUtils.Bandpass.
         If other filters are used, the profiles should be provided with a new Bandpass class.
-    instrument : str
-        Name of the observatory. Used to format dataIds for the butler.
     mask : np.ndarray
         Mask plane of the model. This mask is saved as the mask plane of the template exposure.
     model : list of np.ndarrays
@@ -139,7 +137,7 @@ class GenerateTemplate:
 
     def generate_templates_from_model(self, obsids=None, exposures=None,
                                       input_repository=None, output_repository=None,
-                                      instrument='lsstSim', warp=False, verbose=True,
+                                      warp=False, verbose=True,
                                       output_obsid_offset=None):
         """Use the previously generated model and construct a dcr template image.
 
@@ -158,8 +156,6 @@ class GenerateTemplate:
         output_repository : str, optional
             Path to repository directory where templates will be saved.
             The templates will not be written to disk if ``output_repository`` is None.
-        instrument : str, optional
-            Name of the observatory.
         warp : bool, optional
             Set to true if the exposures have different wcs from the model.
             If True, the generated templates will be warped to match the wcs of each exposure.
@@ -180,8 +176,6 @@ class GenerateTemplate:
         ValueError
             If a butler has not been previously instantiated and input_repository is not supplied.
         """
-        self.instrument = instrument
-
         if self.psf is None:
             self.calc_psf_model()
 
@@ -509,16 +503,8 @@ class GenerateTemplate:
         # Determine the keys needed for the given datasetType
         idKeyTypeDict = butler.getKeys(datasetType=datasetType, level=level)
 
-<<<<<<< HEAD
-    @staticmethod
-    def _build_model_dataId(band, subfilter=None):
-        """Construct a dataId dictionary for the butler to find a dcrCoadd.
         # Load default values. This is a hack, and should go away once DM-9616 is completed.
         default_keys = {'filter': self.filter_name, 'tract': 0, 'patch': '0,0',
-=======
-        # Load default values. This is a hack, and should go away once DM-9616 is completed.
-        default_keys = {'filter': self.filter, 'tract': 0, 'patch': '0,0',
->>>>>>> 27f39df... Use butler.subset to create instrument-agnostic dataRefs.
                         'raft': '2,2', 'sensor': '1,1', 'ccdnum': 10}
 
         key_dict = {}
@@ -893,8 +879,7 @@ class GenerateTemplate:
         image_use, var_use, mask_use = _resize_image(reference_image, variance, self.mask, self.bbox,
                                                      patch_bbox, expand=True)
         ref_exp = self.create_exposure(image_use, variance=var_use, mask=mask_use, bbox=patch_bbox,
-                                       elevation=Angle(np.pi/2), azimuth=Angle(0),
-                                       telescop=self.instrument)
+                                       elevation=Angle(np.pi/2), azimuth=Angle(0))
         self.write_exposure(ref_exp, output_repository=model_repository, datasetType="deepCoadd")
         variance /= self.n_step
         for f in range(self.n_step):
@@ -906,12 +891,15 @@ class GenerateTemplate:
 
             exp = self.create_exposure(image_use, variance=var_use, mask=mask_use, bbox=patch_bbox,
                                        elevation=Angle(np.pi/2), azimuth=Angle(0),
-                                       subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end,
-                                       telescop=self.instrument)
+                                       subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end)
             self.write_exposure(exp, output_repository=model_repository, datasetType="dcrCoadd", subfilter=f)
 
+<<<<<<< HEAD
     def load_model(self, model_repository=None, filter_name='g',
                    instrument='lsstSim', **kwargs):
+=======
+    def load_model(self, model_repository=None, filter='g', **kwargs):
+>>>>>>> c44b3b0... Remove all references to ‘instrument’.
         """Depersist a DCR model from a repository and set up the metadata.
 
         Parameters
@@ -928,8 +916,12 @@ class GenerateTemplate:
         -------
         None, but loads self.model and sets up all the needed quantities such as the psf and bandpass objects.
         """
+<<<<<<< HEAD
         self.instrument = instrument
         self.filter_name = filter_name
+=======
+        self.filter = filter
+>>>>>>> c44b3b0... Remove all references to ‘instrument’.
         model_arr = []
         dcrCoadd_gen = self.read_exposures(datasetType="dcrCoadd", input_repository=model_repository)
         for dcrCoadd in dcrCoadd_gen:
