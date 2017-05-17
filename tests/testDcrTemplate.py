@@ -49,31 +49,6 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
     def tearDownClass(self):
         del self.butler
 
-    def test_dataId_single(self):
-        """Test that the dataId for the `calexp` data type is correct for a single observation."""
-        id_ref = 100
-        band_ref = 'g'
-        ref_id = {'visit': id_ref, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
-        dataId = BasicGenerateTemplate._build_dataId(id_ref, band_ref)
-        self.assertEqual(ref_id, dataId[0])
-
-    def test_dataId_list(self):
-        """Test that the dataIds for the `calexp` data type are correct for a list of observations."""
-        id_ref = [100, 103]
-        band_ref = 'g'
-        dataId = BasicGenerateTemplate._build_dataId(id_ref, band_ref)
-        for i, obsid in enumerate(id_ref):
-            ref_dataid = {'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
-            self.assertEqual(ref_dataid, dataId[i])
-
-    def test_model_dataId(self):
-        """Test that the dataIds for the `dcrCoadd` data type are correct."""
-        subfilter = 1
-        band_ref = 'g'
-        ref_id = {'filter': band_ref, 'tract': 0, 'patch': '0,0', 'subfilter': subfilter}
-        dataId = BasicGenerateTemplate._build_model_dataId(band_ref, subfilter=subfilter)
-        self.assertEqual(ref_id, dataId)
-
     def test_simple_phase_kernel(self):
         """Compare the result of _calc_offset_phase to previously computed values."""
         data_file = "test_data/simple_phase_kernel.npy"

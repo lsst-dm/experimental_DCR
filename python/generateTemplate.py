@@ -253,23 +253,32 @@ class GenerateTemplate:
         if butler is None:
             raise ValueError("Can't initialize butler: input_repository not set.")
         if datasetType == "calexp":
-            dataIds = self._build_dataId(obsids, self.filter, instrument=self.instrument)
+            if hasattr(obsids, '__iter__'):
+                obsids_list = obsids
+            else:
+                obsids_list = [obsids]
+            refList = [self.makeDataRef(datasetType, butler=butler, visit=obs) for obs in obsids_list]
         elif datasetType == "dcrCoadd":
             # We want to read in all of the model planes, but we don't know ahead of time how many there are.
-            max_ids = 100
-            dataId_test = (self._build_model_dataId(self.filter, subfilter=f) for f in range(max_ids))
-            dataIds = []
-            for dataId in dataId_test:
-                if butler.datasetExists("dcrCoadd", dataId=dataId):
-                    dataIds.append(dataId)
+            max_subfilters = 100
+            refList = []
+            for s in range(max_subfilters):
+                dataRef = self.makeDataRef(datasetType, butler=butler, subfilter=s)
+                if dataRef.datasetExists():
+                    refList.append(dataRef)
                 else:
                     break
         elif datasetType == "src":
-            dataIds = self._build_dataId(obsids, self.filter, instrument=self.instrument)
+            if hasattr(obsids, '__iter__'):
+                obsids_list = obsids
+            else:
+                obsids_list = [obsids]
+            refList = [self.makeDataRef(datasetType, butler=butler, filter=self.filter, visit=obs)
+                       for obs in obsids_list]
         else:
             raise ValueError("Invalid `datasetType`")
-        for dataId in dataIds:
-            yield butler.get(datasetType, dataId=dataId)
+        for dataRef in refList:
+            yield dataRef.get()
 
     def write_exposure(self, exposure, output_repository=None, datasetType="calexp",
                        subfilter=None, obsid=None):
@@ -301,21 +310,21 @@ class GenerateTemplate:
         """
         if obsid is None:
             obsid = exposure.getInfo().getVisitInfo().getExposureId()
-        if datasetType == "calexp":
-            dataId_out = self._build_dataId(obsid, self.filter, instrument=self.instrument)[0]
-        elif datasetType == "dcrCoadd":
-            dataId_out = self._build_model_dataId(self.filter, subfilter)
-        elif datasetType == "deepCoadd":
-            dataId_out = self._build_model_dataId(self.filter)
-        elif datasetType == "src":
-            dataId_out = self._build_dataId(obsid, self.filter, instrument=self.instrument)[0]
-        else:
-            raise ValueError("Invalid `datasetType`")
         if output_repository is not None:
             butler = daf_persistence.Butler(outputs=output_repository)
         else:
             butler = self.butler
-        butler.put(exposure, datasetType, dataId=dataId_out)
+        if datasetType == "calexp":
+            dataRef = self.makeDataRef(datasetType, butler=butler, visit=obsid)
+        elif datasetType == "dcrCoadd":
+            dataRef = self.makeDataRef(datasetType, butler=butler, subfilter=subfilter)
+        elif datasetType == "deepCoadd":
+            dataRef = self.makeDataRef(datasetType, butler=butler)
+        elif datasetType == "src":
+            dataRef = self.makeDataRef(datasetType, butler=butler, visit=obsid)
+        else:
+            raise ValueError("Invalid `datasetType`")
+        dataRef.put(exposure)
 
     def build_matched_template(self, exposure=None, model=None, el=None, rotation_angle=None,
                                return_weights=True, weather=None):
@@ -478,59 +487,42 @@ class GenerateTemplate:
         else:
             return (img_vals, inverse_var)
 
-    @staticmethod
-    def _build_dataId(obsids, band, instrument='lsstSim'):
-        """Construct a dataId dictionary for the butler to find a calexp.
+    def makeDataRef(self, datasetType, butler=None, level=None, **kwargs):
+        """Construct a dataRef to a repository from the given data IDs.
 
         Parameters
         ----------
-        obsids : int, or list of ints
-            The observation IDs of the data to load.
-        band : str
-            Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-        instrument : str, optional
-            Name of the observatory.
+        datasetType : str
+            The type of dataset to get keys for, entire collection if None.
+        level : None, optional
+            The hierarchy level for the butler to descend to. None if it should not be restricted.
+        **kwargs
+            Pass in the data IDs relevant for the datasetType.
 
         Returns
         -------
-        Return a list of dataIds for the butler to use to load a calexp from a repository
+        lsst.daf.persistence.Butler subset
+            Data reference that can be used to persist and depersist data from a repository.
         """
-        if instrument == 'lsstSim':
-            if hasattr(obsids, '__iter__'):
-                dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                          for obsid in obsids]
-            else:
-                dataId = [{'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band}
-                          for obsid in [obsids]]
-        elif instrument == 'decam':
-            if hasattr(obsids, '__iter__'):
-                dataId = [{'visit': obsid, 'ccdnum': 10}
-                          for obsid in obsids]
-            else:
-                dataId = [{'visit': obsid, 'ccdnum': 10}
-                          for obsid in [obsids]]
-        return dataId
+        if butler is None:
+            butler = self.butler
+        # Determine the keys needed for the given datasetType
+        idKeyTypeDict = butler.getKeys(datasetType=datasetType, level=level)
 
-    @staticmethod
-    def _build_model_dataId(band, subfilter=None):
-        """Construct a dataId dictionary for the butler to find a dcrCoadd.
+        # Load default values. This is a hack, and should go away once DM-9616 is completed.
+        default_keys = {'filter': self.filter, 'tract': 0, 'patch': '0,0',
+                        'raft': '2,2', 'sensor': '1,1', 'ccdnum': 10}
 
-        Parameters
-        ----------
-        band : str
-            Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-        subfilter : int, optional
-            DCR model index within the band.
+        key_dict = {}
+        for key in idKeyTypeDict:
+            try:
+                key_dict[key] = kwargs[key]
+            except KeyError:
+                key_dict[key] = default_keys[key]
 
-        Returns
-        -------
-        Return a dataId for the butler to use to load a dcrCoadd from a repository
-        """
-        if subfilter is None:
-            dataId = {'filter': band, 'tract': 0, 'patch': '0,0'}
-        else:
-            dataId = {'filter': band, 'tract': 0, 'patch': '0,0', 'subfilter': subfilter}
-        return(dataId)
+        dataId = daf_persistence.DataId(**key_dict)
+        dataRef = list(butler.subset(datasetType=datasetType, level=level, dataId=dataId))
+        return dataRef[0]
 
     @staticmethod
     def _create_wcs(bbox, pixel_scale, ra, dec, sky_rotation):
