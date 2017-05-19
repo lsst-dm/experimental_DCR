@@ -918,6 +918,7 @@ class GenerateTemplate:
                                                      patch_bbox, expand=True)
         ref_exp = self.create_exposure(image_use, variance=var_use, mask=mask_use, bbox=patch_bbox,
                                        elevation=Angle(np.pi/2), azimuth=Angle(0))
+        ref_exp.getMaskedImage().getMask().addMaskPlane("CLIPPED")
         self.write_exposure(ref_exp, output_repository=model_repository, datasetType="deepCoadd")
         variance /= self.n_step
         for f in range(self.n_step):
@@ -930,6 +931,7 @@ class GenerateTemplate:
             exp = self.create_exposure(image_use, variance=var_use, mask=mask_use, bbox=patch_bbox,
                                        elevation=Angle(np.pi/2), azimuth=Angle(0),
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end)
+            exp.getMaskedImage().getMask().addMaskPlane("CLIPPED")
             self.write_exposure(exp, output_repository=model_repository, datasetType="dcrCoadd", subfilter=f)
 
     def load_model(self, model_repository=None, filter_name='g', **kwargs):
