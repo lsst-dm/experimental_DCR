@@ -279,6 +279,7 @@ class DcrCoaddTestBase:
         self.array = np.float32(rand_gen.random(size=(size, size)))
         self.dcrTemplate = BasicGenerateTemplate(size=size, filter_name=filter_name,
                                                  n_step=n_step, pixel_scale=pixel_scale)
+        self.dcrTemplate.create_skyMap(doWrite=False)
         dec = self.dcrTemplate.wcs.getSkyOrigin().getLatitude()
         ra = self.dcrTemplate.wcs.getSkyOrigin().getLongitude()
         self.azimuth = Angle(np.radians(140.0))

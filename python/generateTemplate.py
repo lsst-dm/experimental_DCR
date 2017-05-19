@@ -36,10 +36,13 @@ import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 from lsst.daf.base import DateTime
 import lsst.daf.persistence as daf_persistence
+from lsst.geom import convexHull as convexHull
 import lsst.meas.algorithms as measAlg
 # import lsst.pex.exceptions
 import lsst.pex.policy as pexPolicy
+from lsst.pipe.tasks import coaddBase
 from lsst.sims.photUtils import Bandpass
+from lsst.skymap import DiscreteSkyMap
 from lsst.utils import getPackageDir
 
 from .lsst_defaults import lsst_observatory, lsst_weather
@@ -305,7 +308,8 @@ class GenerateTemplate:
         if obsid is None:
             obsid = exposure.getInfo().getVisitInfo().getExposureId()
         if output_repository is not None:
-            butler = daf_persistence.Butler(outputs=output_repository)
+            # Need to also specify ``inputs`` to be able to query the butler for the required keys.
+            butler = daf_persistence.Butler(outputs=output_repository, inputs=output_repository)
         else:
             butler = self.butler
         if datasetType == "calexp":
@@ -732,6 +736,41 @@ class GenerateTemplate:
                            end=refract_end_pixels*np.cos(rotation_angle.asRadians()))
                 yield dcr(dx=dx, dy=dy)
 
+    def create_skyMap(self, butler=None, doWrite=True):
+        """Create a skyMap that is matched to the dcrCoadd.
+
+        Parameters
+        ----------
+        butler : lsst.daf.persistence Butler object, optional
+            The butler handles persisting and depersisting data to and from a repository.
+        doWrite : bool, optional
+            Set to True to persist the skyMap with the butler.
+
+        Returns
+        -------
+        None
+            Sets ``self.skyMap`` and persists ``skyMap`` to the repository if ``doWrite=True`` is set.
+        """
+        if butler is None:
+            butler = self.butler
+        datasetName = "dcrCoadd_skyMap"
+        skyMapConfig = DiscreteSkyMap.ConfigClass()
+        skyMapConfig.update(pixelScale=self.pixel_scale.asArcseconds())
+        skyMapConfig.update(patchInnerDimensions=[self.y_size, self.x_size])
+
+        boxI = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.Extent2I(self.y_size, self.x_size))
+        boxD = afwGeom.Box2D(boxI)
+        points = [tuple(self.wcs.pixelToSky(corner).getVector()) for corner in boxD.getCorners()]
+        polygon = convexHull(points)
+        circle = polygon.getBoundingCircle()
+
+        skyMapConfig.raList.append(circle.center[0])
+        skyMapConfig.decList.append(circle.center[1])
+        skyMapConfig.radiusList.append(circle.radius)
+        self.skyMap = DiscreteSkyMap(skyMapConfig)
+        if doWrite:
+            butler.put(self.skyMap, datasetName)
+
     def create_exposure(self, array, elevation, azimuth, variance=None, mask=None, bbox=None,
                         exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanAngle, era=None, snap=0,
                         weather=lsst_weather, **kwargs):
@@ -867,10 +906,9 @@ class GenerateTemplate:
         -------
         None
         """
-        skyMap = self.butler.get("dcrCoadd_skyMap")
         tract = 0
         patch = (0, 0)
-        patchInfo = skyMap[tract].getPatchInfo(patch)
+        patchInfo = self.skyMap[tract].getPatchInfo(patch)
         patch_bbox = patchInfo.getOuterBBox()
         wave_gen = self._wavelength_iterator(self.bandpass, use_midpoint=False)
         variance = np.zeros_like(self.weights)
@@ -894,12 +932,7 @@ class GenerateTemplate:
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end)
             self.write_exposure(exp, output_repository=model_repository, datasetType="dcrCoadd", subfilter=f)
 
-<<<<<<< HEAD
-    def load_model(self, model_repository=None, filter_name='g',
-                   instrument='lsstSim', **kwargs):
-=======
-    def load_model(self, model_repository=None, filter='g', **kwargs):
->>>>>>> c44b3b0... Remove all references to ‘instrument’.
+    def load_model(self, model_repository=None, filter_name='g', **kwargs):
         """Depersist a DCR model from a repository and set up the metadata.
 
         Parameters
@@ -916,12 +949,7 @@ class GenerateTemplate:
         -------
         None, but loads self.model and sets up all the needed quantities such as the psf and bandpass objects.
         """
-<<<<<<< HEAD
-        self.instrument = instrument
         self.filter_name = filter_name
-=======
-        self.filter = filter
->>>>>>> c44b3b0... Remove all references to ‘instrument’.
         model_arr = []
         dcrCoadd_gen = self.read_exposures(datasetType="dcrCoadd", input_repository=model_repository)
         for dcrCoadd in dcrCoadd_gen:
@@ -939,15 +967,17 @@ class GenerateTemplate:
         # The masks should be identical for all subfilters
         self.mask = mask_use
 
-        self.wcs = dcrCoadd.getWcs()
+        skyInfo = coaddBase.getSkyInfo("dcr", self.makeDataRef("dcrCoadd", subfilter=0))
+        self.skyMap = skyInfo.skyMap
+        self.wcs = skyInfo.wcs
+        self.bbox = skyInfo.patchInfo.getInnerBBox()
+        y_size, x_size = self.bbox.getDimensions()
         self.n_step = len(self.model)
-        y_size, x_size = dcrCoadd.getDimensions()
         self.x_size = x_size
         self.y_size = y_size
         self.pixel_scale = self.wcs.pixelScale()
         self.exposure_time = dcrCoadd.getInfo().getVisitInfo().getExposureTime()
         self.observatory = dcrCoadd.getInfo().getVisitInfo().getObservatory()
-        self.bbox = dcrCoadd.getBBox()
         bandpass_init = self.load_bandpass(filter_name=filter_name, **kwargs)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / self.n_step
         self.bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)

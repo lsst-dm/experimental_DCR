@@ -115,6 +115,8 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
     def test_persist_dcr_model_roundtrip(self):
         """Test that an exposure can be persisted and later depersisted from a repository."""
         self.dcrTemplate.butler = self.butler
+        # Uncomment the following code to over-write the reference data:
+        # self.dcrTemplate.create_skyMap()
         self.dcrTemplate.export_model()
 
         # First test that the model values are not changed from what is expected
@@ -132,6 +134,10 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
         # If the parameters are present, now check that they have the correct values.
         # Note that this only tests floats, np.ndarrays, and strings.
         for key in param_ref:
+            if key == "skyMap":
+                print("Skipping key: skyMap")
+                # Note: the skyMap object can't be checked properly, but the attempt takes a VERY long time.
+                continue
             val_new = param_new.get(key)
             val_ref = param_ref.get(key)
             valid_float = False
