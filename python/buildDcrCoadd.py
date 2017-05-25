@@ -34,10 +34,10 @@ from .dcr_utils import wrap_warpExposure
 from .dcr_utils import solve_model
 from .generateTemplate import GenerateTemplate
 
-__all__ = ["BuildDcrModel"]
+__all__ = ["BuildDcrCoadd"]
 
 
-class BuildDcrModel(GenerateTemplate):
+class BuildDcrCoadd(GenerateTemplate):
     """Class that loads LSST calibrated exposures and produces airmass-matched template images.
 
     Input exposures are read with a butler, and an initial model is made by coadding the images.
@@ -64,8 +64,6 @@ class BuildDcrModel(GenerateTemplate):
         List of input exposures used to calculate the model.
     filter_name : str
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-    instrument : str
-        Name of the observatory. Used to format dataIds for the butler.
     mask : np.ndarray
         Combined bit plane mask of the model, which is used as the mask plane for generated templates.
     model : list of np.ndarrays
@@ -98,14 +96,14 @@ class BuildDcrModel(GenerateTemplate):
     -------
 
     Set up:
-    dcrModel = BuildDcrModel(n_step=3, input_repository="./test_data/",
-                             obsids=np.arange(100, 124, 3), band_name='g')
+    dcrCoadd = BuildDcrCoadd(n_step=3, input_repository="./test_data/",
+                             obsids=np.arange(100, 124, 3), filter_name='g')
 
     Generate the model:
-    dcrModel.build_model(max_iter=10)
+    dcrCoadd.build_model(max_iter=10)
 
     Use the model to make matched templates for several observations:
-    template_exposure_gen = dcrModel.generate_templates_from_model(obsids=[108, 109, 110],
+    template_exposure_gen = dcrCoadd.generate_templates_from_model(obsids=[108, 109, 110],
                                                                    output_repository="./test_data_templates/")
     im_arr = []
     for exp in template_exposure_gen:
@@ -114,9 +112,9 @@ class BuildDcrModel(GenerateTemplate):
         im_arr.append(exp.getMaskedImage().getImage().getArray())
     """
 
-    def __init__(self, obsids=None, input_repository='.', band_name='g',
+    def __init__(self, obsids=None, input_repository='.', filter_name='g',
                  wavelength_step=10., n_step=None, exposures=None,
-                 warp=False, instrument='lsstSim', debug_mode=False, **kwargs):
+                 warp=False, debug_mode=False, **kwargs):
         """Load images from the repository and set up parameters.
 
         Parameters
@@ -125,20 +123,18 @@ class BuildDcrModel(GenerateTemplate):
             The observation IDs of the data to load. Not used if `exposures` is set.
         input_repository : str, optional
             Full path to repository with the data. Defaults to working directory
-        band_name : str, optional
+        filter_name : str, optional
             Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
         wavelength_step : float, optional
             Wavelength resolution in nm, also the wavelength range of each sub-band plane.
             Overridden if `n_step` is supplied.
         n_step : int, optional
             Number of sub-band planes to use. Takes precendence over `wavelength_step`.
-        exposures : List of lsst.afw.image.ExposureD objects, optional
+        exposures : List of lsst.afw.image.ExposureF objects, optional
             List of exposures to use to calculate the model.
         warp : bool, optional
             Set to true if the exposures have different wcs from the model.
             If True, the generated templates will be warped to match the wcs of each exposure.
-        instrument : str, optional
-            Name of the observatory.
         debug_mode : bool, optional
             Temporary debugging option.
         **kwargs : TYPE
@@ -149,9 +145,8 @@ class BuildDcrModel(GenerateTemplate):
         ValueError
             If  no valid exposures are found in `input_repository` and `exposures` is not set.
         """
-        self.filter_name = band_name
+        self.filter_name = filter_name
         self.default_repository = input_repository
-        self.instrument = instrument
         self.butler = None  # Placeholder. The butler is instantiated in read_exposures.
         if exposures is None:
             exposures = self.read_exposures(obsids, input_repository=input_repository)
@@ -189,16 +184,16 @@ class BuildDcrModel(GenerateTemplate):
         self.psf = None
         self.mask = self._combine_masks()
 
-        bandpass = self.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
+        bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
         if n_step is not None:
             wavelength_step = (bandpass.wavelen_max - bandpass.wavelen_min) / n_step
-            bandpass = self.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
+            bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
         else:
             n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
         if n_step >= self.n_images:
             print("Warning! Under-constrained system. Reducing number of frequency planes.")
             wavelength_step *= n_step / self.n_images
-            bandpass = self.load_bandpass(band_name=band_name, wavelength_step=wavelength_step, **kwargs)
+            bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
             n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
         self.n_step = n_step
         self.bandpass = bandpass
@@ -212,7 +207,7 @@ class BuildDcrModel(GenerateTemplate):
             Sets self.psf with a lsst.meas.algorithms KernelPsf object.
         """
         n_step = 1
-        bandpass = self.load_bandpass(band_name=self.filter_name, wavelength_step=None)
+        bandpass = self.load_bandpass(filter_name=self.filter_name, wavelength_step=None)
         n_pix = self.psf_size**2
         psf_mat = np.zeros(self.n_images*self.psf_size**2)
         for exp_i, exp in enumerate(self.exposures):
@@ -484,6 +479,7 @@ class BuildDcrModel(GenerateTemplate):
                 img_residual = img - last_model
                 residual_shift = scipy_shift(img_residual, inv_shift)
                 inv_var_shift = scipy_shift(inverse_var, inv_shift)
+                inv_var_shift[inv_var_shift < 0] = 0.
 
                 residual_arr[f] += residual_shift*inv_var_shift  # *weights_shift
                 inverse_var_arr[f] += inv_var_shift

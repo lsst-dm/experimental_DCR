@@ -33,46 +33,21 @@ from python.dcr_utils import wrap_warpExposure
 from python.dcr_utils import calculate_rotation_angle
 from python.generateTemplate import GenerateTemplate
 from python.test_utils import BasicGenerateTemplate
-from python.test_utils import DcrModelTestBase
+from python.test_utils import DcrCoaddTestBase
 
 
-class DcrTemplateTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
+class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
     """Tests for the functions in the GenerateTemplate class."""
 
     @classmethod
     def setUpClass(self):
         """Set up one instance of the butler for all tests of persistence."""
         self.repository = "./test_data/"
-        self.butler = daf_persistence.Butler(inputs=self.repository)
+        self.butler = daf_persistence.Butler(inputs=self.repository, outputs=self.repository)
 
     @classmethod
     def tearDownClass(self):
         del self.butler
-
-    def test_dataId_single(self):
-        """Test that the dataId for the `calexp` data type is correct for a single observation."""
-        id_ref = 100
-        band_ref = 'g'
-        ref_id = {'visit': id_ref, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
-        dataId = BasicGenerateTemplate._build_dataId(id_ref, band_ref)
-        self.assertEqual(ref_id, dataId[0])
-
-    def test_dataId_list(self):
-        """Test that the dataIds for the `calexp` data type are correct for a list of observations."""
-        id_ref = [100, 103]
-        band_ref = 'g'
-        dataId = BasicGenerateTemplate._build_dataId(id_ref, band_ref)
-        for i, obsid in enumerate(id_ref):
-            ref_dataid = {'visit': obsid, 'raft': '2,2', 'sensor': '1,1', 'filter': band_ref}
-            self.assertEqual(ref_dataid, dataId[i])
-
-    def test_model_dataId(self):
-        """Test that the dataIds for the `dcrModel` data type are correct."""
-        subfilter = 1
-        band_ref = 'g'
-        ref_id = {'filter': band_ref, 'tract': 0, 'patch': '0', 'subfilter': subfilter}
-        dataId = BasicGenerateTemplate._build_model_dataId(band_ref, subfilter=subfilter)
-        self.assertEqual(ref_id, dataId)
 
     def test_simple_phase_kernel(self):
         """Compare the result of _calc_offset_phase to previously computed values."""
@@ -140,6 +115,8 @@ class DcrTemplateTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
     def test_persist_dcr_model_roundtrip(self):
         """Test that an exposure can be persisted and later depersisted from a repository."""
         self.dcrTemplate.butler = self.butler
+        # Uncomment the following code to over-write the reference data:
+        # self.dcrTemplate.create_skyMap()
         self.dcrTemplate.export_model()
 
         # First test that the model values are not changed from what is expected
@@ -157,6 +134,10 @@ class DcrTemplateTestCase(DcrModelTestBase, lsst.utils.tests.TestCase):
         # If the parameters are present, now check that they have the correct values.
         # Note that this only tests floats, np.ndarrays, and strings.
         for key in param_ref:
+            if key == "skyMap":
+                print("Skipping key: skyMap")
+                # Note: the skyMap object can't be checked properly, but the attempt takes a VERY long time.
+                continue
             val_new = param_new.get(key)
             val_ref = param_ref.get(key)
             valid_float = False

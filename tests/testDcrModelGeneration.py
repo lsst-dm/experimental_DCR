@@ -31,15 +31,15 @@ import lsst.daf.persistence as daf_persistence
 import lsst.utils.tests
 
 from python.dcr_utils import solve_model
-from python.test_utils import BasicBuildDcrModel
+from python.test_utils import BasicBuildDcrCoadd
 
 
-class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
+class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
     """Tests for functions and methods that are primarily used for calculating the DCR model.
 
     Attributes
     ----------
-    dcrModel : `BuildDcrModel`
+    dcrCoadd : `BuildDcrCoadd`
         Class that loads LSST calibrated exposures and produces airmass-matched template images.
     n_images : int
         Number of input images used to calculate the model.
@@ -52,7 +52,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
     @classmethod
     def setUpClass(self):
         """Define parameters used by every test."""
-        band_name = 'g'
+        filter_name = 'g'
         self.n_step = 3
         self.n_images = 5
 
@@ -60,33 +60,33 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         exposures = []
         n_exp = 6
         for exp_i in range(n_exp):
-            dataId = {'visit': exp_i, 'raft': '2,2', 'sensor': '1,1', 'filter': 'g'}
+            dataId = {'visit': exp_i, 'raft': '2,2', 'sensor': '1,1', 'filter_name': 'g'}
             exposures.append(butler.get("calexp", dataId=dataId))
-        # Use BasicBuildDcrModel here to save execution time.
-        self.dcrModel = BasicBuildDcrModel(band_name=band_name, n_step=self.n_step, exposures=exposures)
+        # Use BasicBuildDcrCoadd here to save execution time.
+        self.dcrCoadd = BasicBuildDcrCoadd(filter_name=filter_name, n_step=self.n_step, exposures=exposures)
         self.ref_vals = []
-        detected_bit = self.dcrModel.exposures[0].getMaskedImage().getMask().getPlaneBitMask('DETECTED')
-        for exp in self.dcrModel.exposures:
+        detected_bit = self.dcrCoadd.exposures[0].getMaskedImage().getMask().getPlaneBitMask('DETECTED')
+        for exp in self.dcrCoadd.exposures:
             exp.getMaskedImage().getMask().getArray()[:, :] = detected_bit
             self.ref_vals.append(exp.getMaskedImage().getImage().getArray())
 
     @classmethod
     def tearDownClass(self):
         """Clean up."""
-        del self.dcrModel
+        del self.dcrCoadd
 
     def test_extract_image(self):
         """Test that the extracted values are the same as `ref_vals`."""
-        for exp_i, exp in enumerate(self.dcrModel.exposures):
-            image, inverse_var = self.dcrModel._extract_image(exp, calculate_dcr_gen=False)
+        for exp_i, exp in enumerate(self.dcrCoadd.exposures):
+            image, inverse_var = self.dcrCoadd._extract_image(exp, calculate_dcr_gen=False)
             self.assertFloatsAlmostEqual(self.ref_vals[exp_i], image)
 
     def test_build_model(self):
         """Call build_model with as many options as possible turned off."""
         """Compare the result of build_model to previously computed values."""
         data_file = "test_data/build_model_vals.npy"
-        self.dcrModel.build_model(verbose=False)
-        model_vals = self.dcrModel.model
+        self.dcrCoadd.build_model(verbose=False)
+        model_vals = self.dcrCoadd.model
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, model_vals, allow_pickle=False)
         model_ref = np.load(data_file)
@@ -96,9 +96,9 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
     def test_build_matched_template(self):
         """Compare the image and variance plane of the template to previously computed values."""
         data_file = "test_data/build_matched_template_vals.npy"
-        exposure = self.dcrModel.exposures[0]
-        self.dcrModel.build_model(verbose=False)
-        template, variance = self.dcrModel.build_matched_template(exposure)
+        exposure = self.dcrCoadd.exposures[0]
+        self.dcrCoadd.build_model(verbose=False)
+        template, variance = self.dcrCoadd.build_matched_template(exposure)
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, (template, variance), allow_pickle=False)
         template_ref, variance_ref = np.load(data_file)
@@ -111,11 +111,11 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         rand_gen = np.random
         random_seed = 5
         rand_gen.seed(random_seed)
-        n_step = self.dcrModel.n_step
-        x_size = self.dcrModel.x_size
-        y_size = self.dcrModel.y_size
+        n_step = self.dcrCoadd.n_step
+        x_size = self.dcrCoadd.x_size
+        y_size = self.dcrCoadd.y_size
         last_solution = [rand_gen.random((y_size, x_size)) for f in range(n_step)]
-        new_solution, inverse_var_arr = self.dcrModel._calculate_new_model(last_solution)
+        new_solution, inverse_var_arr = self.dcrCoadd._calculate_new_model(last_solution)
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, (new_solution, inverse_var_arr), allow_pickle=False)
         new_solution_ref, inverse_var_arr_ref = np.load(data_file)
@@ -129,13 +129,13 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         clamp = 3.
         rand_gen = np.random
         rand_gen.seed(5)
-        n_step = self.dcrModel.n_step
-        x_size = self.dcrModel.x_size
-        y_size = self.dcrModel.y_size
+        n_step = self.dcrCoadd.n_step
+        x_size = self.dcrCoadd.x_size
+        y_size = self.dcrCoadd.y_size
         last_solution = [rand_gen.random((y_size, x_size)) for f in range(n_step)]
         new_solution = [10.*(rand_gen.random((y_size, x_size)) - 0.5) for f in range(n_step)]
         ref_solution = copy.deepcopy(new_solution)
-        self.dcrModel._clamp_model_solution(new_solution, last_solution, clamp)
+        self.dcrCoadd._clamp_model_solution(new_solution, last_solution, clamp)
         ref_max = np.max(ref_solution)
         ref_min = np.min(ref_solution)
         last_max = np.max(last_solution)
@@ -153,20 +153,20 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         metric_ref = np.array([0.0326935559509, 0.0299110529484, 0.0312179049219,
                                0.0347479542217, 0.0391646272523, 0.0421978103681])
         model = np.load(model_file)
-        metric = self.dcrModel.calc_model_metric(model=model)
+        metric = self.dcrCoadd.calc_model_metric(model=model)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)
 
     def test_build_model_convergence_failure(self):
         """Test that the iterative solver fails to converge if given a negative gain."""
-        did_converge = self.dcrModel._build_model_subroutine(initial_solution=1, verbose=False, gain=-2,
+        did_converge = self.dcrCoadd._build_model_subroutine(initial_solution=1, verbose=False, gain=-2,
                                                              test_convergence=True)
         self.assertFalse(did_converge)
 
     def test_calculate_psf(self):
         """Compare the result of calc_psf_model (run in setUp) to previously computed values."""
         data_file = "test_data/calculate_psf.npy"
-        self.dcrModel.calc_psf_model()
-        psf_new = self.dcrModel.psf.computeKernelImage().getArray()
+        self.dcrCoadd.calc_psf_model()
+        psf_new = self.dcrCoadd.psf.computeKernelImage().getArray()
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, psf_new, allow_pickle=False)
         psf_ref = np.load(data_file)
@@ -176,7 +176,7 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
         """Compare the result of _build_dcr_kernel to previously computed values."""
         data_file = "test_data/build_dcr_kernel_vals.npy"
         kernel_size = 5
-        kernel = self.dcrModel._build_dcr_kernel(kernel_size)
+        kernel = self.dcrCoadd._build_dcr_kernel(kernel_size)
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, kernel, allow_pickle=False)
         kernel_ref = np.load(data_file)
@@ -185,19 +185,19 @@ class DcrModelGenerationTestCase(lsst.utils.tests.TestCase):
     def test_solve_model(self):
         """Compare the result of _solve_model to previously computed values."""
         data_file = "test_data/solve_model_vals.npy"
-        y_size, x_size = self.dcrModel.exposures[0].getDimensions()
+        y_size, x_size = self.dcrCoadd.exposures[0].getDimensions()
         kernel_size = 5
-        n_step = self.dcrModel.n_step
+        n_step = self.dcrCoadd.n_step
         pix_radius = kernel_size//2
         # Make j and i different slightly so we can tell if the indices get swapped
         i = x_size//2 + 1
         j = y_size//2 - 1
         slice_inds = np.s_[j - pix_radius: j + pix_radius + 1, i - pix_radius: i + pix_radius + 1]
         image_arr = []
-        for exp in self.dcrModel.exposures:
+        for exp in self.dcrCoadd.exposures:
             image_arr.append(np.ravel(exp.getMaskedImage().getImage().getArray()[slice_inds]))
         image_vals = np.hstack(image_arr)
-        dcr_kernel = self.dcrModel._build_dcr_kernel(kernel_size)
+        dcr_kernel = self.dcrCoadd._build_dcr_kernel(kernel_size)
         model_vals_gen = solve_model(kernel_size, image_vals, n_step=n_step, kernel_dcr=dcr_kernel)
         model_arr = [model for model in model_vals_gen]
         # Uncomment the following code to over-write the reference data:

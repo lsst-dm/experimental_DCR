@@ -1,4 +1,4 @@
-"""Lightweight instances of the classes GenerateTemplate and BuildDcrModel for unit testing."""
+"""Lightweight instances of the classes GenerateTemplate and BuildDcrCoadd for unit testing."""
 # LSST Data Management System
 # Copyright 2016 LSST Corporation.
 #
@@ -29,22 +29,22 @@ import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
 from .generateTemplate import GenerateTemplate
-from .buildDcrModel import BuildDcrModel
+from .buildDcrCoadd import BuildDcrCoadd
 from .dcr_utils import parallactic_angle
 from .lsst_defaults import lsst_observatory
 
-__all__ = ["BasicBandpass", "BasicGenerateTemplate", "BasicBuildDcrModel", "DcrModelTestBase"]
+__all__ = ["BasicBandpass", "BasicGenerateTemplate", "BasicBuildDcrCoadd", "DcrCoaddTestBase"]
 
 nanFloat = float("nan")
 nanAngle = Angle(nanFloat)
 
 
-def BasicBandpass(band_name='g', wavelength_step=1.):
+def BasicBandpass(filter_name='g', wavelength_step=1.):
     """Return a dummy bandpass object for testing.
 
     Parameters
     ----------
-    band_name : str, optional
+    filter_name : str, optional
         Common name of the filter used. For LSST, use u, g, r, i, z, or y
     wavelength_step : float, optional
         Wavelength resolution in nm, also the wavelength range of each sub-band plane.
@@ -54,7 +54,7 @@ def BasicBandpass(band_name='g', wavelength_step=1.):
     -------
     Returns a lsst.sims.photUtils.Bandpass object.
     """
-    bandpass = GenerateTemplate.load_bandpass(band_name=band_name, wavelength_step=wavelength_step,
+    bandpass = GenerateTemplate.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step,
                                               use_mirror=False, use_lens=False, use_atmos=False,
                                               use_filter=False, use_detector=False)
     return(bandpass)
@@ -80,12 +80,10 @@ class BasicGenerateTemplate(GenerateTemplate):
         Length of the exposure, in seconds.
     filter_name : str
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-    instrument : str
-        Name of the observatory. Used to format dataIds for the butler.
     mask : np.ndarray
         Mask plane of the model. This mask is saved as the mask plane of the template exposure.
     model : list of np.ndarrays
-        The DCR model to be used to generate templates, calculate with `BuildDcrModel.build_model`.
+        The DCR model to be used to generate templates, calculate with `BuildDcrCoadd.build_model`.
         Contains one array for each wavelength step.
     n_step : int
         Number of sub-filter wavelength planes to model.
@@ -101,14 +99,14 @@ class BasicGenerateTemplate(GenerateTemplate):
         World Coordinate System of the model.
     weights : np.ndarray
         Weights of the model. Calculated as the sum of the inverse variances of the input exposures to
-        `BuildDcrModel.build_model`. The same `weights` are used for each wavelength step of the `model`.
+        `BuildDcrCoadd.build_model`. The same `weights` are used for each wavelength step of the `model`.
     x_size : int
         Width of the model, in pixels.
     y_size : int
         Height of the model, in pixels.
     """
 
-    def __init__(self, size=None, n_step=3, band_name='g', exposure_time=30.,
+    def __init__(self, size=None, n_step=3, filter_name='g', exposure_time=30.,
                  pixel_scale=Angle(afwGeom.arcsecToRad(0.25)), wavelength_step=None):
         """Initialize the lightweight version of GenerateTemplate for testing.
 
@@ -118,7 +116,7 @@ class BasicGenerateTemplate(GenerateTemplate):
             Number of pixels on a side of the image and model.
         n_step : int, optional
             Number of sub-filter wavelength planes to model. Optional if `wavelength_step` supplied.
-        band_name : str, optional
+        filter_name : str, optional
             Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
         exposure_time : float, optional
             Length of the exposure, in seconds. Needed only for exporting to FITS.
@@ -133,11 +131,10 @@ class BasicGenerateTemplate(GenerateTemplate):
         self.butler = None
         self.default_repository = None
         self.debug = False
-        self.instrument = 'lsstSim'
 
-        bandpass_init = BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
+        bandpass_init = BasicBandpass(filter_name=filter_name, wavelength_step=wavelength_step)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
-        self.bandpass = BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
+        self.bandpass = BasicBandpass(filter_name=filter_name, wavelength_step=wavelength_step)
         self.model = [rand_gen.random(size=(size, size)) for f in range(n_step)]
         self.weights = np.ones((size, size))
         self.mask = np.zeros((size, size), dtype=np.int32)
@@ -148,7 +145,7 @@ class BasicGenerateTemplate(GenerateTemplate):
         self.pixel_scale = pixel_scale
         self.psf_size = 5
         self.exposure_time = exposure_time
-        self.filter_name = band_name
+        self.filter_name = filter_name
         self.observatory = lsst_observatory
         self.bbox = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(size, size))
         self.wcs = self._create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=Angle(0.),
@@ -164,8 +161,8 @@ class BasicGenerateTemplate(GenerateTemplate):
         self.psf = measAlg.KernelPsf(psfK)
 
 
-class BasicBuildDcrModel(BuildDcrModel):
-    """Dummy BuildDcrModel object for testing without a repository.
+class BasicBuildDcrCoadd(BuildDcrCoadd):
+    """Dummy BuildDcrCoadd object for testing without a repository.
 
     Attributes
     ----------
@@ -186,8 +183,6 @@ class BasicBuildDcrModel(BuildDcrModel):
         List of input exposures used to calculate the model.
     filter_name : str
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-    instrument : str
-        Name of the observatory. Used to format dataIds for the butler.
     mask : np.ndarray
         Combined bit plane mask of the model, which is used as the mask plane for generated templates.
     model_base : np.ndarray
@@ -211,12 +206,12 @@ class BasicBuildDcrModel(BuildDcrModel):
         Height of the model, in pixels.
     """
 
-    def __init__(self, band_name='g', n_step=3, exposures=None):
-        """Initialize the lightweight version of BuildDcrModel for testing.
+    def __init__(self, filter_name='g', n_step=3, exposures=None):
+        """Initialize the lightweight version of BuildDcrCoadd for testing.
 
         Parameters
         ----------
-        band_name : str, optional
+        filter_name : str, optional
             Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
         n_step : int, optional
             Number of sub-filter wavelength planes to model.
@@ -228,14 +223,13 @@ class BasicBuildDcrModel(BuildDcrModel):
         self.debug = False
         self.mask = None
         self.model_base = None
-        self.instrument = 'lsstSim'
-        self.filter_name = band_name
+        self.filter_name = filter_name
 
         self.exposures = exposures
 
-        bandpass_init = BasicBandpass(band_name=band_name, wavelength_step=None)
+        bandpass_init = BasicBandpass(filter_name=filter_name, wavelength_step=None)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
-        self.bandpass = BasicBandpass(band_name=band_name, wavelength_step=wavelength_step)
+        self.bandpass = BasicBandpass(filter_name=filter_name, wavelength_step=wavelength_step)
         self.n_step = n_step
         self.n_images = len(exposures)
         y_size, x_size = exposures[0].getDimensions()
@@ -250,7 +244,7 @@ class BasicBuildDcrModel(BuildDcrModel):
         self.psf_size = psf.shape[0]
 
 
-class DcrModelTestBase:
+class DcrCoaddTestBase:
     """Base class many unit tests can inherit from to simplify setup.
 
     Attributes
@@ -273,7 +267,7 @@ class DcrModelTestBase:
 
     def setUp(self):
         """Define parameters used by every test."""
-        band_name = 'g'
+        filter_name = 'g'
         n_step = 3
         pixel_scale = Angle(afwGeom.arcsecToRad(0.25))
         size = 20
@@ -282,9 +276,10 @@ class DcrModelTestBase:
         random_seed = 3
         rand_gen = np.random
         rand_gen.seed(random_seed)
-        self.array = rand_gen.random(size=(size, size))
-        self.dcrTemplate = BasicGenerateTemplate(size=size, band_name=band_name,
+        self.array = np.float32(rand_gen.random(size=(size, size)))
+        self.dcrTemplate = BasicGenerateTemplate(size=size, filter_name=filter_name,
                                                  n_step=n_step, pixel_scale=pixel_scale)
+        self.dcrTemplate.create_skyMap(doWrite=False)
         dec = self.dcrTemplate.wcs.getSkyOrigin().getLatitude()
         ra = self.dcrTemplate.wcs.getSkyOrigin().getLongitude()
         self.azimuth = Angle(np.radians(140.0))
