@@ -756,9 +756,9 @@ class GenerateTemplate:
         datasetName = "dcrCoadd_skyMap"
         skyMapConfig = DiscreteSkyMap.ConfigClass()
         skyMapConfig.update(pixelScale=self.pixel_scale.asArcseconds())
-        skyMapConfig.update(patchInnerDimensions=[self.y_size, self.x_size])
+        skyMapConfig.update(patchInnerDimensions=[self.x_size, self.y_size])
 
-        boxI = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.Extent2I(self.y_size, self.x_size))
+        boxI = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.Extent2I(self.x_size, self.y_size))
         boxD = afwGeom.Box2D(boxI)
         points = [tuple(self.wcs.pixelToSky(corner).getVector()) for corner in boxD.getCorners()]
         polygon = convexHull(points)
@@ -1237,13 +1237,15 @@ def _kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False):
 def _resize_image(image, variance, mask, bbox_old, bbox_new=None, bitmask=255, expand=True):
     """Temporary function to resize an image to match a given bounding box."""
     if bbox_new is None:
-        x_full, y_full = bbox_old.getDimensions()
+        x_full = bbox_old.getDimensions().getX()
+        y_full = bbox_old.getDimensions().getY()
         x_size = np.sum([((mask[:, i] & bitmask) == 0).any() for i in range(x_full)])
         y_size = np.sum([((mask[j, :] & bitmask) == 0).any() for j in range(y_full)])
         bbox_new = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(x_size, y_size))
-    image_return = np.zeros(bbox_new.getDimensions(), dtype=image.dtype)
-    variance_return = np.zeros(bbox_new.getDimensions(), dtype=variance.dtype)
-    mask_return = np.zeros(bbox_new.getDimensions(), dtype=mask.dtype) + bitmask
+    shape = (bbox_new.getDimensions().getY(), bbox_new.getDimensions().getX())
+    image_return = np.zeros(shape, dtype=image.dtype)
+    variance_return = np.zeros(shape, dtype=variance.dtype)
+    mask_return = np.zeros(shape, dtype=mask.dtype) + bitmask
 
     if expand:
         slice_inds = bbox_old.getSlices()
