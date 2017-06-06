@@ -193,6 +193,8 @@ class GenerateTemplate:
             wcs_exp = calexp.getInfo().getWcs()
             el = visitInfo.getBoresightAzAlt().getLatitude()
             az = visitInfo.getBoresightAzAlt().getLongitude()
+            ra = visitInfo.getBoresightRaDec().getLongitude()
+            dec = visitInfo.getBoresightRaDec().getLatitude()
             rotation_angle = calculate_rotation_angle(calexp)
             weather = visitInfo.getWeather()
             template, variance = self.build_matched_template(calexp, el=el, rotation_angle=rotation_angle,
@@ -205,7 +207,7 @@ class GenerateTemplate:
                 obsid_out = obsid + output_obsid_offset
             else:
                 obsid_out = obsid
-            exposure = self.create_exposure(template, variance=variance, snap=0,
+            exposure = self.create_exposure(template, variance=variance, snap=0, ra=ra, dec=dec,
                                             boresightRotAngle=rotation_angle, weather=weather,
                                             elevation=el, azimuth=az, exposureId=obsid_out)
             if warp:
@@ -857,6 +859,7 @@ class GenerateTemplate:
         meta.add("CHIPID", "R22_S11")
         # Required! Phosim output stores the snap ID in "OUTFILE" as the last three characters in a string.
         meta.add("OUTFILE", ("SnapId_%3.3i" % snap))
+        meta.add("OBSID", int(exposureId))
 
         meta.add("TAI", mjd)
         meta.add("MJD-OBS", mjd)
