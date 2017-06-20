@@ -184,6 +184,13 @@ class GenerateTemplate:
 
         if exposures is None:
             exposures = self.read_exposures(obsids, input_repository=input_repository)
+
+        if output_repository is not None:
+            # Need to also specify ``inputs`` to be able to query the butler for the required keys.
+            butler = daf_persistence.Butler(outputs=output_repository, inputs=output_repository)
+        else:
+            butler = self.butler
+
         for calexp in exposures:
             visitInfo = calexp.getInfo().getVisitInfo()
             obsid = visitInfo.getExposureId()
@@ -213,7 +220,7 @@ class GenerateTemplate:
             if warp:
                 wrap_warpExposure(exposure, wcs_exp, bbox_exp)
             if output_repository is not None:
-                self.write_exposure(exposure, output_repository=output_repository)
+                self.write_exposure(exposure, butler=butler)
             yield exposure
 
     def read_exposures(self, obsids=None, input_repository=None, datasetType="calexp"):
@@ -279,23 +286,22 @@ class GenerateTemplate:
         for dataRef in refList:
             yield dataRef.get()
 
-    def write_exposure(self, exposure, output_repository=None, datasetType="calexp",
-                       subfilter=None, obsid=None):
+    def write_exposure(self, exposure, datasetType="calexp", subfilter=None, obsid=None, butler=None):
         """Persist data using a butler.
 
         Parameters
         ----------
         exposure : lsst.afw.image.ExposureF object
             The exposure to be persisted to the given repository.
-        output_repository : str, optional
-            If specified, initialize a new butler set to write to the given ``output_repository``.
-            Otherwise, the previously initialized butler is used.
         datasetType : str, optional
             The type of data to be persisted. Expected values are ``'calexp'`` or ``'dcrCoadd'``
         subfilter : int, optional
             The DCR model subfilter index, only used for ```datasetType`='dcrCoadd'``
         obsid : int, optional
             Observation ID of the data to persist.
+        butler : None, lsst.daf.persistence Butler object
+            Optionally pass in a pre-initialized butler to manage persistence to and from a repository.
+            If not set, self.butler is used.
 
         Returns
         -------
@@ -309,10 +315,7 @@ class GenerateTemplate:
         """
         if obsid is None:
             obsid = exposure.getInfo().getVisitInfo().getExposureId()
-        if output_repository is not None:
-            # Need to also specify ``inputs`` to be able to query the butler for the required keys.
-            butler = daf_persistence.Butler(outputs=output_repository, inputs=output_repository)
-        else:
+        if butler is None:
             butler = self.butler
         if datasetType == "calexp":
             dataRef = self.makeDataRef(datasetType, butler=butler, visit=obsid)
@@ -880,10 +883,16 @@ class GenerateTemplate:
         -------
         None
         """
+        if model_repository is not None:
+            # Need to also specify ``inputs`` to be able to query the butler for the required keys.
+            butler = daf_persistence.Butler(outputs=model_repository, inputs=model_repository)
+        else:
+            butler = self.butler
         tract = 0
         patch = (0, 0)
         patchInfo = self.skyMap[tract].getPatchInfo(patch)
         patch_bbox = patchInfo.getOuterBBox()
+
         wave_gen = self._wavelength_iterator(self.bandpass, use_midpoint=False)
         variance = np.zeros_like(self.weights)
         variance[self.weights > 0] = 1./self.weights[self.weights > 0]
@@ -893,7 +902,7 @@ class GenerateTemplate:
         ref_exp = self.create_exposure(image_use, variance=var_use, mask=mask_use, bbox=patch_bbox,
                                        elevation=Angle(np.pi/2), azimuth=Angle(0))
         ref_exp.getMaskedImage().getMask().addMaskPlane("CLIPPED")
-        self.write_exposure(ref_exp, output_repository=model_repository, datasetType="deepCoadd")
+        self.write_exposure(ref_exp, datasetType="deepCoadd", butler=butler)
         variance /= self.n_step
         for f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
@@ -906,7 +915,7 @@ class GenerateTemplate:
                                        elevation=Angle(np.pi/2), azimuth=Angle(0),
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end)
             exp.getMaskedImage().getMask().addMaskPlane("CLIPPED")
-            self.write_exposure(exp, output_repository=model_repository, datasetType="dcrCoadd", subfilter=f)
+            self.write_exposure(exp, datasetType="dcrCoadd", subfilter=f, butler=butler)
 
     def load_model(self, model_repository=None, filter_name='g', **kwargs):
         """Depersist a DCR model from a repository and set up the metadata.
