@@ -136,6 +136,8 @@ class GenerateTemplate:
         """
         self.butler = butler
         self.default_repository = model_repository
+        self.bbox = None
+        self.wcs = None
         self.load_model(model_repository=model_repository, filter_name=filter_name, **kwargs)
 
     def generate_templates_from_model(self, obsids=None, exposures=None,
@@ -216,9 +218,12 @@ class GenerateTemplate:
                 obsid_out = obsid
             exposure = self.create_exposure(template, variance=variance, snap=0, ra=ra, dec=dec,
                                             boresightRotAngle=rotation_angle, weather=weather,
-                                            elevation=el, azimuth=az, exposureId=obsid_out)
+                                            elevation=el, azimuth=az, exposureId=obsid_out,
+                                            psf=calexp.getPsf())
             if warp:
                 wrap_warpExposure(exposure, wcs_exp, bbox_exp)
+            else:
+                exposure.setWcs(wcs_exp)
             if output_repository is not None:
                 self.write_exposure(exposure, butler=butler)
             yield exposure
@@ -903,6 +908,7 @@ class GenerateTemplate:
                                        elevation=Angle(np.pi/2), azimuth=Angle(0))
         ref_exp.getMaskedImage().getMask().addMaskPlane("CLIPPED")
         self.write_exposure(ref_exp, datasetType="deepCoadd", butler=butler)
+        butler.put(self.skyMap, "dcrCoadd_skyMap")
         variance /= self.n_step
         for f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
@@ -917,7 +923,7 @@ class GenerateTemplate:
             exp.getMaskedImage().getMask().addMaskPlane("CLIPPED")
             self.write_exposure(exp, datasetType="dcrCoadd", subfilter=f, butler=butler)
 
-    def load_model(self, model_repository=None, filter_name='g', **kwargs):
+    def load_model(self, model_repository=None, filter_name='g', warp=False, **kwargs):
         """Depersist a DCR model from a repository and set up the metadata.
 
         Parameters
@@ -938,10 +944,12 @@ class GenerateTemplate:
         model_arr = []
         dcrCoadd_gen = self.read_exposures(datasetType="dcrCoadd", input_repository=model_repository)
         for dcrCoadd in dcrCoadd_gen:
+            if warp:
+                wrap_warpExposure(dcrCoadd, self.wcs, self.bbox)
             model_in = dcrCoadd.getMaskedImage().getImage().getArray()
             var_in = dcrCoadd.getMaskedImage().getVariance().getArray()
             mask_in = dcrCoadd.getMaskedImage().getMask().getArray()
-            model_use, var_use, mask_use = _resize_image(model_in, var_in, mask_in,
+            model_use, var_use, mask_use = _resize_image(model_in, var_in, mask_in, bbox_new=self.bbox,
                                                          bbox_old=dcrCoadd.getBBox(), expand=False)
             model_arr.append(model_use)
 
@@ -954,9 +962,10 @@ class GenerateTemplate:
 
         skyInfo = coaddBase.getSkyInfo("dcr", self.makeDataRef("dcrCoadd", subfilter=0))
         self.skyMap = skyInfo.skyMap
-        self.wcs = skyInfo.wcs
+
+        self.wcs = dcrCoadd.getWcs()
         self.bbox = skyInfo.patchInfo.getInnerBBox()
-        y_size, x_size = self.bbox.getDimensions()
+        x_size, y_size = self.bbox.getDimensions()
         self.n_step = len(self.model)
         self.x_size = x_size
         self.y_size = y_size
