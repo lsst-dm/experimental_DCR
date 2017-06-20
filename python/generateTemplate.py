@@ -525,35 +525,6 @@ class GenerateTemplate:
         return dataRef[0]
 
     @staticmethod
-    def _create_wcs(bbox, pixel_scale, ra, dec, sky_rotation):
-        """Create a wcs (coordinate system).
-
-        Parameters
-        ----------
-        bbox : lsst.afw.geom.Box2I object
-            A bounding box.
-        pixel_scale : lsst.afw.geom.Angle
-            Plate scale, as an Angle.
-        ra : lsst.afw.geom.Angle
-            Right Ascension of the reference pixel, as an `Angle`.
-        dec : lsst.afw.geom.Angle
-            Declination of the reference pixel, as an Angle.
-        sky_rotation : lsst.afw.geom.Angle
-            Rotation of the image axis, East from North.
-
-        Returns
-        -------
-        Returns a lsst.afw.image.wcs object.
-        """
-        crval = IcrsCoord(ra, dec)
-        crpix = afwGeom.Box2D(bbox).getCenter()
-        cd1_1 = np.cos(sky_rotation.asRadians())*pixel_scale.asDegrees()
-        cd1_2 = -np.sin(sky_rotation.asRadians())*pixel_scale.asDegrees()
-        cd2_1 = np.sin(sky_rotation.asRadians())*pixel_scale.asDegrees()
-        cd2_2 = np.cos(sky_rotation.asRadians())*pixel_scale.asDegrees()
-        return(afwImage.makeWcs(crval, crpix, cd1_1, cd1_2, cd2_1, cd2_2))
-
-    @staticmethod
     def load_bandpass(filter_name='g', wavelength_step=None, use_mirror=True, use_lens=True, use_atmos=True,
                       use_filter=True, use_detector=True):
         """Load in Bandpass object from sims_photUtils.
