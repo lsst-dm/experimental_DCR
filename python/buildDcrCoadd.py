@@ -236,8 +236,9 @@ class BuildDcrCoadd(GenerateTemplate):
         self.psf = measAlg.KernelPsf(psfK)
 
     def build_model(self, verbose=True, max_iter=10, min_iter=None, gain=None, clamp=None,
-                    frequency_regularization=True, max_slope=None,
-                    test_convergence=False, convergence_threshold=None, use_variance=True):
+                    frequency_regularization=False, max_slope=None, initial_solution=None,
+                    test_convergence=False, convergence_threshold=None, use_variance=True,
+                    refine_solution=False):
         """Build a model of the sky in multiple sub-bands.
 
         Parameters
@@ -272,36 +273,49 @@ class BuildDcrCoadd(GenerateTemplate):
         use_variance : bool, optional
             Set to weight pixels by their inverse variance when combining images.
         """
-        if verbose:
-            print("Calculating initial solution...", end="")
-
         # Set up an initial guess with all model planes equal as a starting point of the iterative solution
         # The solution is initialized to 0. and not an array so that it can adapt
         # to the size of the array returned by _extract_image. This should only matter in debugging.
-        initial_solution = 0.
-        initial_weights = 0.
-        for exp in self.exposures:
-            img, inverse_var = self._extract_image(exp, airmass_weight=True, calculate_dcr_gen=False,
-                                                   use_variance=use_variance)
-            initial_solution += img*inverse_var
-            initial_weights += inverse_var
+        if initial_solution is None:
+            if verbose:
+                print("Calculating initial solution...", end="")
+            initial_solution = 0.
+            initial_weights = 0.
+            for exp in self.exposures:
+                img, inverse_var = self._extract_image(exp, airmass_weight=True, calculate_dcr_gen=False,
+                                                       use_variance=use_variance)
+                initial_solution += img*inverse_var
+                initial_weights += inverse_var
 
+            weight_inds = initial_weights > 0
+            initial_solution[weight_inds] /= initial_weights[weight_inds]
+            initial_solution = [np.abs(initial_solution)/self.n_step for s in range(self.n_step)]
+            if verbose:
+                print(" Done!")
+        self.model_base = initial_solution
         # When debugging, the image returned by _extract_image might be cropped to speed up calculations.
         if self.debug:
             self.y_size, self.x_size = initial_solution.shape
-        weight_inds = initial_weights > 0
-        self.model_base = initial_solution
-        initial_solution[weight_inds] /= initial_weights[weight_inds]
-        if verbose:
-            print(" Done!")
 
         self._build_model_subroutine(initial_solution, verbose=verbose, max_iter=max_iter, min_iter=min_iter,
-                                     frequency_regularization=frequency_regularization, max_slope=None,
-                                     gain=gain, clamp=clamp,
+                                     frequency_regularization=frequency_regularization,
+                                     gain=gain, clamp=clamp, max_slope=max_slope,
                                      test_convergence=test_convergence,
                                      convergence_threshold=convergence_threshold,
                                      use_variance=use_variance,
                                      )
+        if refine_solution:
+            print("Refining model")
+            initial_solution = [np.sum(self.model, axis=0)/self.n_step for f in range(self.n_step)]
+            self._build_model_subroutine(initial_solution, verbose=verbose,
+                                         max_iter=max_iter, min_iter=min_iter,
+                                         frequency_regularization=frequency_regularization,
+                                         gain=gain, clamp=clamp, max_slope=max_slope,
+                                         test_convergence=test_convergence,
+                                         convergence_threshold=convergence_threshold,
+                                         use_variance=use_variance,
+                                         )
+
         if verbose:
             print("\nFinished building model.")
 
@@ -359,7 +373,7 @@ class BuildDcrCoadd(GenerateTemplate):
             min_iter = 2
         last_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
         for f in range(self.n_step):
-            last_solution[f] += np.abs(initial_solution/self.n_step)
+            last_solution[f] += initial_solution[f]
 
         if verbose:
             print("Fractional change per iteration:")
