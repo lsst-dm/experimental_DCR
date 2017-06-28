@@ -851,19 +851,19 @@ class GenerateTemplate:
         for add_item in kwargs:
             meta.add(add_item, kwargs[add_item])
 
-        visitInfo = afwImage.makeVisitInfo(exposureId=int(exposureId),
-                                           exposureTime=self.exposure_time,
-                                           darkTime=self.exposure_time,
-                                           date=DateTime(mjd),
-                                           ut1=mjd,
-                                           era=era,
-                                           boresightRaDec=IcrsCoord(ra, dec),
-                                           boresightAzAlt=Coord(azimuth, elevation),
-                                           boresightAirmass=airmass,
-                                           boresightRotAngle=boresightRotAngle,
-                                           observatory=self.observatory,
-                                           weather=weather
-                                           )
+        visitInfo = afwImage.VisitInfo(exposureId=int(exposureId),
+                                       exposureTime=self.exposure_time,
+                                       darkTime=self.exposure_time,
+                                       date=DateTime(mjd),
+                                       ut1=mjd,
+                                       era=era,
+                                       boresightRaDec=IcrsCoord(ra, dec),
+                                       boresightAzAlt=Coord(azimuth, elevation),
+                                       boresightAirmass=airmass,
+                                       boresightRotAngle=boresightRotAngle,
+                                       observatory=self.observatory,
+                                       weather=weather
+                                       )
         exposure.getInfo().setVisitInfo(visitInfo)
 
         # Set the DCR-matched PSF
