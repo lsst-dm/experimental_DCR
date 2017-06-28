@@ -1066,10 +1066,10 @@ class GenerateTemplate:
         for exp_i, exp in enumerate(exp_gen):
             visitInfo = exp.getInfo().getVisitInfo()
             el = visitInfo.getBoresightAzAlt().getLatitude()
-            az = visitInfo.getBoresightAzAlt().getLongitude()
             weather = visitInfo.getWeather()
+            rot_ang = calculate_rotation_angle(exp)
             dcr_gen = self._dcr_generator(bandpass, pixel_scale=self.pixel_scale, weather=weather,
-                                          observatory=self.observatory, elevation=el, rotation_angle=az)
+                                          observatory=self.observatory, elevation=el, rotation_angle=rot_ang)
             kernel_single = self._calc_offset_phase(dcr_gen=dcr_gen, size=size,
                                                     size_out=kernel_size_intermediate)
             dcr_kernel[exp_i*n_pix_int: (exp_i + 1)*n_pix_int, :] = kernel_single
@@ -1090,7 +1090,6 @@ class GenerateTemplate:
         """
         visitInfo = exposure.getInfo().getVisitInfo()
         el = visitInfo.getBoresightAzAlt().getLatitude()
-        az = visitInfo.getBoresightAzAlt().getLongitude()
         weather = visitInfo.getWeather()
 
         # Take the measured PSF as the true PSF, smeared out by DCR.
@@ -1105,8 +1104,9 @@ class GenerateTemplate:
             psf_size_use = psf_size_test
 
         # Calculate the expected shift (with no psf) due to DCR
+        rot_ang = calculate_rotation_angle(exposure)
         dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale, weather=weather,
-                                      observatory=self.observatory, elevation=el, azimuth=az)
+                                      observatory=self.observatory, elevation=el, rotation_angle=rot_ang)
         dcr_shift = self._calc_offset_phase(exposure=exposure, dcr_gen=dcr_gen,
                                             size=psf_size_use)
         # Assume that the PSF does not change between sub-bands.
