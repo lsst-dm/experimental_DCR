@@ -753,7 +753,7 @@ class GenerateTemplate:
         if doWrite:
             butler.put(self.skyMap, datasetName)
 
-    def create_exposure(self, array, elevation, azimuth, variance=None, mask=None, bbox=None,
+    def create_exposure(self, array, elevation, azimuth, variance=None, mask=None, bbox=None, psf=None,
                         exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanAngle, era=None, snap=0,
                         weather=lsst_weather, **kwargs):
         """Convert a numpy array to an LSST exposure with all the required metadata.
@@ -867,9 +867,12 @@ class GenerateTemplate:
         exposure.getInfo().setVisitInfo(visitInfo)
 
         # Set the DCR-matched PSF
-        if self.psf is None:
-            self.calc_psf_model()
-        psf_single = self.build_matched_psf(elevation, calculate_rotation_angle(exposure), weather)
+        if psf is None:
+            if self.psf is None:
+                self.calc_psf_model()
+            psf_single = self.build_matched_psf(elevation, calculate_rotation_angle(exposure), weather)
+        else:
+            psf_single = psf
         exposure.setPsf(psf_single)
         return exposure
 
