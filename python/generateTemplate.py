@@ -50,6 +50,7 @@ from .dcr_utils import calculate_rotation_angle
 from .dcr_utils import diff_refraction
 from .dcr_utils import solve_model
 from .dcr_utils import wrap_warpExposure
+from .dcr_utils import calculate_hour_angle
 
 __all__ = ['GenerateTemplate']
 
@@ -826,14 +827,11 @@ class GenerateTemplate:
         exposure.getMaskedImage().getVariance().getArray()[:, :] = variance
 
         exposure.getMaskedImage().getMask().getArray()[:, :] = mask
-        ha_term1 = np.sin(elevation.asRadians())
-        ha_term2 = np.sin(dec.asRadians())*np.sin(self.observatory.getLatitude().asRadians())
-        ha_term3 = np.cos(dec.asRadians())*np.cos(self.observatory.getLatitude().asRadians())
-        hour_angle = np.arccos((ha_term1 - ha_term2) / ha_term3)
-        mjd = 59000.0 + (self.observatory.getLatitude().asDegrees()/15.0 - hour_angle*180/np.pi)/24.0
+        hour_angle = calculate_hour_angle(elevation, dec, self.observatory.getLatitude())
+        mjd = 59000.0 + (self.observatory.getLatitude().asDegrees()/15.0 - hour_angle.asDegrees())/24.0
         airmass = 1.0/np.sin(elevation.asRadians())
         if era is None:
-            era = Angle(hour_angle - self.observatory.getLongitude().asRadians())
+            era = Angle(hour_angle.asRadians() - self.observatory.getLongitude().asRadians())
         meta = exposure.getMetadata()
         meta.add("CHIPID", "R22_S11")
         # Required! Phosim output stores the snap ID in "OUTFILE" as the last three characters in a string.

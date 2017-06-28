@@ -34,8 +34,38 @@ import lsst.afw.math as afwMath
 
 from .lsst_defaults import lsst_observatory, lsst_weather
 
-__all__ = ["parallactic_angle", "wrap_warpExposure", "solve_model", "calculate_rotation_angle",
-           "refraction", "diff_refraction"]
+__all__ = ["calculate_hour_angle", "parallactic_angle", "wrap_warpExposure", "solve_model",
+           "calculate_rotation_angle", "refraction", "diff_refraction"]
+
+
+def calculate_hour_angle(elevation, dec, latitude):
+    """Compute the hour angle.
+
+    Parameters
+    ----------
+    elevation : lsst.afw.geom.Angle
+        Elevation angle of the observation.
+    dec : lsst.afw.geom.Angle
+        Declination of the observation.
+    latitude : lsst.afw.geom.Angle
+        Latitude of the observatory.
+
+    Returns
+    -------
+    TYPE
+        Description
+    """
+    ha_term1 = np.sin(elevation.asRadians())
+    ha_term2 = np.sin(dec.asRadians())*np.sin(latitude.asRadians())
+    ha_term3 = np.cos(dec.asRadians())*np.cos(latitude.asRadians())
+    if (ha_term1 - ha_term2) > ha_term3:
+        # Inexact values can lead to singularities close to 1.
+        # Those values should correspond to locations straight overhead, or through the ground.
+        # Assuming these are real observations, we choose the overhead option.
+        hour_angle = 0.
+    else:
+        hour_angle = np.arccos((ha_term1 - ha_term2) / ha_term3)
+    return Angle(hour_angle)
 
 
 def parallactic_angle(hour_angle, dec, lat):
