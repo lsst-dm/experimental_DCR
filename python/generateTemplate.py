@@ -535,7 +535,7 @@ class GenerateTemplate:
 
     @staticmethod
     def load_bandpass(filter_name='g', wavelength_step=None, use_mirror=True, use_lens=True, use_atmos=True,
-                      use_filter=True, use_detector=True):
+                      use_filter=True, use_detector=True, **kwargs):
         """Load in Bandpass object from sims_photUtils.
 
         Parameters
@@ -555,6 +555,8 @@ class GenerateTemplate:
             Set to use the LSST filters in the filter throughput calculation.
         use_detector : bool, optional
             Set to use the LSST detector efficiency in the filter throughput calculation.
+        **kwargs
+            Accept and ignore any additional keyword arguments.
 
         Returns
         -------
