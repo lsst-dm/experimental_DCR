@@ -30,6 +30,7 @@ import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
 
+from .dcr_utils import calculate_rotation_angle  # Likely can remove soon
 from .dcr_utils import wrap_warpExposure
 from .dcr_utils import solve_model
 from .generateTemplate import GenerateTemplate
@@ -114,7 +115,7 @@ class BuildDcrCoadd(GenerateTemplate):
 
     def __init__(self, obsids=None, input_repository='.', filter_name='g',
                  wavelength_step=10., n_step=None, exposures=None,
-                 warp=False, debug_mode=False, **kwargs):
+                 warp=False, debug_mode=False, verbose=False, **kwargs):
         """Load images from the repository and set up parameters.
 
         Parameters
@@ -166,8 +167,20 @@ class BuildDcrCoadd(GenerateTemplate):
 
         for i, calexp in enumerate(self.exposures):
             psf_size_arr.append(calexp.getPsf().computeKernelImage().getArray().shape[0])
+            visitInfo = calexp.getInfo().getVisitInfo()
+            hour_angle_arr.append(visitInfo.getBoresightHourAngle().asRadians())
 
-            hour_angle_arr.append(calexp.getInfo().getVisitInfo().getBoresightHourAngle().asRadians())
+            if verbose:
+                obsid = visitInfo.getExposureId()
+                print("Working on observation %s" % obsid)
+                el = visitInfo.getBoresightAzAlt().getLatitude()
+                az = visitInfo.getBoresightAzAlt().getLongitude()
+                ra = visitInfo.getBoresightRaDec().getLongitude()
+                dec = visitInfo.getBoresightRaDec().getLatitude()
+                rotation_angle = calculate_rotation_angle(calexp)
+                print("El: %2.4f, Az: %2.4f, RA: %2.4f, Dec: %2.4f, Rotation: %2.4f" %
+                      (el.asDegrees(), az.asDegrees(), ra.asDegrees(),
+                       dec.asDegrees(), rotation_angle.asDegrees()))
 
             if (i != ref_exp_i) & warp:
                 wrap_warpExposure(calexp, self.wcs, self.bbox)
