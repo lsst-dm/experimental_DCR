@@ -1111,12 +1111,9 @@ class GenerateTemplate:
                                       observatory=self.observatory, elevation=el, rotation_angle=rot_ang)
         dcr_shift = self._calc_offset_phase(exposure=exposure, dcr_gen=dcr_gen,
                                             size=psf_size_use)
-        # Assume that the PSF does not change between sub-bands.
-        regularize_psf = None
         # Use the entire psf provided, even if larger than than the kernel we will use to solve DCR for images
         # If the original psf is much larger than the kernel, it may be trimmed slightly by fit_psf_size above
-        psf_model_gen = solve_model(psf_size_use, np.ravel(psf_img), n_step=self.n_step,
-                                    use_nonnegative=True, regularization=regularize_psf, kernel_dcr=dcr_shift)
+        psf_model_gen = solve_model(psf_size_use, np.ravel(psf_img), n_step=self.n_step, kernel_dcr=dcr_shift)
 
         # After solving for the (potentially) large psf, store only the central portion of size kernel_size.
         psf_vals = np.sum(psf_model_gen, axis=0)/self.n_step
