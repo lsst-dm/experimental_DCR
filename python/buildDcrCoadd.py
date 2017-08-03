@@ -302,7 +302,7 @@ class BuildDcrCoadd(GenerateTemplate):
 
             weight_inds = initial_weights > 0
             initial_solution[weight_inds] /= initial_weights[weight_inds]
-            initial_solution = [np.abs(initial_solution)/self.n_step for s in range(self.n_step)]
+            initial_solution = [np.abs(initial_solution)/self.n_step for f in range(self.n_step)]
             if verbose:
                 print(" Done!")
         self.model_base = initial_solution
@@ -392,12 +392,14 @@ class BuildDcrCoadd(GenerateTemplate):
             print("Fractional change per iteration:")
         if test_convergence:
             last_convergence_metric_full = self.calc_model_metric(last_solution)
+            init_convergence_metric_full = last_convergence_metric_full
             print("Full initial convergence metric: ", last_convergence_metric_full)
             last_convergence_metric = np.mean(last_convergence_metric_full)
 
         exp_cut = [False for exp_i in range(self.n_images)]
         final_soln_iter = None
         did_converge = False
+        last_delta = 1.
         for sol_iter in range(int(max_iter)):
             new_solution, inverse_var_arr = self._calculate_new_model(last_solution, exp_cut,
                                                                       use_variance=use_variance)
@@ -423,18 +425,21 @@ class BuildDcrCoadd(GenerateTemplate):
                      np.sum(np.abs([soln[inds_use] for soln in last_solution])))
             if verbose:
                 print("Iteration %i: delta=%f" % (sol_iter, delta))
-                last_soln_use = [soln[inds_use] for soln in last_solution]
-                print("Stddev(last_solution): %f, mean(abs(last_solution)): %f"
-                      % (np.std(last_soln_use), np.mean(np.abs(last_soln_use))))
-                new_soln_use = [soln[inds_use] for soln in new_solution_use]
-                print("Stddev(new_solution): %f, mean(abs(new_solution)): %f"
-                      % (np.std(new_soln_use), np.mean(np.abs(new_soln_use))))
+            if delta > last_delta:
+                print("BREAK from diverging model difference.")
+                final_soln_iter = sol_iter - 1
+                break
+            else:
+                last_delta = delta
             if test_convergence:
                 convergence_metric_full = self.calc_model_metric(new_solution_use)
                 if verbose:
                     print("Full convergence metric:", convergence_metric_full)
                 if sol_iter >= min_iter:
-                    exp_cut = convergence_metric_full > last_convergence_metric_full
+                    exp_cut = convergence_metric_full > last_convergence_metric_full*1.05
+                    exp_cut1 = convergence_metric_full > init_convergence_metric_full
+                    exp_cut[exp_cut1] = True
+
                 n_exp_cut = np.sum(exp_cut)
                 if n_exp_cut > 0:
                     print("%i exposure(s) cut from lack of convergence." % int(n_exp_cut))
