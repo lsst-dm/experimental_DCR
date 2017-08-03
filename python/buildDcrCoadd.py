@@ -407,7 +407,8 @@ class BuildDcrCoadd(GenerateTemplate):
                 self._regularize_model_solution(new_solution, self.bandpass, max_slope=max_slope)
 
             # Restrict new solutions from being wildly different from the last solution
-            self._clamp_model_solution(new_solution, last_solution, clamp, model_base=self.model_base)
+            if clamp > 0:
+                self._clamp_model_solution(new_solution, last_solution, clamp)
 
             inds_use = inverse_var_arr[-1] > 0
             for f in range(self.n_step - 1):
@@ -517,7 +518,7 @@ class BuildDcrCoadd(GenerateTemplate):
         return (new_solution, inverse_var_arr)
 
     @staticmethod
-    def _clamp_model_solution(new_solution, last_solution, clamp, model_base=None):
+    def _clamp_model_solution(new_solution, last_solution, clamp):
         """Restrict new solutions from being wildly different from the last solution.
 
         Parameters
@@ -537,13 +538,11 @@ class BuildDcrCoadd(GenerateTemplate):
         for s_i, solution in enumerate(new_solution):
             # Note: last_solution is always positive
             clamp_high_i = solution > clamp*last_solution[s_i]
-            solution[clamp_high_i] = clamp*last_solution[s_i][clamp_high_i]
+            high_excess = solution - clamp*last_solution[s_i]
+            solution[clamp_high_i] = clamp*last_solution[s_i][clamp_high_i] + high_excess[clamp_high_i]/2.
             clamp_low_i = solution < last_solution[s_i]/clamp
-            solution[clamp_low_i] = last_solution[s_i][clamp_low_i]/clamp
-            if model_base is not None:
-                noise_threshold = np.std(solution)
-                clamp_high_i2 = solution > (model_base + 3.*noise_threshold)
-                solution[clamp_high_i2] = model_base[clamp_high_i2]
+            low_excess = solution - last_solution[s_i]/clamp
+            solution[clamp_low_i] = last_solution[s_i][clamp_low_i]/clamp + low_excess[clamp_low_i]/2.
 
     @staticmethod
     def _regularize_model_solution(new_solution, bandpass, max_slope=None):
@@ -584,7 +583,8 @@ class BuildDcrCoadd(GenerateTemplate):
         slope[slope_cut_low] = -solution_avg[slope_cut_low]*slope_ratio/bandpass.wavelen_step
         offset = solution_avg
         for f, wl in enumerate(GenerateTemplate._wavelength_iterator(bandpass, use_midpoint=True)):
-            new_solution[f] = offset + slope*(wl - wl_cen)
+            new_solution[f][slope_cut_high] = (offset + slope*(wl - wl_cen))[slope_cut_high]
+            new_solution[f][slope_cut_low] = (offset + slope*(wl - wl_cen))[slope_cut_low]
 
     def calc_model_metric(self, model=None):
         """Calculate a quality of fit metric for the DCR model given the set of exposures.

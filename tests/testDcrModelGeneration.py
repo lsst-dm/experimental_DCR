@@ -124,42 +124,24 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         for inv_var_new, inv_var_ref in izip(inverse_var_arr, inverse_var_arr_ref):
             self.assertFloatsAlmostEqual(inv_var_new, inv_var_ref)
 
-    def test_clamp_model_solution(self):
-        """Test that extreme solutions that changed by more than a factor of ``clamp`` are reduced."""
-        clamp = 3.
-        rand_gen = np.random
-        rand_gen.seed(5)
-        n_step = self.dcrCoadd.n_step
-        x_size = self.dcrCoadd.x_size
-        y_size = self.dcrCoadd.y_size
-        last_solution = [rand_gen.random((y_size, x_size)) for f in range(n_step)]
-        new_solution = [10.*(rand_gen.random((y_size, x_size)) - 0.5) for f in range(n_step)]
-        ref_solution = copy.deepcopy(new_solution)
-        self.dcrCoadd._clamp_model_solution(new_solution, last_solution, clamp)
-        ref_max = np.max(ref_solution)
-        ref_min = np.min(ref_solution)
-        last_max = np.max(last_solution)
-        last_min = np.min(last_solution)
-        clamp_max = np.max(new_solution)
-        clamp_min = np.min(new_solution)
-        self.assertLessEqual(ref_min, clamp_min)
-        self.assertGreaterEqual(ref_max, clamp_max)
-        self.assertGreaterEqual(clamp_min, last_min/clamp)
-        self.assertLessEqual(clamp_max, last_max*clamp)
 
     def test_calc_model_metric(self):
         """Test that the DCR model convergence metric is calculated consistently."""
         model_file = "test_data/build_model_vals.npy"
-        metric_ref = np.array([0.0326935559509, 0.0299110529484, 0.0312179049219,
-                               0.0347479542217, 0.0391646272523, 0.0421978103681])
+        metric_ref = np.array([0.0346427096422, 0.0192203874358, 0.0236755826946,
+                               0.0327509437817, 0.0428538558145, 0.0471847554919])
         model = np.load(model_file)
         metric = self.dcrCoadd.calc_model_metric(model=model)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)
 
     def test_build_model_convergence_failure(self):
         """Test that the iterative solver fails to converge if given a negative gain."""
-        did_converge = self.dcrCoadd._build_model_subroutine(initial_solution=1, verbose=False, gain=-2,
-                                                             test_convergence=True)
+        n_step = self.dcrCoadd.n_step
+        x_size = self.dcrCoadd.x_size
+        y_size = self.dcrCoadd.y_size
+        initial_solution = [np.ones((y_size, x_size)) for f in range(n_step)]
+        did_converge = self.dcrCoadd._build_model_subroutine(initial_solution=initial_solution, verbose=False,
+                                                             gain=-2, test_convergence=True)
         self.assertFalse(did_converge)
 
     def test_calculate_psf(self):
