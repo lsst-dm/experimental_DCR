@@ -21,7 +21,6 @@
 #
 
 from __future__ import print_function, division, absolute_import
-import copy
 from itertools import izip
 import unittest
 
@@ -124,12 +123,11 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         for inv_var_new, inv_var_ref in izip(inverse_var_arr, inverse_var_arr_ref):
             self.assertFloatsAlmostEqual(inv_var_new, inv_var_ref)
 
-
     def test_calc_model_metric(self):
         """Test that the DCR model convergence metric is calculated consistently."""
         model_file = "test_data/build_model_vals.npy"
-        metric_ref = np.array([0.0346427096422, 0.0192203874358, 0.0236755826946,
-                               0.0327509437817, 0.0428538558145, 0.0471847554919])
+        metric_ref = np.array([0.034547679807, 0.0192584740903, 0.023697466239,
+                               0.032737641588, 0.0428333486302, 0.0471672612838])
         model = np.load(model_file)
         metric = self.dcrCoadd.calc_model_metric(model=model)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)
