@@ -198,6 +198,7 @@ class BuildDcrCoadd(GenerateTemplate):
         self.mask = self._combine_masks()
 
         bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
+        bandpass_highres = self.load_bandpass(filter_name=filter_name, wavelength_step=None, **kwargs)
         if n_step is not None:
             wavelength_step = (bandpass.wavelen_max - bandpass.wavelen_min) / n_step
             bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
@@ -210,6 +211,7 @@ class BuildDcrCoadd(GenerateTemplate):
             n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
         self.n_step = n_step
         self.bandpass = bandpass
+        self.bandpass_highres = bandpass_highres
 
     def calc_psf_model(self):
         """Calculate the fiducial psf from a given set of exposures, accounting for DCR.

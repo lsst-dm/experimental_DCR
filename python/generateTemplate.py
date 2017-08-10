@@ -602,8 +602,6 @@ class GenerateTemplate:
         band_dict = {'u': (324.0, 395.0), 'g': (405.0, 552.0), 'r': (552.0, 691.0),
                      'i': (818.0, 921.0), 'z': (922.0, 997.0), 'y': (975.0, 1075.0)}
         band_range = band_dict[filter_name]
-        if wavelength_step is None:
-            wavelength_step = band_range[1] - band_range[0]
         bandpass = BandpassMod(wavelen_min=band_range[0], wavelen_max=band_range[1],
                                wavelen_step=wavelength_step)
         throughput_dir = getPackageDir('throughputs')
