@@ -304,7 +304,17 @@ class BuildDcrCoadd(GenerateTemplate):
 
             weight_inds = initial_weights > 0
             initial_solution[weight_inds] /= initial_weights[weight_inds]
-            initial_solution = [np.abs(initial_solution)/self.n_step for f in range(self.n_step)]
+            wl_iter = self._wavelength_iterator(self.bandpass, use_midpoint=False)
+            flux_out = []
+            wl_in = self.bandpass_highres.wavelen
+            flux_in = self.bandpass_highres.sb
+            for wl_start, wl_end in wl_iter:
+                wl_use = (wl_in >= wl_start) & (wl_in < wl_end)
+                flux = np.sum(flux_in[wl_use])
+                flux_out.append(flux)
+            band_power = np.array(flux_out)
+            band_power /= np.sum(band_power)
+            initial_solution = [np.abs(initial_solution)*power for power in band_power]
             if verbose:
                 print(" Done!")
         self.model_base = initial_solution
