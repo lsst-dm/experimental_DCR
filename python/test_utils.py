@@ -257,8 +257,8 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
 
         self.exposures = exposures
 
-        bandpass_init = BasicBandpass(filter_name=filter_name, wavelength_step=None)
-        wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
+        self.bandpass_highres = BasicBandpass(filter_name=filter_name, wavelength_step=None)
+        wavelength_step = (self.bandpass_highres.wavelen_max - self.bandpass_highres.wavelen_min) / n_step
         self.bandpass = BasicBandpass(filter_name=filter_name, wavelength_step=wavelength_step)
         self.n_step = n_step
         self.n_images = len(exposures)

@@ -222,8 +222,6 @@ class BuildDcrCoadd(GenerateTemplate):
         None
             Sets self.psf with a lsst.meas.algorithms KernelPsf object.
         """
-        n_step = 1
-        bandpass = self.load_bandpass(filter_name=self.filter_name, wavelength_step=None)
         n_pix = self.psf_size**2
         psf_mat = np.zeros(self.n_images*self.psf_size**2)
         for exp_i, exp in enumerate(self.exposures):
@@ -242,10 +240,10 @@ class BuildDcrCoadd(GenerateTemplate):
 
             psf_mat[exp_i*n_pix: (exp_i + 1)*n_pix] = np.ravel(psf_img_use)
 
-        dcr_shift = self._build_dcr_kernel(size=self.psf_size, bandpass=bandpass, n_step=n_step)
-        psf_model_gen = solve_model(self.psf_size, psf_mat, n_step=n_step, kernel_dcr=dcr_shift)
+        dcr_shift = self._build_dcr_kernel(size=self.psf_size)
+        psf_model_gen = solve_model(self.psf_size, psf_mat, n_step=self.n_step, kernel_dcr=dcr_shift)
 
-        psf_vals = np.sum(psf_model_gen)/n_step
+        psf_vals = np.sum(psf_model_gen)/self.n_step
         psf_image = afwImage.ImageD(self.psf_size, self.psf_size)
         psf_image.getArray()[:, :] = psf_vals
         psfK = afwMath.FixedKernel(psf_image)
