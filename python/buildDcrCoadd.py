@@ -24,6 +24,7 @@
 from __future__ import print_function, division, absolute_import
 
 import numpy as np
+import scipy.ndimage as ndimage
 from scipy.ndimage.interpolation import shift as scipy_shift
 
 import lsst.afw.image as afwImage
@@ -253,7 +254,7 @@ class BuildDcrCoadd(GenerateTemplate):
     def build_model(self, verbose=True, max_iter=10, min_iter=None, gain=None, clamp=None,
                     frequency_regularization=False, max_slope=None, initial_solution=None,
                     test_convergence=False, convergence_threshold=None, use_variance=True,
-                    refine_solution=False):
+                    refine_solution=False, spatial_filter=None):
         """Build a model of the sky in multiple sub-bands.
 
         Parameters
@@ -328,10 +329,15 @@ class BuildDcrCoadd(GenerateTemplate):
                                      test_convergence=test_convergence,
                                      convergence_threshold=convergence_threshold,
                                      use_variance=use_variance,
+                                     spatial_filter=spatial_filter,
                                      )
         if refine_solution:
             print("Refining model")
-            initial_solution = [np.sum(self.model, axis=0)/self.n_step for f in range(self.n_step)]
+            if spatial_filter is None:
+                spatial_filter_use = self.psf_size//2
+            else:
+                spatial_filter_use = spatial_filter
+            initial_solution = self._model_spatial_filter(self.model, spatial_filter_use)
             self._build_model_subroutine(initial_solution, verbose=verbose,
                                          max_iter=max_iter, min_iter=min_iter,
                                          frequency_regularization=frequency_regularization,
@@ -339,6 +345,7 @@ class BuildDcrCoadd(GenerateTemplate):
                                          test_convergence=test_convergence,
                                          convergence_threshold=convergence_threshold,
                                          use_variance=use_variance,
+                                         spatial_filter=spatial_filter,
                                          )
 
         if verbose:
@@ -346,7 +353,8 @@ class BuildDcrCoadd(GenerateTemplate):
 
     def _build_model_subroutine(self, initial_solution, verbose=True, max_iter=10, min_iter=None,
                                 test_convergence=False, frequency_regularization=True, max_slope=None,
-                                gain=None, clamp=None, convergence_threshold=None, use_variance=True):
+                                gain=None, clamp=None, convergence_threshold=None, use_variance=True,
+                                spatial_filter=None):
         """Extract the math from building the model so it can be re-used.
 
         Parameters
@@ -419,6 +427,10 @@ class BuildDcrCoadd(GenerateTemplate):
             # Optionally restrict variations between frequency planes
             if frequency_regularization:
                 self._regularize_model_solution(new_solution, self.bandpass, max_slope=max_slope)
+
+            # Optionally restrict spatial variations in frequency structure
+            if spatial_filter is not None:
+                new_solution = self._model_spatial_filter(new_solution, spatial_filter, mask=self.mask)
 
             # Restrict new solutions from being wildly different from the last solution
             if clamp > 0:
@@ -533,6 +545,50 @@ class BuildDcrCoadd(GenerateTemplate):
             inds_use = inverse_var_arr[f] > 0
             new_solution[f][inds_use] = residual_arr[f][inds_use]/inverse_var_arr[f][inds_use]
         return (new_solution, inverse_var_arr)
+
+    @staticmethod
+    def _model_spatial_filter(new_solution, filter_width, mask=None, filter_fn=ndimage.gaussian_filter):
+        """Restrict spatial variations between model planes.
+
+        Parameters
+        ----------
+        new_solution : list of np.ndarrays
+            One np.ndarray for each model sub-band
+        filter_width : float
+            Width parameter passed in to the filtering function.
+        mask : np.ndarray, optional
+            Combined bit plane mask of the model, which is used as the mask plane for generated templates.
+        filter_fn : function, optional
+            The function used to perform the spatial filtering.
+
+        Returns
+        -------
+        list of np.ndarrays
+            One np.ndarray for each model sub-band
+        """
+        avg_solution = np.mean(new_solution, axis=0)
+        if mask is not None:
+            mask_use = (mask & 32) == 32
+            mask_use = filter_fn(mask_use, filter_width, mode='constant')
+            avg_solution *= mask_use
+
+        # Avoid dividing by zero
+        avg_solution_inverse = np.zeros_like(avg_solution)
+        non_zero_inds = avg_solution != 0
+        avg_solution_inverse[non_zero_inds] = 1./avg_solution[non_zero_inds]
+
+        delta_solution = [soln*avg_solution_inverse - 1. for soln in new_solution]
+        filter_solution = []
+        ii = 0
+        for delta in delta_solution:
+            filter_delta = filter_fn(delta, filter_width, mode='constant')
+            single_soln = (filter_delta + 1.)*avg_solution
+            if mask is not None:
+                single_soln *= mask_use
+                single_soln += new_solution[ii]*(1 - mask_use)
+            filter_solution.append(single_soln)
+
+        return filter_solution
 
     @staticmethod
     def _clamp_model_solution(new_solution, last_solution, clamp):
