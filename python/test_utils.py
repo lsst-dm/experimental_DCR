@@ -137,7 +137,7 @@ class BasicGenerateTemplate(GenerateTemplate):
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
         self.bandpass = BasicBandpass(filter_name=filter_name, wavelength_step=wavelength_step)
         self.model = [rand_gen.random(size=(size, size)) for f in range(n_step)]
-        self.weights = np.ones((size, size))
+        # self.weights = np.ones((size, size))
         self.mask = np.zeros((size, size), dtype=np.int32)
 
         self.n_step = n_step
@@ -320,6 +320,9 @@ class DcrCoaddTestBase:
         self.hour_angle = Angle(np.arccos((ha_term1 - ha_term2) / ha_term3))
         p_angle = parallactic_angle(self.hour_angle, dec, lsst_lat)
         self.rotation_angle = Angle(p_angle)
+        self.dcrTemplate.weights = np.zeros_like(self.array)
+        nonzero_inds = self.array > 0
+        self.dcrTemplate.weights[nonzero_inds] = 1./np.abs(self.array[nonzero_inds])
         self.dcr_gen = self.dcrTemplate._dcr_generator(self.dcrTemplate.bandpass,
                                                        pixel_scale=self.dcrTemplate.pixel_scale,
                                                        elevation=self.elevation,

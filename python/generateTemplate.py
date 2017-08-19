@@ -912,23 +912,24 @@ class GenerateTemplate:
 
         wave_gen = self._wavelength_iterator(self.bandpass, use_midpoint=False)
         variance = np.zeros_like(self.weights)
-        variance[self.weights > 0] = 1./self.weights[self.weights > 0]
+        nonzero_inds = self.weights > 0
+        variance[nonzero_inds] = 1./self.weights[nonzero_inds]
         reference_image = np.sum(self.model, axis=0)
-        image_use, var_use, mask_use = _resize_image(reference_image, variance, self.mask, self.bbox,
-                                                     patch_bbox, expand=True)
+        # variance = reference_image[:, :]
+        image_use, var_use, mask_use = _resize_image(reference_image, variance*self.n_step, self.mask,
+                                                     bbox_old=self.bbox, bbox_new=patch_bbox,
+                                                     expand=True)
         ref_exp = self.create_exposure(image_use, variance=var_use, mask=mask_use, bbox=patch_bbox,
                                        isCoadd=True)
         ref_exp.getMaskedImage().getMask().addMaskPlane("CLIPPED")
         self.write_exposure(ref_exp, datasetType="deepCoadd", butler=butler)
         butler.put(self.skyMap, "dcrCoadd_skyMap")
-        variance /= self.n_step
         for f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
-
+            # variance = self.model[f][:, :]
             image_use, var_use, mask_use = _resize_image(self.model[f], variance, self.mask,
                                                          bbox_old=self.bbox, bbox_new=patch_bbox,
                                                          expand=True)
-
             exp = self.create_exposure(image_use, variance=var_use, mask=mask_use, bbox=patch_bbox,
                                        isCoadd=True,
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end)
@@ -968,7 +969,10 @@ class GenerateTemplate:
         self.model = model_arr
         self.n_step = len(self.model)
         # The weights should be identical for all subfilters.
-        self.weights = var_use*self.n_step
+        self.weights = np.zeros_like(var_use)
+        nonzero_inds = var_use > 0
+        self.weights[nonzero_inds] = 1./var_use[nonzero_inds]
+        # self.weights = var_use*self.n_step
         # The masks should be identical for all subfilters
         self.mask = mask_use
 
