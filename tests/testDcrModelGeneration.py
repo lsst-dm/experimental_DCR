@@ -49,11 +49,11 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
     """
 
     @classmethod
-    def setUpClass(self):
+    def setUpClass(cls):
         """Define parameters used by every test."""
         filter_name = 'g'
-        self.n_step = 3
-        self.n_images = 5
+        cls.n_step = 3
+        cls.n_images = 5
 
         butler = daf_persistence.Butler(inputs="./test_data/")
         exposures = []
@@ -62,17 +62,17 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
             dataId = {'visit': exp_i, 'raft': '2,2', 'sensor': '1,1', 'filter_name': 'g'}
             exposures.append(butler.get("calexp", dataId=dataId))
         # Use BasicBuildDcrCoadd here to save execution time.
-        self.dcrCoadd = BasicBuildDcrCoadd(filter_name=filter_name, n_step=self.n_step, exposures=exposures)
-        self.ref_vals = []
-        detected_bit = self.dcrCoadd.exposures[0].getMaskedImage().getMask().getPlaneBitMask('DETECTED')
-        for exp in self.dcrCoadd.exposures:
+        cls.dcrCoadd = BasicBuildDcrCoadd(filter_name=filter_name, n_step=cls.n_step, exposures=exposures)
+        cls.ref_vals = []
+        detected_bit = cls.dcrCoadd.exposures[0].getMaskedImage().getMask().getPlaneBitMask('DETECTED')
+        for exp in cls.dcrCoadd.exposures:
             exp.getMaskedImage().getMask().getArray()[:, :] = detected_bit
-            self.ref_vals.append(exp.getMaskedImage().getImage().getArray())
+            cls.ref_vals.append(exp.getMaskedImage().getImage().getArray())
 
     @classmethod
-    def tearDownClass(self):
+    def tearDownClass(cls):
         """Clean up."""
-        del self.dcrCoadd
+        del cls.dcrCoadd
 
     def test_extract_image(self):
         """Test that the extracted values are the same as `ref_vals`."""

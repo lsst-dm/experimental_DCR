@@ -40,14 +40,15 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
     """Tests for the functions in the GenerateTemplate class."""
 
     @classmethod
-    def setUpClass(self):
+    def setUpClass(cls):
         """Set up one instance of the butler for all tests of persistence."""
-        self.repository = "./test_data/"
-        self.butler = daf_persistence.Butler(inputs=self.repository, outputs=self.repository)
+        cls.repository = "./test_data/"
+        cls.butler = daf_persistence.Butler(inputs=cls.repository, outputs=cls.repository)
 
     @classmethod
-    def tearDownClass(self):
-        del self.butler
+    def tearDownClass(cls):
+        """Clean up."""
+        del cls.butler
 
     def test_simple_phase_kernel(self):
         """Compare the result of _calc_offset_phase to previously computed values."""
