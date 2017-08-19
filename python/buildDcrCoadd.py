@@ -252,7 +252,7 @@ class BuildDcrCoadd(GenerateTemplate):
     def build_model(self, verbose=True, max_iter=10, min_iter=None, gain=None, clamp=None,
                     frequency_regularization=False, max_slope=None, initial_solution=None,
                     test_convergence=False, convergence_threshold=None, use_variance=True,
-                    refine_solution=False, spatial_filter=None):
+                    refine_solution=False, spatial_filter=None, airmass_weight=False):
         """Build a model of the sky in multiple sub-bands.
 
         Parameters
@@ -328,6 +328,7 @@ class BuildDcrCoadd(GenerateTemplate):
                                      convergence_threshold=convergence_threshold,
                                      use_variance=use_variance,
                                      spatial_filter=spatial_filter,
+                                     airmass_weight=airmass_weight,
                                      )
         if refine_solution:
             print("Refining model")
@@ -344,6 +345,7 @@ class BuildDcrCoadd(GenerateTemplate):
                                          convergence_threshold=convergence_threshold,
                                          use_variance=use_variance,
                                          spatial_filter=spatial_filter,
+                                         airmass_weight=airmass_weight,
                                          )
 
         if verbose:
@@ -352,7 +354,7 @@ class BuildDcrCoadd(GenerateTemplate):
     def _build_model_subroutine(self, initial_solution, verbose=True, max_iter=10, min_iter=None,
                                 test_convergence=False, frequency_regularization=True, max_slope=None,
                                 gain=None, clamp=None, convergence_threshold=None, use_variance=True,
-                                spatial_filter=None):
+                                spatial_filter=None, airmass_weight=False):
         """Extract the math from building the model so it can be re-used.
 
         Parameters
@@ -420,7 +422,8 @@ class BuildDcrCoadd(GenerateTemplate):
         last_delta = 1.
         for sol_iter in range(int(max_iter)):
             new_solution, inverse_var_arr = self._calculate_new_model(last_solution, exp_cut,
-                                                                      use_variance=use_variance)
+                                                                      use_variance=use_variance,
+                                                                      airmass_weight=airmass_weight)
 
             # Optionally restrict variations between frequency planes
             if frequency_regularization:
@@ -496,7 +499,7 @@ class BuildDcrCoadd(GenerateTemplate):
         self.weights = np.sum(inverse_var_arr, axis=0)/self.n_step
         return did_converge
 
-    def _calculate_new_model(self, last_solution, exp_cut=None, use_variance=True):
+    def _calculate_new_model(self, last_solution, exp_cut=None, use_variance=True, airmass_weight=False):
         """Sub-routine to calculate a new model from the residuals of forward-modeling the previous solution.
 
         Parameters
@@ -520,6 +523,9 @@ class BuildDcrCoadd(GenerateTemplate):
             if exp_cut[exp_i]:
                 continue
             img, inverse_var, dcr_gen = self._extract_image(exp, use_variance=use_variance)
+            visitInfo = exp.getInfo().getVisitInfo()
+            if airmass_weight:
+                inverse_var *= visitInfo.getBoresightAirmass()
             dcr_list = [dcr for dcr in dcr_gen]
             last_model_shift = []
             for f, dcr in enumerate(dcr_list):
