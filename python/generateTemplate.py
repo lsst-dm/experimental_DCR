@@ -220,7 +220,7 @@ class GenerateTemplate:
             exposure = self.create_exposure(template, variance=variance, snap=0, ra=ra, dec=dec,
                                             boresightRotAngle=rotation_angle, weather=weather,
                                             elevation=el, azimuth=az, exposureId=obsid_out,
-                                            psf=calexp.getPsf())
+                                            )
             if warp:
                 wrap_warpExposure(exposure, wcs_exp, bbox_exp)
             else:
@@ -753,9 +753,10 @@ class GenerateTemplate:
         if doWrite:
             butler.put(self.skyMap, datasetName)
 
-    def create_exposure(self, array, elevation, azimuth, variance=None, mask=None, bbox=None, psf=None,
+    def create_exposure(self, array, elevation=nanAngle, azimuth=nanAngle,
+                        variance=None, mask=None, bbox=None,
                         exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanAngle, era=None, snap=0,
-                        weather=lsst_weather, **kwargs):
+                        weather=lsst_weather, isCoadd=False, **kwargs):
         """Convert a numpy array to an LSST exposure with all the required metadata.
 
         Parameters
@@ -801,6 +802,8 @@ class GenerateTemplate:
             bbox = self.bbox
         if mask is None:
             mask = self.mask
+        if self.psf is None:
+            self.calc_psf_model()
         exposure = afwImage.ExposureF(bbox)
         exposure.setWcs(self.wcs)
         # We need the filter name in the exposure metadata, and it can't just be set directly
@@ -827,52 +830,60 @@ class GenerateTemplate:
         exposure.getMaskedImage().getVariance().getArray()[:, :] = variance
 
         exposure.getMaskedImage().getMask().getArray()[:, :] = mask
-        hour_angle = calculate_hour_angle(elevation, dec, self.observatory.getLatitude())
-        mjd = 59000.0 + (self.observatory.getLatitude().asDegrees()/15.0 - hour_angle.asDegrees())/24.0
-        airmass = 1.0/np.sin(elevation.asRadians())
-        if era is None:
-            era = Angle(hour_angle.asRadians() - self.observatory.getLongitude().asRadians())
         meta = exposure.getMetadata()
-        meta.add("CHIPID", "R22_S11")
-        # Required! Phosim output stores the snap ID in "OUTFILE" as the last three characters in a string.
-        meta.add("OUTFILE", ("SnapId_%3.3i" % snap))
-        meta.add("OBSID", int(exposureId))
-
-        meta.add("TAI", mjd)
-        meta.add("MJD-OBS", mjd)
-
-        meta.add("EXTTYPE", "IMAGE")
-        meta.add("EXPTIME", self.exposure_time)
-        meta.add("AIRMASS", airmass)
-        meta.add("ZENITH", 90. - elevation.asDegrees())
-        meta.add("AZIMUTH", azimuth.asDegrees())
 
         # Add all additional keyword arguments to the metadata.
         for add_item in kwargs:
-            meta.add(add_item, kwargs[add_item])
+            try:
+                meta.add(add_item, kwargs[add_item])
+            except:
+                print("Warning: not adding keyword %s to metadata; invalid type" % add_item)
+        if isCoadd:
+            boresightRotAngle = Angle(0.)
+            visitInfo = afwImage.VisitInfo(exposureId=int(exposureId),
+                                           exposureTime=self.exposure_time,
+                                           darkTime=self.exposure_time,
+                                           observatory=self.observatory,
+                                           weather=weather
+                                           )
+            psf_single = self.psf
+        else:
+            hour_angle = calculate_hour_angle(elevation, dec, self.observatory.getLatitude())
+            mjd = 59000.0 + (self.observatory.getLatitude().asDegrees()/15.0 - hour_angle.asDegrees())/24.0
+            airmass = 1.0/np.sin(elevation.asRadians())
+            if era is None:
+                era = Angle(hour_angle.asRadians() - self.observatory.getLongitude().asRadians())
+            meta.add("CHIPID", "R22_S11")
+            # Required! Phosim output stores the snap ID in "OUTFILE" as the last three characters in a string
+            meta.add("OUTFILE", ("SnapId_%3.3i" % snap))
+            meta.add("OBSID", int(exposureId))
 
-        visitInfo = afwImage.VisitInfo(exposureId=int(exposureId),
-                                       exposureTime=self.exposure_time,
-                                       darkTime=self.exposure_time,
-                                       date=DateTime(mjd),
-                                       ut1=mjd,
-                                       era=era,
-                                       boresightRaDec=IcrsCoord(ra, dec),
-                                       boresightAzAlt=Coord(azimuth, elevation),
-                                       boresightAirmass=airmass,
-                                       boresightRotAngle=boresightRotAngle,
-                                       observatory=self.observatory,
-                                       weather=weather
-                                       )
+            meta.add("TAI", mjd)
+            meta.add("MJD-OBS", mjd)
+
+            meta.add("EXTTYPE", "IMAGE")
+            meta.add("EXPTIME", self.exposure_time)
+            meta.add("AIRMASS", airmass)
+            meta.add("ZENITH", 90. - elevation.asDegrees())
+            meta.add("AZIMUTH", azimuth.asDegrees())
+
+            visitInfo = afwImage.VisitInfo(exposureId=int(exposureId),
+                                           exposureTime=self.exposure_time,
+                                           darkTime=self.exposure_time,
+                                           date=DateTime(mjd),
+                                           ut1=mjd,
+                                           era=era,
+                                           boresightRaDec=IcrsCoord(ra, dec),
+                                           boresightAzAlt=Coord(azimuth, elevation),
+                                           boresightAirmass=airmass,
+                                           boresightRotAngle=boresightRotAngle,
+                                           observatory=self.observatory,
+                                           weather=weather
+                                           )
+            psf_single = self.build_matched_psf(elevation, boresightRotAngle, weather)
         exposure.getInfo().setVisitInfo(visitInfo)
 
         # Set the DCR-matched PSF
-        if psf is None:
-            if self.psf is None:
-                self.calc_psf_model()
-            psf_single = self.build_matched_psf(elevation, calculate_rotation_angle(exposure), weather)
-        else:
-            psf_single = psf
         exposure.setPsf(psf_single)
         return exposure
 
@@ -906,7 +917,7 @@ class GenerateTemplate:
         image_use, var_use, mask_use = _resize_image(reference_image, variance, self.mask, self.bbox,
                                                      patch_bbox, expand=True)
         ref_exp = self.create_exposure(image_use, variance=var_use, mask=mask_use, bbox=patch_bbox,
-                                       elevation=Angle(np.pi/2), azimuth=Angle(0))
+                                       isCoadd=True)
         ref_exp.getMaskedImage().getMask().addMaskPlane("CLIPPED")
         self.write_exposure(ref_exp, datasetType="deepCoadd", butler=butler)
         butler.put(self.skyMap, "dcrCoadd_skyMap")
@@ -919,7 +930,7 @@ class GenerateTemplate:
                                                          expand=True)
 
             exp = self.create_exposure(image_use, variance=var_use, mask=mask_use, bbox=patch_bbox,
-                                       elevation=Angle(np.pi/2), azimuth=Angle(0),
+                                       isCoadd=True,
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end)
             exp.getMaskedImage().getMask().addMaskPlane("CLIPPED")
             self.write_exposure(exp, datasetType="dcrCoadd", subfilter=f, butler=butler)
