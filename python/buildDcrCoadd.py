@@ -572,21 +572,30 @@ class BuildDcrCoadd(GenerateTemplate):
         """
         avg_solution = np.mean(new_solution, axis=0)
         if mask is not None:
-            mask_use = (mask & 32) == 32
+            detected_bit = 32  # Should eventually use actual mask with mask plane info.
+            mask_use = (mask & detected_bit) == detected_bit
+            inds_use = mask_use == 1
+            print("Before %f" % np.mean(avg_solution[inds_use]))
             mask_use = filter_fn(mask_use, filter_width, mode='constant')
             avg_solution *= mask_use
+            print("After %f" % np.mean(avg_solution[inds_use]))
+            scale_arr = [np.mean(soln[inds_use])/np.mean(avg_solution[inds_use]) for soln in new_solution]
+        else:
+            scale_arr = [np.mean(soln/np.mean(avg_solution)) for soln in new_solution]
+        scale_arr = [scale if scale > 0 else 1. for scale in scale_arr]
 
         # Avoid dividing by zero
         avg_solution_inverse = np.zeros_like(avg_solution)
         non_zero_inds = avg_solution != 0
         avg_solution_inverse[non_zero_inds] = 1./avg_solution[non_zero_inds]
 
-        delta_solution = [soln*avg_solution_inverse - 1. for soln in new_solution]
+        delta_solution = [soln*avg_solution_inverse - scale
+                          for soln, scale in zip(new_solution, scale_arr)]
         filter_solution = []
         ii = 0
-        for delta in delta_solution:
+        for delta, scale in zip(delta_solution, scale_arr):
             filter_delta = filter_fn(delta, filter_width, mode='constant')
-            single_soln = (filter_delta + 1.)*avg_solution
+            single_soln = (filter_delta + scale)*avg_solution
             if mask is not None:
                 single_soln *= mask_use
                 single_soln += new_solution[ii]*(1 - mask_use)
@@ -641,7 +650,8 @@ class BuildDcrCoadd(GenerateTemplate):
             max_slope = 1.
         n_step = len(new_solution)
         y_size, x_size = new_solution[0].shape
-        solution_avg = np.sum(new_solution, axis=0)/n_step
+        solution_avg = np.median(new_solution, axis=0)
+
         slope_ratio = max_slope
         sum_x = 0.
         sum_y = np.zeros((y_size, x_size))
