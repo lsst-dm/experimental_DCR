@@ -190,7 +190,8 @@ class GenerateTemplate:
 
         if output_repository is not None:
             # Need to also specify ``inputs`` to be able to query the butler for the required keys.
-            butler = daf_persistence.Butler(outputs=output_repository, inputs=output_repository)
+            output_args = {'root': output_repository}
+            butler = daf_persistence.Butler(outputs=output_args, inputs=output_repository)
         else:
             butler = self.butler
 
