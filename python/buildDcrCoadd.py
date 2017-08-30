@@ -529,6 +529,8 @@ class BuildDcrCoadd(GenerateTemplate):
             visitInfo = exp.getInfo().getVisitInfo()
             if airmass_weight:
                 inverse_var *= visitInfo.getBoresightAirmass()
+            if use_variance:
+                inverse_var = np.sqrt(inverse_var)
             dcr_list = [dcr for dcr in dcr_gen]
             last_model_shift = []
             for f, dcr in enumerate(dcr_list):
