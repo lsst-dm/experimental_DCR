@@ -252,7 +252,8 @@ class BuildDcrCoadd(GenerateTemplate):
     def build_model(self, verbose=True, max_iter=10, min_iter=None, gain=None, clamp=None,
                     frequency_regularization=False, max_slope=None, initial_solution=None,
                     test_convergence=False, convergence_threshold=None, use_variance=True,
-                    refine_solution=False, spatial_filter=None, airmass_weight=False):
+                    refine_solution=False, spatial_filter=None, airmass_weight=False,
+                    refine_max_iter=None,):
         """Build a model of the sky in multiple sub-bands.
 
         Parameters
@@ -337,8 +338,10 @@ class BuildDcrCoadd(GenerateTemplate):
             else:
                 spatial_filter_use = spatial_filter
             initial_solution = self._model_spatial_filter(self.model, spatial_filter_use)
+            if refine_max_iter is None:
+                refine_max_iter = max_iter*2
             self._build_model_subroutine(initial_solution, verbose=verbose,
-                                         max_iter=max_iter, min_iter=min_iter,
+                                         max_iter=refine_max_iter, min_iter=min_iter,
                                          frequency_regularization=frequency_regularization,
                                          gain=gain, clamp=clamp, max_slope=max_slope,
                                          test_convergence=test_convergence,
