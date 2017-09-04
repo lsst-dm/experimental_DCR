@@ -48,6 +48,7 @@ from lsst.utils import getPackageDir
 from .lsst_defaults import lsst_observatory, lsst_weather
 from .dcr_utils import calculate_rotation_angle
 from .dcr_utils import diff_refraction
+from .dcr_utils import kernel_1d
 from .dcr_utils import solve_model
 from .dcr_utils import wrap_warpExposure
 from .dcr_utils import calculate_hour_angle
@@ -1026,8 +1027,8 @@ class GenerateTemplate:
         if size_out is None:
             size_out = size
         for dx, dy in dcr_gen:
-            kernel_x = _kernel_1d(dx, size, n_substep=100)
-            kernel_y = _kernel_1d(dy, size, n_substep=100)
+            kernel_x = kernel_1d(dx, size, n_substep=100)
+            kernel_y = kernel_1d(dy, size, n_substep=100)
             kernel = np.einsum('i,j->ij', kernel_y, kernel_x)
 
             if center_only:
@@ -1186,58 +1187,6 @@ def _calc_psf_kernel_subroutine(psf_img, size=None, size_out=None):
             sub_image_use = np.pad(sub_image, (y_shift, x_shift), 'constant', constant_values=0.)
             psf_mat[:, ij] = np.ravel(sub_image_use[slice_inds])
     return psf_mat
-
-
-def _kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False):
-    """Pre-compute the 1D sinc function values along each axis.
-
-    Calculate the kernel as a simple numerical integration over the width of the offset with n_substep steps
-
-    Parameters
-    ----------
-    offset : named tuple
-        Tuple of start/end pixel offsets of dft locations along single axis (either x or y)
-    size : int
-        Dimension in pixels of the given axis.
-    n_substep : int, optional
-        Number of points in the numerical integration. Default is 1.
-    lanczos : int, optional
-        If set, the order of lanczos interpolation to use.
-    debug_sinc : bool, optional
-        Set to use a simple linear interpolation between nearest neighbors, instead of a sinc kernel.
-
-    Returns
-    -------
-    np.ndarray
-        An array containing the values of the calculated kernel.
-    """
-    if n_substep is None:
-        n_substep = 1
-    else:
-        n_substep = int(n_substep)
-    pi = np.pi
-    pix = np.arange(size, dtype=np.float64)
-
-    kernel = np.zeros(size, dtype=np.float64)
-    for n in range(n_substep):
-        loc = (size + 1)/2. + (offset.start*(n_substep - (n + 0.5)) + offset.end*(n + 0.5))/n_substep
-        if loc % 1.0 == 0:
-            kernel[int(loc)] += 1.0
-        else:
-            if debug_sinc:
-                i_low = int(np.floor(loc))
-                i_high = i_low + 1
-                frac_high = loc - i_low
-                frac_low = 1. - frac_high
-                kernel[i_low] += frac_low
-                kernel[i_high] += frac_high
-            else:
-                x = pi*(pix - loc)
-                if lanczos is None:
-                    kernel += np.sin(x)/x
-                else:
-                    kernel += (np.sin(x)/x)*(np.sin(x/lanczos)/(x/lanczos))
-    return kernel/n_substep
 
 
 def _resize_image(image, variance, mask, bbox_old, bbox_new=None, bitmask=255, expand=True):
