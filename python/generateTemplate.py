@@ -48,6 +48,7 @@ from lsst.utils import getPackageDir
 from .lsst_defaults import lsst_observatory, lsst_weather
 from .dcr_utils import calculate_rotation_angle
 from .dcr_utils import diff_refraction
+from .dcr_utils import fft_shift_convolve
 from .dcr_utils import kernel_1d
 from .dcr_utils import solve_model
 from .dcr_utils import wrap_warpExposure
@@ -145,7 +146,8 @@ class GenerateTemplate:
     def generate_templates_from_model(self, obsids=None, exposures=None,
                                       input_repository=None, output_repository=None,
                                       warp=False, verbose=True,
-                                      output_obsid_offset=None):
+                                      output_obsid_offset=None,
+                                      use_stretch=False):
         """Use the previously generated model and construct a dcr template image.
 
         Parameters
@@ -210,7 +212,7 @@ class GenerateTemplate:
             rotation_angle = calculate_rotation_angle(calexp)
             weather = visitInfo.getWeather()
             template, variance = self.build_matched_template(calexp, el=el, rotation_angle=rotation_angle,
-                                                             weather=weather)
+                                                             weather=weather, use_stretch=use_stretch)
 
             if verbose:
                 print(" ... Done!")
@@ -338,7 +340,7 @@ class GenerateTemplate:
         dataRef.put(exposure)
 
     def build_matched_template(self, exposure=None, model=None, el=None, rotation_angle=None,
-                               return_weights=True, weather=None):
+                               return_weights=True, weather=None, use_stretch=False):
         """Sub-routine to calculate the sum of the model images shifted by DCR for a given exposure.
 
         Parameters
@@ -373,9 +375,10 @@ class GenerateTemplate:
                 weather = exposure.getInfo().getVisitInfo().getWeather()
             except:
                 weather = lsst_weather
+        use_midpoint = not use_stretch
         dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                       observatory=self.observatory, weather=weather,
-                                      elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
+                                      elevation=el, rotation_angle=rotation_angle, use_midpoint=use_midpoint)
         template = np.zeros((self.y_size, self.x_size))
         if return_weights:
             weights = np.zeros((self.y_size, self.x_size))
@@ -383,11 +386,17 @@ class GenerateTemplate:
             model_use = self.model
         else:
             model_use = model
+        subband_weights = self._subband_weights()
         for f, dcr in enumerate(dcr_gen):
-            shift = (dcr.dy, dcr.dx)
-            template += scipy_shift(model_use[f], shift)
-            if return_weights:
-                weights += scipy_shift(self.weights, shift)
+            if use_stretch:
+                template += fft_shift_convolve(model_use[f], dcr, weights=subband_weights[f])
+                if return_weights:
+                    weights += fft_shift_convolve(self.weights, dcr, weights=subband_weights[f])
+            else:
+                shift = (dcr.dy, dcr.dx)
+                template += scipy_shift(model_use[f], shift)
+                if return_weights:
+                    weights += scipy_shift(self.weights, shift)
         if return_weights:
             weights /= self.n_step
             variance = np.zeros((self.y_size, self.x_size))
@@ -432,7 +441,7 @@ class GenerateTemplate:
         return psf
 
     def _extract_image(self, exposure, airmass_weight=False, calculate_dcr_gen=True,
-                       use_only_detected=False, use_variance=True):
+                       use_only_detected=False, use_variance=True, use_midpoint_dcr=True):
         """Helper function to extract image array values from an exposure.
 
         Parameters
@@ -493,7 +502,8 @@ class GenerateTemplate:
             weather = visitInfo.getWeather()
             dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                           observatory=self.observatory, weather=weather,
-                                          elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
+                                          elevation=el, rotation_angle=rotation_angle,
+                                          use_midpoint=use_midpoint_dcr)
             return (img_vals, inverse_var, dcr_gen)
         else:
             return (img_vals, inverse_var)
@@ -993,6 +1003,7 @@ class GenerateTemplate:
         bandpass_init = self.load_bandpass(filter_name=filter_name, **kwargs)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / self.n_step
         self.bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
+        self.bandpass_highres = self.load_bandpass(filter_name=filter_name, wavelength_step=None, **kwargs)
 
         self.psf = dcrCoadd.getPsf()
         psf_avg = self.psf.computeKernelImage().getArray()
@@ -1091,6 +1102,13 @@ class GenerateTemplate:
                                                     size_out=kernel_size_intermediate)
             dcr_kernel[exp_i*n_pix_int: (exp_i + 1)*n_pix_int, :] = kernel_single
         return dcr_kernel
+
+    def _subband_weights(self):
+        weights = []
+        for wl_start, wl_end in self._wavelength_iterator(self.bandpass, use_midpoint=False):
+            inds_use = (self.bandpass_highres.wavelen < wl_end) & (self.bandpass_highres.wavelen > wl_start)
+            weights.append(self.bandpass_highres.sb[inds_use])
+        return weights
 
     def calc_psf_model_single(self, exposure):
         """Calculate the fiducial psf for a single exposure, accounting for DCR.

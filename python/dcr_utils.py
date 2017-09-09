@@ -98,6 +98,20 @@ def kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False, inve
     return kernel/np.sum(weights_interp)
 
 
+def fft_shift_convolve(image, shift, n_substep=100, inverse=False, weights=None):
+    y_size, x_size = image.shape
+    kernel_x = kernel_1d(shift.dx, x_size, n_substep=n_substep, debug_sinc=False,
+                         inverse=inverse, weights=weights)
+    kernel_y = kernel_1d(shift.dy, y_size, n_substep=n_substep, debug_sinc=False,
+                         inverse=inverse, weights=weights)
+    kernel = np.einsum('i,j->ij', kernel_y, kernel_x)
+    fft_image = np.fft.rfft2(image)
+    fft_kernel = np.fft.rfft2(kernel)
+    fft_image *= fft_kernel
+    return_image = np.fft.fftshift(np.fft.irfft2(fft_image))
+    return return_image
+
+
 def calculate_hour_angle(elevation, dec, latitude):
     """Compute the hour angle.
 
