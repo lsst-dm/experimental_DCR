@@ -40,14 +40,16 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
     """Tests for the functions in the GenerateTemplate class."""
 
     @classmethod
-    def setUpClass(self):
+    def setUpClass(cls):
         """Set up one instance of the butler for all tests of persistence."""
-        self.repository = "./test_data/"
-        self.butler = daf_persistence.Butler(inputs=self.repository, outputs=self.repository)
+        cls.repository = "./test_data/"
+        repo_args = {'root': cls.repository}
+        cls.butler = daf_persistence.Butler(inputs=cls.repository, outputs=repo_args)
 
     @classmethod
-    def tearDownClass(self):
-        del self.butler
+    def tearDownClass(cls):
+        """Clean up."""
+        del cls.butler
 
     def test_simple_phase_kernel(self):
         """Compare the result of _calc_offset_phase to previously computed values."""
@@ -75,8 +77,8 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
                                                               elevation=Angle(el), azimuth=az))
         template_gen = self.dcrTemplate.generate_templates_from_model(exposures=exposures)
         # Uncomment the following code to over-write the reference data:
-        # for exposure in model_gen:
-        #     self.dcrTemplate.write_exposure(exposure, output_repository=self.repository)
+        # for exposure in template_gen:
+        #     self.dcrTemplate.write_exposure(exposure)
         template_ref_gen = self.dcrTemplate.read_exposures(obsids=obsids)
 
         for template_test, template_ref in izip(template_gen, template_ref_gen):

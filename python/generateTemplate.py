@@ -48,6 +48,8 @@ from lsst.utils import getPackageDir
 from .lsst_defaults import lsst_observatory, lsst_weather
 from .dcr_utils import calculate_rotation_angle
 from .dcr_utils import diff_refraction
+from .dcr_utils import fft_shift_convolve
+from .dcr_utils import kernel_1d
 from .dcr_utils import solve_model
 from .dcr_utils import wrap_warpExposure
 from .dcr_utils import calculate_hour_angle
@@ -144,7 +146,8 @@ class GenerateTemplate:
     def generate_templates_from_model(self, obsids=None, exposures=None,
                                       input_repository=None, output_repository=None,
                                       warp=False, verbose=True,
-                                      output_obsid_offset=None):
+                                      output_obsid_offset=None,
+                                      use_stretch=False):
         """Use the previously generated model and construct a dcr template image.
 
         Parameters
@@ -190,7 +193,8 @@ class GenerateTemplate:
 
         if output_repository is not None:
             # Need to also specify ``inputs`` to be able to query the butler for the required keys.
-            butler = daf_persistence.Butler(outputs=output_repository, inputs=output_repository)
+            output_args = {'root': output_repository}
+            butler = daf_persistence.Butler(outputs=output_args, inputs=output_repository)
         else:
             butler = self.butler
 
@@ -208,7 +212,7 @@ class GenerateTemplate:
             rotation_angle = calculate_rotation_angle(calexp)
             weather = visitInfo.getWeather()
             template, variance = self.build_matched_template(calexp, el=el, rotation_angle=rotation_angle,
-                                                             weather=weather)
+                                                             weather=weather, use_stretch=use_stretch)
 
             if verbose:
                 print(" ... Done!")
@@ -220,7 +224,7 @@ class GenerateTemplate:
             exposure = self.create_exposure(template, variance=variance, snap=0, ra=ra, dec=dec,
                                             boresightRotAngle=rotation_angle, weather=weather,
                                             elevation=el, azimuth=az, exposureId=obsid_out,
-                                            psf=calexp.getPsf())
+                                            )
             if warp:
                 wrap_warpExposure(exposure, wcs_exp, bbox_exp)
             else:
@@ -336,7 +340,7 @@ class GenerateTemplate:
         dataRef.put(exposure)
 
     def build_matched_template(self, exposure=None, model=None, el=None, rotation_angle=None,
-                               return_weights=True, weather=None):
+                               return_weights=True, weather=None, use_stretch=False):
         """Sub-routine to calculate the sum of the model images shifted by DCR for a given exposure.
 
         Parameters
@@ -371,9 +375,10 @@ class GenerateTemplate:
                 weather = exposure.getInfo().getVisitInfo().getWeather()
             except:
                 weather = lsst_weather
+        use_midpoint = not use_stretch
         dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                       observatory=self.observatory, weather=weather,
-                                      elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
+                                      elevation=el, rotation_angle=rotation_angle, use_midpoint=use_midpoint)
         template = np.zeros((self.y_size, self.x_size))
         if return_weights:
             weights = np.zeros((self.y_size, self.x_size))
@@ -381,11 +386,17 @@ class GenerateTemplate:
             model_use = self.model
         else:
             model_use = model
+        subband_weights = self._subband_weights()
         for f, dcr in enumerate(dcr_gen):
-            shift = (dcr.dy, dcr.dx)
-            template += scipy_shift(model_use[f], shift)
-            if return_weights:
-                weights += scipy_shift(self.weights, shift)
+            if use_stretch:
+                template += fft_shift_convolve(model_use[f], dcr, weights=subband_weights[f])
+                if return_weights:
+                    weights += fft_shift_convolve(self.weights, dcr, weights=subband_weights[f])
+            else:
+                shift = (dcr.dy, dcr.dx)
+                template += scipy_shift(model_use[f], shift)
+                if return_weights:
+                    weights += scipy_shift(self.weights, shift)
         if return_weights:
             weights /= self.n_step
             variance = np.zeros((self.y_size, self.x_size))
@@ -430,7 +441,7 @@ class GenerateTemplate:
         return psf
 
     def _extract_image(self, exposure, airmass_weight=False, calculate_dcr_gen=True,
-                       use_only_detected=False, use_variance=True):
+                       use_only_detected=False, use_variance=True, use_midpoint_dcr=True):
         """Helper function to extract image array values from an exposure.
 
         Parameters
@@ -491,7 +502,8 @@ class GenerateTemplate:
             weather = visitInfo.getWeather()
             dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                           observatory=self.observatory, weather=weather,
-                                          elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
+                                          elevation=el, rotation_angle=rotation_angle,
+                                          use_midpoint=use_midpoint_dcr)
             return (img_vals, inverse_var, dcr_gen)
         else:
             return (img_vals, inverse_var)
@@ -753,9 +765,10 @@ class GenerateTemplate:
         if doWrite:
             butler.put(self.skyMap, datasetName)
 
-    def create_exposure(self, array, elevation, azimuth, variance=None, mask=None, bbox=None, psf=None,
+    def create_exposure(self, array, elevation=nanAngle, azimuth=nanAngle,
+                        variance=None, mask=None, bbox=None,
                         exposureId=0, ra=nanAngle, dec=nanAngle, boresightRotAngle=nanAngle, era=None, snap=0,
-                        weather=lsst_weather, **kwargs):
+                        weather=lsst_weather, isCoadd=False, **kwargs):
         """Convert a numpy array to an LSST exposure with all the required metadata.
 
         Parameters
@@ -801,6 +814,8 @@ class GenerateTemplate:
             bbox = self.bbox
         if mask is None:
             mask = self.mask
+        if self.psf is None:
+            self.calc_psf_model()
         exposure = afwImage.ExposureF(bbox)
         exposure.setWcs(self.wcs)
         # We need the filter name in the exposure metadata, and it can't just be set directly
@@ -827,52 +842,60 @@ class GenerateTemplate:
         exposure.getMaskedImage().getVariance().getArray()[:, :] = variance
 
         exposure.getMaskedImage().getMask().getArray()[:, :] = mask
-        hour_angle = calculate_hour_angle(elevation, dec, self.observatory.getLatitude())
-        mjd = 59000.0 + (self.observatory.getLatitude().asDegrees()/15.0 - hour_angle.asDegrees())/24.0
-        airmass = 1.0/np.sin(elevation.asRadians())
-        if era is None:
-            era = Angle(hour_angle.asRadians() - self.observatory.getLongitude().asRadians())
         meta = exposure.getMetadata()
-        meta.add("CHIPID", "R22_S11")
-        # Required! Phosim output stores the snap ID in "OUTFILE" as the last three characters in a string.
-        meta.add("OUTFILE", ("SnapId_%3.3i" % snap))
-        meta.add("OBSID", int(exposureId))
-
-        meta.add("TAI", mjd)
-        meta.add("MJD-OBS", mjd)
-
-        meta.add("EXTTYPE", "IMAGE")
-        meta.add("EXPTIME", self.exposure_time)
-        meta.add("AIRMASS", airmass)
-        meta.add("ZENITH", 90. - elevation.asDegrees())
-        meta.add("AZIMUTH", azimuth.asDegrees())
 
         # Add all additional keyword arguments to the metadata.
         for add_item in kwargs:
-            meta.add(add_item, kwargs[add_item])
+            try:
+                meta.add(add_item, kwargs[add_item])
+            except:
+                print("Warning: not adding keyword %s to metadata; invalid type" % add_item)
+        if isCoadd:
+            boresightRotAngle = Angle(0.)
+            visitInfo = afwImage.VisitInfo(exposureId=int(exposureId),
+                                           exposureTime=self.exposure_time,
+                                           darkTime=self.exposure_time,
+                                           observatory=self.observatory,
+                                           weather=weather
+                                           )
+            psf_single = self.psf
+        else:
+            hour_angle = calculate_hour_angle(elevation, dec, self.observatory.getLatitude())
+            mjd = 59000.0 + (self.observatory.getLatitude().asDegrees()/15.0 - hour_angle.asDegrees())/24.0
+            airmass = 1.0/np.sin(elevation.asRadians())
+            if era is None:
+                era = Angle(hour_angle.asRadians() - self.observatory.getLongitude().asRadians())
+            meta.add("CHIPID", "R22_S11")
+            # Required! Phosim output stores the snap ID in "OUTFILE" as the last three characters in a string
+            meta.add("OUTFILE", ("SnapId_%3.3i" % snap))
+            meta.add("OBSID", int(exposureId))
 
-        visitInfo = afwImage.VisitInfo(exposureId=int(exposureId),
-                                       exposureTime=self.exposure_time,
-                                       darkTime=self.exposure_time,
-                                       date=DateTime(mjd),
-                                       ut1=mjd,
-                                       era=era,
-                                       boresightRaDec=IcrsCoord(ra, dec),
-                                       boresightAzAlt=Coord(azimuth, elevation),
-                                       boresightAirmass=airmass,
-                                       boresightRotAngle=boresightRotAngle,
-                                       observatory=self.observatory,
-                                       weather=weather
-                                       )
+            meta.add("TAI", mjd)
+            meta.add("MJD-OBS", mjd)
+
+            meta.add("EXTTYPE", "IMAGE")
+            meta.add("EXPTIME", self.exposure_time)
+            meta.add("AIRMASS", airmass)
+            meta.add("ZENITH", 90. - elevation.asDegrees())
+            meta.add("AZIMUTH", azimuth.asDegrees())
+
+            visitInfo = afwImage.VisitInfo(exposureId=int(exposureId),
+                                           exposureTime=self.exposure_time,
+                                           darkTime=self.exposure_time,
+                                           date=DateTime(mjd),
+                                           ut1=mjd,
+                                           era=era,
+                                           boresightRaDec=IcrsCoord(ra, dec),
+                                           boresightAzAlt=Coord(azimuth, elevation),
+                                           boresightAirmass=airmass,
+                                           boresightRotAngle=boresightRotAngle,
+                                           observatory=self.observatory,
+                                           weather=weather
+                                           )
+            psf_single = self.build_matched_psf(elevation, boresightRotAngle, weather)
         exposure.getInfo().setVisitInfo(visitInfo)
 
         # Set the DCR-matched PSF
-        if psf is None:
-            if self.psf is None:
-                self.calc_psf_model()
-            psf_single = self.build_matched_psf(elevation, calculate_rotation_angle(exposure), weather)
-        else:
-            psf_single = psf
         exposure.setPsf(psf_single)
         return exposure
 
@@ -901,25 +924,26 @@ class GenerateTemplate:
 
         wave_gen = self._wavelength_iterator(self.bandpass, use_midpoint=False)
         variance = np.zeros_like(self.weights)
-        variance[self.weights > 0] = 1./self.weights[self.weights > 0]
+        nonzero_inds = self.weights > 0
+        variance[nonzero_inds] = 1./self.weights[nonzero_inds]
         reference_image = np.sum(self.model, axis=0)
-        image_use, var_use, mask_use = _resize_image(reference_image, variance, self.mask, self.bbox,
-                                                     patch_bbox, expand=True)
+        # variance = reference_image[:, :]
+        image_use, var_use, mask_use = _resize_image(reference_image, variance*self.n_step, self.mask,
+                                                     bbox_old=self.bbox, bbox_new=patch_bbox,
+                                                     expand=True)
         ref_exp = self.create_exposure(image_use, variance=var_use, mask=mask_use, bbox=patch_bbox,
-                                       elevation=Angle(np.pi/2), azimuth=Angle(0))
+                                       isCoadd=True)
         ref_exp.getMaskedImage().getMask().addMaskPlane("CLIPPED")
         self.write_exposure(ref_exp, datasetType="deepCoadd", butler=butler)
         butler.put(self.skyMap, "dcrCoadd_skyMap")
-        variance /= self.n_step
         for f in range(self.n_step):
             wl_start, wl_end = wave_gen.next()
-
+            # variance = self.model[f][:, :]
             image_use, var_use, mask_use = _resize_image(self.model[f], variance, self.mask,
                                                          bbox_old=self.bbox, bbox_new=patch_bbox,
                                                          expand=True)
-
             exp = self.create_exposure(image_use, variance=var_use, mask=mask_use, bbox=patch_bbox,
-                                       elevation=Angle(np.pi/2), azimuth=Angle(0),
+                                       isCoadd=True,
                                        subfilt=f, nstep=self.n_step, wavelow=wl_start, wavehigh=wl_end)
             exp.getMaskedImage().getMask().addMaskPlane("CLIPPED")
             self.write_exposure(exp, datasetType="dcrCoadd", subfilter=f, butler=butler)
@@ -957,7 +981,10 @@ class GenerateTemplate:
         self.model = model_arr
         self.n_step = len(self.model)
         # The weights should be identical for all subfilters.
-        self.weights = var_use*self.n_step
+        self.weights = np.zeros_like(var_use)
+        nonzero_inds = var_use > 0
+        self.weights[nonzero_inds] = 1./var_use[nonzero_inds]
+        # self.weights = var_use*self.n_step
         # The masks should be identical for all subfilters
         self.mask = mask_use
 
@@ -976,6 +1003,7 @@ class GenerateTemplate:
         bandpass_init = self.load_bandpass(filter_name=filter_name, **kwargs)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / self.n_step
         self.bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
+        self.bandpass_highres = self.load_bandpass(filter_name=filter_name, wavelength_step=None, **kwargs)
 
         self.psf = dcrCoadd.getPsf()
         psf_avg = self.psf.computeKernelImage().getArray()
@@ -1010,8 +1038,8 @@ class GenerateTemplate:
         if size_out is None:
             size_out = size
         for dx, dy in dcr_gen:
-            kernel_x = _kernel_1d(dx, size, n_substep=100)
-            kernel_y = _kernel_1d(dy, size, n_substep=100)
+            kernel_x = kernel_1d(dx, size, n_substep=100)
+            kernel_y = kernel_1d(dy, size, n_substep=100)
             kernel = np.einsum('i,j->ij', kernel_y, kernel_x)
 
             if center_only:
@@ -1074,6 +1102,13 @@ class GenerateTemplate:
                                                     size_out=kernel_size_intermediate)
             dcr_kernel[exp_i*n_pix_int: (exp_i + 1)*n_pix_int, :] = kernel_single
         return dcr_kernel
+
+    def _subband_weights(self):
+        weights = []
+        for wl_start, wl_end in self._wavelength_iterator(self.bandpass, use_midpoint=False):
+            inds_use = (self.bandpass_highres.wavelen < wl_end) & (self.bandpass_highres.wavelen > wl_start)
+            weights.append(self.bandpass_highres.sb[inds_use])
+        return weights
 
     def calc_psf_model_single(self, exposure):
         """Calculate the fiducial psf for a single exposure, accounting for DCR.
@@ -1170,58 +1205,6 @@ def _calc_psf_kernel_subroutine(psf_img, size=None, size_out=None):
             sub_image_use = np.pad(sub_image, (y_shift, x_shift), 'constant', constant_values=0.)
             psf_mat[:, ij] = np.ravel(sub_image_use[slice_inds])
     return psf_mat
-
-
-def _kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False):
-    """Pre-compute the 1D sinc function values along each axis.
-
-    Calculate the kernel as a simple numerical integration over the width of the offset with n_substep steps
-
-    Parameters
-    ----------
-    offset : named tuple
-        Tuple of start/end pixel offsets of dft locations along single axis (either x or y)
-    size : int
-        Dimension in pixels of the given axis.
-    n_substep : int, optional
-        Number of points in the numerical integration. Default is 1.
-    lanczos : int, optional
-        If set, the order of lanczos interpolation to use.
-    debug_sinc : bool, optional
-        Set to use a simple linear interpolation between nearest neighbors, instead of a sinc kernel.
-
-    Returns
-    -------
-    np.ndarray
-        An array containing the values of the calculated kernel.
-    """
-    if n_substep is None:
-        n_substep = 1
-    else:
-        n_substep = int(n_substep)
-    pi = np.pi
-    pix = np.arange(size, dtype=np.float64)
-
-    kernel = np.zeros(size, dtype=np.float64)
-    for n in range(n_substep):
-        loc = (size + 1)/2. + (offset.start*(n_substep - (n + 0.5)) + offset.end*(n + 0.5))/n_substep
-        if loc % 1.0 == 0:
-            kernel[int(loc)] += 1.0
-        else:
-            if debug_sinc:
-                i_low = int(np.floor(loc))
-                i_high = i_low + 1
-                frac_high = loc - i_low
-                frac_low = 1. - frac_high
-                kernel[i_low] += frac_low
-                kernel[i_high] += frac_high
-            else:
-                x = pi*(pix - loc)
-                if lanczos is None:
-                    kernel += np.sin(x)/x
-                else:
-                    kernel += (np.sin(x)/x)*(np.sin(x/lanczos)/(x/lanczos))
-    return kernel/n_substep
 
 
 def _resize_image(image, variance, mask, bbox_old, bbox_new=None, bitmask=255, expand=True):
