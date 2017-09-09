@@ -38,7 +38,7 @@ __all__ = ["calculate_hour_angle", "parallactic_angle", "wrap_warpExposure", "so
            "calculate_rotation_angle", "refraction", "diff_refraction"]
 
 
-def kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False, inverse=False):
+def kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False, inverse=False, weights=None):
     """Pre-compute the 1D sinc function values along each axis.
 
     Calculate the kernel as a simple numerical integration over the width of the offset with n_substep steps
@@ -69,28 +69,33 @@ def kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False, inve
     pix = np.arange(size, dtype=np.float64)
 
     kernel = np.zeros(size, dtype=np.float64)
+    if weights is None:
+        weights_interp = np.ones(n_substep)
+    else:
+        interp_x = np.linspace(0, len(weights), num=n_substep)
+        weights_interp = np.interp(interp_x, np.arange(len(weights)), weights)
     for n in range(n_substep):
         if inverse:
             loc = size/2. + (-offset.start*(n_substep - (n + 0.5)) - offset.end*(n + 0.5))/n_substep
         else:
             loc = size/2. + (offset.start*(n_substep - (n + 0.5)) + offset.end*(n + 0.5))/n_substep
         if loc % 1.0 == 0:
-            kernel[int(loc)] += 1.0
+            kernel[int(loc)] += weights_interp[n]
         else:
             if debug_sinc:
                 i_low = int(np.floor(loc))
                 i_high = i_low + 1
                 frac_high = loc - i_low
                 frac_low = 1. - frac_high
-                kernel[i_low] += frac_low
-                kernel[i_high] += frac_high
+                kernel[i_low] += weights_interp[n]*frac_low
+                kernel[i_high] += weights_interp[n]*frac_high
             else:
                 x = pi*(pix - loc)
                 if lanczos is None:
-                    kernel += np.sin(x)/x
+                    kernel += weights_interp[n]*np.sin(x)/x
                 else:
-                    kernel += (np.sin(x)/x)*(np.sin(x/lanczos)/(x/lanczos))
-    return kernel/n_substep
+                    kernel += weights_interp[n]*(np.sin(x)/x)*(np.sin(x/lanczos)/(x/lanczos))
+    return kernel/np.sum(weights_interp)
 
 
 def calculate_hour_angle(elevation, dec, latitude):
