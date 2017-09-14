@@ -136,6 +136,7 @@ class BasicGenerateTemplate(GenerateTemplate):
         bandpass_init = BasicBandpass(filter_name=filter_name, wavelength_step=wavelength_step)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
         self.bandpass = BasicBandpass(filter_name=filter_name, wavelength_step=wavelength_step)
+        self.bandpass_highres = BasicBandpass(filter_name=filter_name, wavelength_step=None)
         self.model = [rand_gen.random(size=(size, size)) for f in range(n_step)]
         # self.weights = np.ones((size, size))
         self.mask = np.zeros((size, size), dtype=np.int32)
@@ -236,7 +237,7 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
         Height of the model, in pixels.
     """
 
-    def __init__(self, filter_name='g', n_step=3, exposures=None):
+    def __init__(self, filter_name='g', n_step=3, exposures=None, psf_size=None):
         """Initialize the lightweight version of BuildDcrCoadd for testing.
 
         Parameters
@@ -271,7 +272,9 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
         self.wcs = exposures[0].getWcs()
         self.observatory = exposures[0].getInfo().getVisitInfo().getObservatory()
         psf = exposures[0].getPsf().computeKernelImage().getArray()
-        self.psf_size = psf.shape[0]
+        if psf_size is None:
+            psf_size = psf.shape[0]
+        self.psf_size = psf_size
 
 
 class DcrCoaddTestBase:

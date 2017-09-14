@@ -54,6 +54,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         filter_name = 'g'
         cls.n_step = 3
         cls.n_images = 5
+        cls.psf_size = 5
 
         butler = daf_persistence.Butler(inputs="./test_data/")
         exposures = []
@@ -62,7 +63,8 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
             dataId = {'visit': exp_i, 'raft': '2,2', 'sensor': '1,1', 'filter_name': 'g'}
             exposures.append(butler.get("calexp", dataId=dataId))
         # Use BasicBuildDcrCoadd here to save execution time.
-        cls.dcrCoadd = BasicBuildDcrCoadd(filter_name=filter_name, n_step=cls.n_step, exposures=exposures)
+        cls.dcrCoadd = BasicBuildDcrCoadd(filter_name=filter_name, n_step=cls.n_step,
+                                          exposures=exposures, psf_size=cls.psf_size)
         cls.ref_vals = []
         detected_bit = cls.dcrCoadd.exposures[0].getMaskedImage().getMask().getPlaneBitMask('DETECTED')
         for exp in cls.dcrCoadd.exposures:
@@ -126,8 +128,8 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
     def test_calc_model_metric(self):
         """Test that the DCR model convergence metric is calculated consistently."""
         model_file = "test_data/build_model_vals.npy"
-        metric_ref = np.array([0.034547679807, 0.0192584740903, 0.023697466239,
-                               0.032737641588, 0.0428333486302, 0.0471672612838])
+        metric_ref = np.array([0.0356813071592, 0.0191242365557, 0.0234510697946,
+                               0.0329285821735, 0.0431004242396, 0.0475980278009])
         model = np.load(model_file)
         metric = self.dcrCoadd.calc_model_metric(model=model)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)
