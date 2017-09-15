@@ -21,7 +21,6 @@
 #
 
 from __future__ import print_function, division, absolute_import
-import copy
 from itertools import izip
 import unittest
 
@@ -50,11 +49,12 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
     """
 
     @classmethod
-    def setUpClass(self):
+    def setUpClass(cls):
         """Define parameters used by every test."""
         filter_name = 'g'
-        self.n_step = 3
-        self.n_images = 5
+        cls.n_step = 3
+        cls.n_images = 5
+        cls.psf_size = 5
 
         butler = daf_persistence.Butler(inputs="./test_data/")
         exposures = []
@@ -63,17 +63,18 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
             dataId = {'visit': exp_i, 'raft': '2,2', 'sensor': '1,1', 'filter_name': 'g'}
             exposures.append(butler.get("calexp", dataId=dataId))
         # Use BasicBuildDcrCoadd here to save execution time.
-        self.dcrCoadd = BasicBuildDcrCoadd(filter_name=filter_name, n_step=self.n_step, exposures=exposures)
-        self.ref_vals = []
-        detected_bit = self.dcrCoadd.exposures[0].getMaskedImage().getMask().getPlaneBitMask('DETECTED')
-        for exp in self.dcrCoadd.exposures:
+        cls.dcrCoadd = BasicBuildDcrCoadd(filter_name=filter_name, n_step=cls.n_step,
+                                          exposures=exposures, psf_size=cls.psf_size)
+        cls.ref_vals = []
+        detected_bit = cls.dcrCoadd.exposures[0].getMaskedImage().getMask().getPlaneBitMask('DETECTED')
+        for exp in cls.dcrCoadd.exposures:
             exp.getMaskedImage().getMask().getArray()[:, :] = detected_bit
-            self.ref_vals.append(exp.getMaskedImage().getImage().getArray())
+            cls.ref_vals.append(exp.getMaskedImage().getImage().getArray())
 
     @classmethod
-    def tearDownClass(self):
+    def tearDownClass(cls):
         """Clean up."""
-        del self.dcrCoadd
+        del cls.dcrCoadd
 
     def test_extract_image(self):
         """Test that the extracted values are the same as `ref_vals`."""
@@ -124,42 +125,23 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         for inv_var_new, inv_var_ref in izip(inverse_var_arr, inverse_var_arr_ref):
             self.assertFloatsAlmostEqual(inv_var_new, inv_var_ref)
 
-    def test_clamp_model_solution(self):
-        """Test that extreme solutions that changed by more than a factor of ``clamp`` are reduced."""
-        clamp = 3.
-        rand_gen = np.random
-        rand_gen.seed(5)
-        n_step = self.dcrCoadd.n_step
-        x_size = self.dcrCoadd.x_size
-        y_size = self.dcrCoadd.y_size
-        last_solution = [rand_gen.random((y_size, x_size)) for f in range(n_step)]
-        new_solution = [10.*(rand_gen.random((y_size, x_size)) - 0.5) for f in range(n_step)]
-        ref_solution = copy.deepcopy(new_solution)
-        self.dcrCoadd._clamp_model_solution(new_solution, last_solution, clamp)
-        ref_max = np.max(ref_solution)
-        ref_min = np.min(ref_solution)
-        last_max = np.max(last_solution)
-        last_min = np.min(last_solution)
-        clamp_max = np.max(new_solution)
-        clamp_min = np.min(new_solution)
-        self.assertLessEqual(ref_min, clamp_min)
-        self.assertGreaterEqual(ref_max, clamp_max)
-        self.assertGreaterEqual(clamp_min, last_min/clamp)
-        self.assertLessEqual(clamp_max, last_max*clamp)
-
     def test_calc_model_metric(self):
         """Test that the DCR model convergence metric is calculated consistently."""
         model_file = "test_data/build_model_vals.npy"
-        metric_ref = np.array([0.0326935559509, 0.0299110529484, 0.0312179049219,
-                               0.0347479542217, 0.0391646272523, 0.0421978103681])
+        metric_ref = np.array([0.0356813071592, 0.0191242365557, 0.0234510697946,
+                               0.0329285821735, 0.0431004242396, 0.0475980278009])
         model = np.load(model_file)
         metric = self.dcrCoadd.calc_model_metric(model=model)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)
 
     def test_build_model_convergence_failure(self):
         """Test that the iterative solver fails to converge if given a negative gain."""
-        did_converge = self.dcrCoadd._build_model_subroutine(initial_solution=1, verbose=False, gain=-2,
-                                                             test_convergence=True)
+        n_step = self.dcrCoadd.n_step
+        x_size = self.dcrCoadd.x_size
+        y_size = self.dcrCoadd.y_size
+        initial_solution = [np.ones((y_size, x_size)) for f in range(n_step)]
+        did_converge = self.dcrCoadd._build_model_subroutine(initial_solution=initial_solution, verbose=False,
+                                                             gain=-2, test_convergence=True)
         self.assertFalse(did_converge)
 
     def test_calculate_psf(self):

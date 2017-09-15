@@ -23,6 +23,7 @@
 from __future__ import print_function, division, absolute_import
 import numpy as np
 
+from lsst.afw.coord import IcrsCoord
 import lsst.afw.geom as afwGeom
 from lsst.afw.geom import Angle
 import lsst.afw.image as afwImage
@@ -135,8 +136,9 @@ class BasicGenerateTemplate(GenerateTemplate):
         bandpass_init = BasicBandpass(filter_name=filter_name, wavelength_step=wavelength_step)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
         self.bandpass = BasicBandpass(filter_name=filter_name, wavelength_step=wavelength_step)
+        self.bandpass_highres = BasicBandpass(filter_name=filter_name, wavelength_step=None)
         self.model = [rand_gen.random(size=(size, size)) for f in range(n_step)]
-        self.weights = np.ones((size, size))
+        # self.weights = np.ones((size, size))
         self.mask = np.zeros((size, size), dtype=np.int32)
 
         self.n_step = n_step
@@ -159,6 +161,35 @@ class BasicGenerateTemplate(GenerateTemplate):
         psf_image.getArray()[:, :] = psf_vals
         psfK = afwMath.FixedKernel(psf_image)
         self.psf = measAlg.KernelPsf(psfK)
+
+    @staticmethod
+    def _create_wcs(bbox, pixel_scale, ra, dec, sky_rotation):
+        """Create a wcs (coordinate system).
+
+        Parameters
+        ----------
+        bbox : lsst.afw.geom.Box2I object
+            A bounding box.
+        pixel_scale : lsst.afw.geom.Angle
+            Plate scale, as an Angle.
+        ra : lsst.afw.geom.Angle
+            Right Ascension of the reference pixel, as an `Angle`.
+        dec : lsst.afw.geom.Angle
+            Declination of the reference pixel, as an Angle.
+        sky_rotation : lsst.afw.geom.Angle
+            Rotation of the image axis, East from North.
+
+        Returns
+        -------
+        Returns a lsst.afw.image.wcs object.
+        """
+        crval = IcrsCoord(ra, dec)
+        crpix = afwGeom.Box2D(bbox).getCenter()
+        cd1_1 = np.cos(sky_rotation.asRadians())*pixel_scale.asDegrees()
+        cd1_2 = -np.sin(sky_rotation.asRadians())*pixel_scale.asDegrees()
+        cd2_1 = np.sin(sky_rotation.asRadians())*pixel_scale.asDegrees()
+        cd2_2 = np.cos(sky_rotation.asRadians())*pixel_scale.asDegrees()
+        return(afwImage.makeWcs(crval, crpix, cd1_1, cd1_2, cd2_1, cd2_2))
 
 
 class BasicBuildDcrCoadd(BuildDcrCoadd):
@@ -206,7 +237,7 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
         Height of the model, in pixels.
     """
 
-    def __init__(self, filter_name='g', n_step=3, exposures=None):
+    def __init__(self, filter_name='g', n_step=3, exposures=None, psf_size=None):
         """Initialize the lightweight version of BuildDcrCoadd for testing.
 
         Parameters
@@ -227,8 +258,8 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
 
         self.exposures = exposures
 
-        bandpass_init = BasicBandpass(filter_name=filter_name, wavelength_step=None)
-        wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / n_step
+        self.bandpass_highres = BasicBandpass(filter_name=filter_name, wavelength_step=None)
+        wavelength_step = (self.bandpass_highres.wavelen_max - self.bandpass_highres.wavelen_min) / n_step
         self.bandpass = BasicBandpass(filter_name=filter_name, wavelength_step=wavelength_step)
         self.n_step = n_step
         self.n_images = len(exposures)
@@ -241,7 +272,9 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
         self.wcs = exposures[0].getWcs()
         self.observatory = exposures[0].getInfo().getVisitInfo().getObservatory()
         psf = exposures[0].getPsf().computeKernelImage().getArray()
-        self.psf_size = psf.shape[0]
+        if psf_size is None:
+            psf_size = psf.shape[0]
+        self.psf_size = psf_size
 
 
 class DcrCoaddTestBase:
@@ -290,6 +323,9 @@ class DcrCoaddTestBase:
         self.hour_angle = Angle(np.arccos((ha_term1 - ha_term2) / ha_term3))
         p_angle = parallactic_angle(self.hour_angle, dec, lsst_lat)
         self.rotation_angle = Angle(p_angle)
+        self.dcrTemplate.weights = np.zeros_like(self.array)
+        nonzero_inds = self.array > 0
+        self.dcrTemplate.weights[nonzero_inds] = 1./np.abs(self.array[nonzero_inds])
         self.dcr_gen = self.dcrTemplate._dcr_generator(self.dcrTemplate.bandpass,
                                                        pixel_scale=self.dcrTemplate.pixel_scale,
                                                        elevation=self.elevation,

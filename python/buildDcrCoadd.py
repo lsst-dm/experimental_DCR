@@ -24,12 +24,15 @@
 from __future__ import print_function, division, absolute_import
 
 import numpy as np
+import scipy.ndimage as ndimage
 from scipy.ndimage.interpolation import shift as scipy_shift
 
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
 
+from .dcr_utils import calculate_rotation_angle  # Likely can remove soon
+from .dcr_utils import fft_shift_convolve
 from .dcr_utils import wrap_warpExposure
 from .dcr_utils import solve_model
 from .generateTemplate import GenerateTemplate
@@ -49,6 +52,8 @@ class BuildDcrCoadd(GenerateTemplate):
     ----------
     bandpass : lsst.sims.photUtils.Bandpass object
         Bandpass object returned by `load_bandpass`
+    bandpass_highres : lsst.sims.photUtils.Bandpass object
+        A second Bandpass object returned by load_bandpass, at the highest resolution available.
     bbox : lsst.afw.geom.Box2I object
         A bounding box.
     butler : lsst.daf.persistence Butler object
@@ -114,7 +119,7 @@ class BuildDcrCoadd(GenerateTemplate):
 
     def __init__(self, obsids=None, input_repository='.', filter_name='g',
                  wavelength_step=10., n_step=None, exposures=None,
-                 warp=False, debug_mode=False, **kwargs):
+                 warp=False, debug_mode=False, verbose=False, **kwargs):
         """Load images from the repository and set up parameters.
 
         Parameters
@@ -137,6 +142,8 @@ class BuildDcrCoadd(GenerateTemplate):
             If True, the generated templates will be warped to match the wcs of each exposure.
         debug_mode : bool, optional
             Temporary debugging option.
+        verbose : bool, optional
+            Set to print additional status messages.
         **kwargs : TYPE
             Allows additional keyword arguments to be passed to `load_bandpass`.
 
@@ -166,8 +173,20 @@ class BuildDcrCoadd(GenerateTemplate):
 
         for i, calexp in enumerate(self.exposures):
             psf_size_arr.append(calexp.getPsf().computeKernelImage().getArray().shape[0])
+            visitInfo = calexp.getInfo().getVisitInfo()
+            hour_angle_arr.append(visitInfo.getBoresightHourAngle().asRadians())
 
-            hour_angle_arr.append(calexp.getInfo().getVisitInfo().getBoresightHourAngle().asRadians())
+            if verbose:
+                obsid = visitInfo.getExposureId()
+                print("Working on observation %s" % obsid)
+                el = visitInfo.getBoresightAzAlt().getLatitude()
+                az = visitInfo.getBoresightAzAlt().getLongitude()
+                ra = visitInfo.getBoresightRaDec().getLongitude()
+                dec = visitInfo.getBoresightRaDec().getLatitude()
+                rotation_angle = calculate_rotation_angle(calexp)
+                print("El: %2.4f, Az: %2.4f, RA: %2.4f, Dec: %2.4f, Rotation: %2.4f" %
+                      (el.asDegrees(), az.asDegrees(), ra.asDegrees(),
+                       dec.asDegrees(), rotation_angle.asDegrees()))
 
             if (i != ref_exp_i) & warp:
                 wrap_warpExposure(calexp, self.wcs, self.bbox)
@@ -185,6 +204,7 @@ class BuildDcrCoadd(GenerateTemplate):
         self.mask = self._combine_masks()
 
         bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
+        bandpass_highres = self.load_bandpass(filter_name=filter_name, wavelength_step=None, **kwargs)
         if n_step is not None:
             wavelength_step = (bandpass.wavelen_max - bandpass.wavelen_min) / n_step
             bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
@@ -197,6 +217,7 @@ class BuildDcrCoadd(GenerateTemplate):
             n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
         self.n_step = n_step
         self.bandpass = bandpass
+        self.bandpass_highres = bandpass_highres
 
     def calc_psf_model(self):
         """Calculate the fiducial psf from a given set of exposures, accounting for DCR.
@@ -206,8 +227,6 @@ class BuildDcrCoadd(GenerateTemplate):
         None
             Sets self.psf with a lsst.meas.algorithms KernelPsf object.
         """
-        n_step = 1
-        bandpass = self.load_bandpass(filter_name=self.filter_name, wavelength_step=None)
         n_pix = self.psf_size**2
         psf_mat = np.zeros(self.n_images*self.psf_size**2)
         for exp_i, exp in enumerate(self.exposures):
@@ -226,18 +245,20 @@ class BuildDcrCoadd(GenerateTemplate):
 
             psf_mat[exp_i*n_pix: (exp_i + 1)*n_pix] = np.ravel(psf_img_use)
 
-        dcr_shift = self._build_dcr_kernel(size=self.psf_size, bandpass=bandpass, n_step=n_step)
-        psf_model_gen = solve_model(self.psf_size, psf_mat, n_step=n_step, kernel_dcr=dcr_shift)
+        dcr_shift = self._build_dcr_kernel(size=self.psf_size)
+        psf_model_gen = solve_model(self.psf_size, psf_mat, n_step=self.n_step, kernel_dcr=dcr_shift)
 
-        psf_vals = np.sum(psf_model_gen)/n_step
+        psf_vals = np.sum(psf_model_gen)/self.n_step
         psf_image = afwImage.ImageD(self.psf_size, self.psf_size)
         psf_image.getArray()[:, :] = psf_vals
         psfK = afwMath.FixedKernel(psf_image)
         self.psf = measAlg.KernelPsf(psfK)
 
     def build_model(self, verbose=True, max_iter=10, min_iter=None, gain=None, clamp=None,
-                    frequency_regularization=True, max_slope=None,
-                    test_convergence=False, convergence_threshold=None, use_variance=True):
+                    frequency_regularization=False, max_slope=None, initial_solution=None,
+                    test_convergence=False, convergence_threshold=None, use_variance=True,
+                    refine_solution=False, spatial_filter=None, airmass_weight=False,
+                    refine_max_iter=None, use_stretch=None):
         """Build a model of the sky in multiple sub-bands.
 
         Parameters
@@ -262,6 +283,8 @@ class BuildDcrCoadd(GenerateTemplate):
         max_slope : float, optional
             Maximum slope to allow between sub-band model planes.
             Only used if ``frequency_regularization`` is set.
+        initial_solution : list of np.ndarrays, optional
+            Optionally supply the starting point of the iterative solution.
         test_convergence : bool, optional
             If True, then matched templates will be generated for each image for every iteration,
             and the difference with the image will be checked to see if it is less than the previous iteration
@@ -271,43 +294,89 @@ class BuildDcrCoadd(GenerateTemplate):
             between iterations.
         use_variance : bool, optional
             Set to weight pixels by their inverse variance when combining images.
+        refine_solution : bool, optional
+            If set, recalculate the initial solution from the model, and repeat iteration.
+        spatial_filter : bool, optional
+            For testing only! Apply a spatial filter to the solution at each iteration of forward modeling.
+        airmass_weight : bool, optional
+            Set to weight each observation by its airmass.
+        refine_max_iter : bool, optional
+            The maximum number of iterations of forward modeling allowed when refining the solution.
+        use_stretch : bool, optional
+            Set to simulate the effect of DCR across each sub-band by stretching the model.
         """
-        if verbose:
-            print("Calculating initial solution...", end="")
-
         # Set up an initial guess with all model planes equal as a starting point of the iterative solution
         # The solution is initialized to 0. and not an array so that it can adapt
         # to the size of the array returned by _extract_image. This should only matter in debugging.
-        initial_solution = 0.
-        initial_weights = 0.
-        for exp in self.exposures:
-            img, inverse_var = self._extract_image(exp, airmass_weight=True, calculate_dcr_gen=False,
-                                                   use_variance=use_variance)
-            initial_solution += img*inverse_var
-            initial_weights += inverse_var
+        if initial_solution is None:
+            if verbose:
+                print("Calculating initial solution...", end="")
+            initial_solution = 0.
+            initial_weights = 0.
+            for exp in self.exposures:
+                img, inverse_var = self._extract_image(exp, airmass_weight=True, calculate_dcr_gen=False,
+                                                       use_variance=use_variance)
+                initial_solution += img*inverse_var
+                initial_weights += inverse_var
 
+            weight_inds = initial_weights > 0
+            initial_solution[weight_inds] /= initial_weights[weight_inds]
+            wl_iter = self._wavelength_iterator(self.bandpass, use_midpoint=False)
+            flux_out = []
+            wl_in = self.bandpass_highres.wavelen
+            flux_in = self.bandpass_highres.sb
+            for wl_start, wl_end in wl_iter:
+                wl_use = (wl_in >= wl_start) & (wl_in < wl_end)
+                flux = np.sum(flux_in[wl_use])
+                flux_out.append(flux)
+            band_power = np.array(flux_out)
+            band_power /= np.sum(band_power)
+            initial_solution = [np.abs(initial_solution)*power for power in band_power]
+            if verbose:
+                print(" Done!")
+        self.model_base = initial_solution
         # When debugging, the image returned by _extract_image might be cropped to speed up calculations.
         if self.debug:
             self.y_size, self.x_size = initial_solution.shape
-        weight_inds = initial_weights > 0
-        self.model_base = initial_solution
-        initial_solution[weight_inds] /= initial_weights[weight_inds]
-        if verbose:
-            print(" Done!")
 
         self._build_model_subroutine(initial_solution, verbose=verbose, max_iter=max_iter, min_iter=min_iter,
-                                     frequency_regularization=frequency_regularization, max_slope=None,
-                                     gain=gain, clamp=clamp,
+                                     frequency_regularization=frequency_regularization,
+                                     gain=gain, clamp=clamp, max_slope=max_slope,
                                      test_convergence=test_convergence,
                                      convergence_threshold=convergence_threshold,
                                      use_variance=use_variance,
+                                     spatial_filter=spatial_filter,
+                                     airmass_weight=airmass_weight,
+                                     use_stretch=use_stretch,
                                      )
+        if refine_solution:
+            print("Refining model")
+            if spatial_filter is None:
+                spatial_filter_use = self.psf_size//2
+            else:
+                spatial_filter_use = spatial_filter
+            initial_solution = self._model_spatial_filter(self.model, spatial_filter_use)
+            if refine_max_iter is None:
+                refine_max_iter = max_iter*2
+            self._build_model_subroutine(initial_solution, verbose=verbose,
+                                         max_iter=refine_max_iter, min_iter=min_iter,
+                                         frequency_regularization=frequency_regularization,
+                                         gain=gain, clamp=clamp, max_slope=max_slope,
+                                         test_convergence=test_convergence,
+                                         convergence_threshold=convergence_threshold,
+                                         use_variance=use_variance,
+                                         spatial_filter=spatial_filter,
+                                         airmass_weight=airmass_weight,
+                                         use_stretch=use_stretch,
+                                         )
+
         if verbose:
             print("\nFinished building model.")
 
     def _build_model_subroutine(self, initial_solution, verbose=True, max_iter=10, min_iter=None,
                                 test_convergence=False, frequency_regularization=True, max_slope=None,
-                                gain=None, clamp=None, convergence_threshold=None, use_variance=True):
+                                gain=None, clamp=None, convergence_threshold=None, use_variance=True,
+                                spatial_filter=None, airmass_weight=False, use_stretch=None):
         """Extract the math from building the model so it can be re-used.
 
         Parameters
@@ -338,6 +407,12 @@ class BuildDcrCoadd(GenerateTemplate):
             Return once the convergence metric changes by less than this amount between iterations.
         use_variance : bool, optional
             Set to weight pixels by their inverse variance when combining images.
+        spatial_filter : bool, optional
+            For testing only! Apply a spatial filter to the solution at each iteration of forward modeling.
+        airmass_weight : bool, optional
+            Set to weight each observation by its airmass.
+        use_stretch : bool, optional
+            Set to simulate the effect of DCR across each sub-band by stretching the model.
 
         Returns
         -------
@@ -354,33 +429,48 @@ class BuildDcrCoadd(GenerateTemplate):
             clamp = 3.
         if convergence_threshold is None:
             convergence_threshold = 1e-3
+        if use_stretch is None:
+            use_stretch = False
         min_images = self.n_step + 1
         if min_iter is None:
             min_iter = 2
         last_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
         for f in range(self.n_step):
-            last_solution[f] += np.abs(initial_solution/self.n_step)
+            last_solution[f] += initial_solution[f]
 
         if verbose:
             print("Fractional change per iteration:")
         if test_convergence:
-            last_convergence_metric_full = self.calc_model_metric(last_solution)
+            last_convergence_metric_full = self.calc_model_metric(last_solution, use_stretch=use_stretch)
+            init_convergence_metric_full = last_convergence_metric_full
             print("Full initial convergence metric: ", last_convergence_metric_full)
             last_convergence_metric = np.mean(last_convergence_metric_full)
 
         exp_cut = [False for exp_i in range(self.n_images)]
         final_soln_iter = None
         did_converge = False
+        last_delta = 1.
         for sol_iter in range(int(max_iter)):
-            new_solution, inverse_var_arr = self._calculate_new_model(last_solution, exp_cut,
-                                                                      use_variance=use_variance)
+            if use_stretch:
+                new_solution, inverse_var_arr = self._calculate_stretched_model(last_solution, exp_cut,
+                                                                                use_variance=use_variance,
+                                                                                airmass_weight=airmass_weight)
+            else:
+                new_solution, inverse_var_arr = self._calculate_new_model(last_solution, exp_cut,
+                                                                          use_variance=use_variance,
+                                                                          airmass_weight=airmass_weight)
 
             # Optionally restrict variations between frequency planes
             if frequency_regularization:
                 self._regularize_model_solution(new_solution, self.bandpass, max_slope=max_slope)
 
+            # Optionally restrict spatial variations in frequency structure
+            if spatial_filter is not None:
+                new_solution = self._model_spatial_filter(new_solution, spatial_filter, mask=self.mask)
+
             # Restrict new solutions from being wildly different from the last solution
-            self._clamp_model_solution(new_solution, last_solution, clamp, model_base=self.model_base)
+            if clamp > 0:
+                self._clamp_model_solution(new_solution, last_solution, clamp)
 
             inds_use = inverse_var_arr[-1] > 0
             for f in range(self.n_step - 1):
@@ -395,18 +485,21 @@ class BuildDcrCoadd(GenerateTemplate):
                      np.sum(np.abs([soln[inds_use] for soln in last_solution])))
             if verbose:
                 print("Iteration %i: delta=%f" % (sol_iter, delta))
-                last_soln_use = [soln[inds_use] for soln in last_solution]
-                print("Stddev(last_solution): %f, mean(abs(last_solution)): %f"
-                      % (np.std(last_soln_use), np.mean(np.abs(last_soln_use))))
-                new_soln_use = [soln[inds_use] for soln in new_solution_use]
-                print("Stddev(new_solution): %f, mean(abs(new_solution)): %f"
-                      % (np.std(new_soln_use), np.mean(np.abs(new_soln_use))))
+            if delta > last_delta:
+                print("BREAK from diverging model difference.")
+                final_soln_iter = sol_iter - 1
+                break
+            else:
+                last_delta = delta
             if test_convergence:
-                convergence_metric_full = self.calc_model_metric(new_solution_use)
+                convergence_metric_full = self.calc_model_metric(new_solution_use, use_stretch=use_stretch)
                 if verbose:
                     print("Full convergence metric:", convergence_metric_full)
                 if sol_iter >= min_iter:
-                    exp_cut = convergence_metric_full > last_convergence_metric_full
+                    exp_cut = convergence_metric_full > last_convergence_metric_full*1.05
+                    exp_cut1 = convergence_metric_full > init_convergence_metric_full
+                    exp_cut[exp_cut1] = True
+
                 n_exp_cut = np.sum(exp_cut)
                 if n_exp_cut > 0:
                     print("%i exposure(s) cut from lack of convergence." % int(n_exp_cut))
@@ -441,7 +534,7 @@ class BuildDcrCoadd(GenerateTemplate):
         self.weights = np.sum(inverse_var_arr, axis=0)/self.n_step
         return did_converge
 
-    def _calculate_new_model(self, last_solution, exp_cut=None, use_variance=True):
+    def _calculate_new_model(self, last_solution, exp_cut=None, use_variance=True, airmass_weight=False):
         """Sub-routine to calculate a new model from the residuals of forward-modeling the previous solution.
 
         Parameters
@@ -451,6 +544,10 @@ class BuildDcrCoadd(GenerateTemplate):
         exp_cut : List of bools
             Exposures that failed to converge in the previous iteration are flagged,
             and not included in the current iteration solution.
+        use_variance : bool, optional
+            Set to weight pixels by their inverse variance when combining images.
+        airmass_weight : bool, optional
+            Set to weight each observation by its airmass.
 
         Returns
         -------
@@ -465,6 +562,11 @@ class BuildDcrCoadd(GenerateTemplate):
             if exp_cut[exp_i]:
                 continue
             img, inverse_var, dcr_gen = self._extract_image(exp, use_variance=use_variance)
+            visitInfo = exp.getInfo().getVisitInfo()
+            if airmass_weight:
+                inverse_var *= visitInfo.getBoresightAirmass()
+            if use_variance:
+                inverse_var = np.sqrt(inverse_var)
             dcr_list = [dcr for dcr in dcr_gen]
             last_model_shift = []
             for f, dcr in enumerate(dcr_list):
@@ -489,8 +591,119 @@ class BuildDcrCoadd(GenerateTemplate):
             new_solution[f][inds_use] = residual_arr[f][inds_use]/inverse_var_arr[f][inds_use]
         return (new_solution, inverse_var_arr)
 
+    def _calculate_stretched_model(self, last_solution, exp_cut=None, use_variance=True,
+                                   airmass_weight=False):
+        """Sub-routine to calculate a new model from the residuals of forward-modeling the previous solution.
+
+        Parameters
+        ----------
+        last_solution : list of np.ndarrays
+            One np.ndarray for each model sub-band, from the previous iteration.
+        exp_cut : List of bools
+            Exposures that failed to converge in the previous iteration are flagged,
+            and not included in the current iteration solution.
+        use_variance : bool, optional
+            Set to weight pixels by their inverse variance when combining images.
+        airmass_weight : bool, optional
+            Set to weight each observation by its airmass.
+
+        Returns
+        -------
+        Tuple of two lists of np.ndarrays
+            One np.ndarray for each model sub-band, and the associated inverse variance array.
+        """
+        residual_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        inverse_var_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        if exp_cut is None:
+            exp_cut = [False for exp_i in range(self.n_images)]
+        for exp_i, exp in enumerate(self.exposures):
+            if exp_cut[exp_i]:
+                continue
+            img, inverse_var, dcr_gen = self._extract_image(exp, use_variance=use_variance,
+                                                            use_midpoint_dcr=False)
+            visitInfo = exp.getInfo().getVisitInfo()
+            if airmass_weight:
+                inverse_var *= visitInfo.getBoresightAirmass()
+            if use_variance:
+                inverse_var = np.sqrt(inverse_var)
+            dcr_list = [dcr for dcr in dcr_gen]
+            sub_weights = self._subband_weights()
+            last_model_shift = [fft_shift_convolve(last_solution[f], dcr, weights=sub_weights[f])
+                                for f, dcr in enumerate(dcr_list)]
+            for f, dcr in enumerate(dcr_list):
+                last_model = np.zeros((self.y_size, self.x_size))
+                for f2 in range(self.n_step):
+                    if f2 != f:
+                        last_model += last_model_shift[f2]
+                img_residual = img - last_model
+                residual_shift = fft_shift_convolve(img_residual, dcr, useInverse=True,
+                                                    weights=sub_weights[f])
+                inv_var_shift = fft_shift_convolve(inverse_var, dcr, useInverse=True, weights=sub_weights[f])
+                inv_var_shift[inv_var_shift < 0] = 0.
+
+                residual_arr[f] += residual_shift*inv_var_shift  # *weights_shift
+                inverse_var_arr[f] += inv_var_shift
+        new_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        for f in range(self.n_step):
+            inds_use = inverse_var_arr[f] > 0
+            new_solution[f][inds_use] = residual_arr[f][inds_use]/inverse_var_arr[f][inds_use]
+        return (new_solution, inverse_var_arr)
+
     @staticmethod
-    def _clamp_model_solution(new_solution, last_solution, clamp, model_base=None):
+    def _model_spatial_filter(new_solution, filter_width, mask=None, filter_fn=ndimage.gaussian_filter):
+        """Restrict spatial variations between model planes.
+
+        Parameters
+        ----------
+        new_solution : list of np.ndarrays
+            One np.ndarray for each model sub-band
+        filter_width : float
+            Width parameter passed in to the filtering function.
+        mask : np.ndarray, optional
+            Combined bit plane mask of the model, which is used as the mask plane for generated templates.
+        filter_fn : function, optional
+            The function used to perform the spatial filtering.
+
+        Returns
+        -------
+        list of np.ndarrays
+            One np.ndarray for each model sub-band
+        """
+        avg_solution = np.mean(new_solution, axis=0)
+        if mask is not None:
+            detected_bit = 32  # Should eventually use actual mask with mask plane info.
+            mask_use = (mask & detected_bit) == detected_bit
+            inds_use = mask_use == 1
+            print("Before %f" % np.mean(avg_solution[inds_use]))
+            mask_use = filter_fn(mask_use, filter_width, mode='constant')
+            avg_solution *= mask_use
+            print("After %f" % np.mean(avg_solution[inds_use]))
+            scale_arr = [np.mean(soln[inds_use])/np.mean(avg_solution[inds_use]) for soln in new_solution]
+        else:
+            scale_arr = [np.mean(soln/np.mean(avg_solution)) for soln in new_solution]
+        scale_arr = [scale if scale > 0 else 1. for scale in scale_arr]
+
+        # Avoid dividing by zero
+        avg_solution_inverse = np.zeros_like(avg_solution)
+        non_zero_inds = avg_solution != 0
+        avg_solution_inverse[non_zero_inds] = 1./avg_solution[non_zero_inds]
+
+        delta_solution = [soln*avg_solution_inverse - scale
+                          for soln, scale in zip(new_solution, scale_arr)]
+        filter_solution = []
+        ii = 0
+        for delta, scale in zip(delta_solution, scale_arr):
+            filter_delta = filter_fn(delta, filter_width, mode='constant')
+            single_soln = (filter_delta + scale)*avg_solution
+            if mask is not None:
+                single_soln *= mask_use
+                single_soln += new_solution[ii]*(1 - mask_use)
+            filter_solution.append(single_soln)
+
+        return filter_solution
+
+    @staticmethod
+    def _clamp_model_solution(new_solution, last_solution, clamp):
         """Restrict new solutions from being wildly different from the last solution.
 
         Parameters
@@ -510,13 +723,11 @@ class BuildDcrCoadd(GenerateTemplate):
         for s_i, solution in enumerate(new_solution):
             # Note: last_solution is always positive
             clamp_high_i = solution > clamp*last_solution[s_i]
-            solution[clamp_high_i] = clamp*last_solution[s_i][clamp_high_i]
+            high_excess = solution - clamp*last_solution[s_i]
+            solution[clamp_high_i] = clamp*last_solution[s_i][clamp_high_i] + high_excess[clamp_high_i]/2.
             clamp_low_i = solution < last_solution[s_i]/clamp
-            solution[clamp_low_i] = last_solution[s_i][clamp_low_i]/clamp
-            if model_base is not None:
-                noise_threshold = np.std(solution)
-                clamp_high_i2 = solution > (model_base + 3.*noise_threshold)
-                solution[clamp_high_i2] = model_base[clamp_high_i2]
+            low_excess = solution - last_solution[s_i]/clamp
+            solution[clamp_low_i] = last_solution[s_i][clamp_low_i]/clamp + low_excess[clamp_low_i]/2.
 
     @staticmethod
     def _regularize_model_solution(new_solution, bandpass, max_slope=None):
@@ -526,11 +737,13 @@ class BuildDcrCoadd(GenerateTemplate):
         ----------
         new_solution : list of np.ndarrays
             The model solution from the current iteration.
+        bandpass : lsst.sims.photUtils.Bandpass object
+            Bandpass object returned by `load_bandpass`
         max_slope : float, optional
             Maximum slope to allow between sub-band model planes.
 
         Returns
-        -------
+        ------------------
         None
             Modifies new_solution in place.
         """
@@ -538,7 +751,8 @@ class BuildDcrCoadd(GenerateTemplate):
             max_slope = 1.
         n_step = len(new_solution)
         y_size, x_size = new_solution[0].shape
-        solution_avg = np.sum(new_solution, axis=0)/n_step
+        solution_avg = np.median(new_solution, axis=0)
+
         slope_ratio = max_slope
         sum_x = 0.
         sum_y = np.zeros((y_size, x_size))
@@ -557,15 +771,18 @@ class BuildDcrCoadd(GenerateTemplate):
         slope[slope_cut_low] = -solution_avg[slope_cut_low]*slope_ratio/bandpass.wavelen_step
         offset = solution_avg
         for f, wl in enumerate(GenerateTemplate._wavelength_iterator(bandpass, use_midpoint=True)):
-            new_solution[f] = offset + slope*(wl - wl_cen)
+            new_solution[f][slope_cut_high] = (offset + slope*(wl - wl_cen))[slope_cut_high]
+            new_solution[f][slope_cut_low] = (offset + slope*(wl - wl_cen))[slope_cut_low]
 
-    def calc_model_metric(self, model=None):
+    def calc_model_metric(self, model=None, use_stretch=False):
         """Calculate a quality of fit metric for the DCR model given the set of exposures.
 
         Parameters
         ----------
         model : None, optional
             The DCR model. If not set, then self.model is used.
+        use_stretch : bool, optional
+            Set to simulate the effect of DCR across each sub-band by stretching the model.
 
         Returns
         -------
@@ -575,7 +792,8 @@ class BuildDcrCoadd(GenerateTemplate):
         metric = np.zeros(self.n_images)
         for exp_i, exp in enumerate(self.exposures):
             img_use, inverse_var = self._extract_image(exp, calculate_dcr_gen=False, use_only_detected=True)
-            template = self.build_matched_template(exp, model=model, return_weights=False)
+            template = self.build_matched_template(exp, model=model, return_weights=False,
+                                                   use_stretch=use_stretch)
             inds_use = inverse_var > 0
             diff_vals = np.abs(img_use - template)
             ref_vals = np.abs(img_use)
