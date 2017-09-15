@@ -52,6 +52,8 @@ class BuildDcrCoadd(GenerateTemplate):
     ----------
     bandpass : lsst.sims.photUtils.Bandpass object
         Bandpass object returned by `load_bandpass`
+    bandpass_highres : lsst.sims.photUtils.Bandpass object
+        A second Bandpass object returned by load_bandpass, at the highest resolution available.
     bbox : lsst.afw.geom.Box2I object
         A bounding box.
     butler : lsst.daf.persistence Butler object
@@ -140,6 +142,8 @@ class BuildDcrCoadd(GenerateTemplate):
             If True, the generated templates will be warped to match the wcs of each exposure.
         debug_mode : bool, optional
             Temporary debugging option.
+        verbose : bool, optional
+            Set to print additional status messages.
         **kwargs : TYPE
             Allows additional keyword arguments to be passed to `load_bandpass`.
 
@@ -279,6 +283,8 @@ class BuildDcrCoadd(GenerateTemplate):
         max_slope : float, optional
             Maximum slope to allow between sub-band model planes.
             Only used if ``frequency_regularization`` is set.
+        initial_solution : list of np.ndarrays, optional
+            Optionally supply the starting point of the iterative solution.
         test_convergence : bool, optional
             If True, then matched templates will be generated for each image for every iteration,
             and the difference with the image will be checked to see if it is less than the previous iteration
@@ -288,6 +294,16 @@ class BuildDcrCoadd(GenerateTemplate):
             between iterations.
         use_variance : bool, optional
             Set to weight pixels by their inverse variance when combining images.
+        refine_solution : bool, optional
+            If set, recalculate the initial solution from the model, and repeat iteration.
+        spatial_filter : bool, optional
+            For testing only! Apply a spatial filter to the solution at each iteration of forward modeling.
+        airmass_weight : bool, optional
+            Set to weight each observation by its airmass.
+        refine_max_iter : bool, optional
+            The maximum number of iterations of forward modeling allowed when refining the solution.
+        use_stretch : bool, optional
+            Set to simulate the effect of DCR across each sub-band by stretching the model.
         """
         # Set up an initial guess with all model planes equal as a starting point of the iterative solution
         # The solution is initialized to 0. and not an array so that it can adapt
@@ -391,6 +407,12 @@ class BuildDcrCoadd(GenerateTemplate):
             Return once the convergence metric changes by less than this amount between iterations.
         use_variance : bool, optional
             Set to weight pixels by their inverse variance when combining images.
+        spatial_filter : bool, optional
+            For testing only! Apply a spatial filter to the solution at each iteration of forward modeling.
+        airmass_weight : bool, optional
+            Set to weight each observation by its airmass.
+        use_stretch : bool, optional
+            Set to simulate the effect of DCR across each sub-band by stretching the model.
 
         Returns
         -------
@@ -522,6 +544,10 @@ class BuildDcrCoadd(GenerateTemplate):
         exp_cut : List of bools
             Exposures that failed to converge in the previous iteration are flagged,
             and not included in the current iteration solution.
+        use_variance : bool, optional
+            Set to weight pixels by their inverse variance when combining images.
+        airmass_weight : bool, optional
+            Set to weight each observation by its airmass.
 
         Returns
         -------
@@ -576,6 +602,10 @@ class BuildDcrCoadd(GenerateTemplate):
         exp_cut : List of bools
             Exposures that failed to converge in the previous iteration are flagged,
             and not included in the current iteration solution.
+        use_variance : bool, optional
+            Set to weight pixels by their inverse variance when combining images.
+        airmass_weight : bool, optional
+            Set to weight each observation by its airmass.
 
         Returns
         -------
@@ -606,8 +636,9 @@ class BuildDcrCoadd(GenerateTemplate):
                     if f2 != f:
                         last_model += last_model_shift[f2]
                 img_residual = img - last_model
-                residual_shift = fft_shift_convolve(img_residual, dcr, inverse=True, weights=sub_weights[f])
-                inv_var_shift = fft_shift_convolve(inverse_var, dcr, inverse=True, weights=sub_weights[f])
+                residual_shift = fft_shift_convolve(img_residual, dcr, useInverse=True,
+                                                    weights=sub_weights[f])
+                inv_var_shift = fft_shift_convolve(inverse_var, dcr, useInverse=True, weights=sub_weights[f])
                 inv_var_shift[inv_var_shift < 0] = 0.
 
                 residual_arr[f] += residual_shift*inv_var_shift  # *weights_shift
@@ -706,11 +737,13 @@ class BuildDcrCoadd(GenerateTemplate):
         ----------
         new_solution : list of np.ndarrays
             The model solution from the current iteration.
+        bandpass : lsst.sims.photUtils.Bandpass object
+            Bandpass object returned by `load_bandpass`
         max_slope : float, optional
             Maximum slope to allow between sub-band model planes.
 
         Returns
-        -------
+        ------------------
         None
             Modifies new_solution in place.
         """
@@ -748,6 +781,8 @@ class BuildDcrCoadd(GenerateTemplate):
         ----------
         model : None, optional
             The DCR model. If not set, then self.model is used.
+        use_stretch : bool, optional
+            Set to simulate the effect of DCR across each sub-band by stretching the model.
 
         Returns
         -------

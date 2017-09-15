@@ -80,6 +80,8 @@ class GenerateTemplate:
     ----------
     bandpass : lsst.sims.photUtils.Bandpass object
         Bandpass object returned by load_bandpass
+    bandpass_highres : lsst.sims.photUtils.Bandpass object
+        A second Bandpass object returned by load_bandpass, at the highest resolution available.
     bbox : lsst.afw.geom.Box2I object
         A bounding box.
     butler : lsst.daf.persistence Butler object
@@ -110,6 +112,8 @@ class GenerateTemplate:
         Representation of the point spread function (PSF) of the model.
     psf_size : int
         Dimension of the PSF, in pixels.
+    skyMap : lsst.skymap DiscreteSkyMap object
+        A skymap defining the the tracts and patches of the model.
     wcs : lsst.afw.image Wcs object
         World Coordinate System of the model.
     weights : np.ndarray
@@ -173,17 +177,14 @@ class GenerateTemplate:
         output_obsid_offset : int, optional
             Optional offset to add to the output obsids.
             Use if writing to the same repository as the input to avoid over-writing the input data.
+        use_stretch : bool, optional
+            Set to simulate the effect of DCR across each sub-band by stretching the model.
 
         Yields
         ------
         lsst.afw.image ExposureF object.
             Returns a generator that builds DCR-matched templates for each exposure.
             The exposure is also written to disk if ``output_repository`` is set.
-
-        Raises
-        ------
-        ValueError
-            If a butler has not been previously instantiated and input_repository is not supplied.
         """
         if self.psf is None:
             self.calc_psf_model()
@@ -359,6 +360,8 @@ class GenerateTemplate:
             Class containing the measured temperature, pressure, and humidity
             at the observatory during an observation
             Weather data is read from the exposure metadata if not supplied.
+        use_stretch : bool, optional
+            Set to simulate the effect of DCR across each sub-band by stretching the model.
 
         Returns
         -------
@@ -457,6 +460,9 @@ class GenerateTemplate:
         use_variance : bool, optional
             If True, return the true inverse variance.
             Otherwise, return calculated weights in the range 0 - 1 for each pixel.
+        use_midpoint_dcr : bool, optional
+            Return the DCR at the midpoint of the band if set, or the DCR at the endpoints of the band
+            otherwise. Ignored if `calculate_dcr_gen=False`.
 
         Returns
         -------
@@ -515,6 +521,8 @@ class GenerateTemplate:
         ----------
         datasetType : str
             The type of dataset to get keys for, entire collection if None.
+        butler : lsst.daf.persistence Butler object, optional
+            The butler handles persisting and depersisting data to and from a repository.
         level : None, optional
             The hierarchy level for the butler to descend to. None if it should not be restricted.
         **kwargs
@@ -652,7 +660,7 @@ class GenerateTemplate:
             Otherwise, return a tuple of the starting and end wavelength.
 
         Yields
-        -----
+        ------
         If ``use_midpoint`` is set, yields the effective wavelength of the next sub-band.
         Otherwise, yields the start and end wavelength of the next sub-band as a tuple.
         """
@@ -784,11 +792,8 @@ class GenerateTemplate:
         variance : np.ndarray, optional
             Numpy array to use as the variance plane of the exposure.
             If None, the absoulte value of 'array' is used for the variance plane.
-        era : lsst.afw.geom Angle, optional
-            Earth rotation angle (ERA) of the observation.
-            If not set it will be calculated from the latitude, longitude, RA, Dec, and elevation angle
-        snap : int, optional
-            Snap ID to add to the metadata of the exposure. Required to mimic Phosim output.
+        mask : np.ndarray, optional
+            Mask plane to set for the exposure.
         bbox : None, optional
             Bounding box of the exposure. If ``None`` will be set to ``self.bbox``
         exposureId : int, optional
@@ -799,10 +804,17 @@ class GenerateTemplate:
             The declination of the boresight of the target field
         boresightRotAngle : lsst.afw.geom Angle, optional
             The rotation angle of the field around the boresight.
+        era : lsst.afw.geom Angle, optional
+            Earth rotation angle (ERA) of the observation.
+            If not set it will be calculated from the latitude, longitude, RA, Dec, and elevation angle
+        snap : int, optional
+            Snap ID to add to the metadata of the exposure. Required to mimic Phosim output.
         weather : lsst.afw.coord Weather, optional
             Class containing the measured temperature, pressure, and humidity
             at the observatory during an observation
             Weather data is read from the exposure metadata if not supplied.
+        isCoadd : bool, optional
+            Description
         **kwargs
             Any additional keyword arguments will be added to the metadata of the exposure.
 
@@ -948,7 +960,7 @@ class GenerateTemplate:
             exp.getMaskedImage().getMask().addMaskPlane("CLIPPED")
             self.write_exposure(exp, datasetType="dcrCoadd", subfilter=f, butler=butler)
 
-    def load_model(self, model_repository=None, filter_name='g', warp=False, **kwargs):
+    def load_model(self, model_repository=None, filter_name='g', doWarp=False, **kwargs):
         """Depersist a DCR model from a repository and set up the metadata.
 
         Parameters
@@ -958,18 +970,20 @@ class GenerateTemplate:
             If not set, uses the existing self.butler
         filter_name : str, optional
             Common name of the filter used. For LSST, use u, g, r, i, z, or y
-        **kwargs :
+        doWarp : bool, optional
+            Set if the input coadds need to be warped to the reference wcs.
+        **kwargs
             Any additional keyword arguments to pass to ``load_bandpass``
 
         Returns
-        -------
+        ------------------
         None, but loads self.model and sets up all the needed quantities such as the psf and bandpass objects.
         """
         self.filter_name = filter_name
         model_arr = []
         dcrCoadd_gen = self.read_exposures(datasetType="dcrCoadd", input_repository=model_repository)
         for dcrCoadd in dcrCoadd_gen:
-            if warp:
+            if doWarp:
                 wrap_warpExposure(dcrCoadd, self.wcs, self.bbox)
             model_in = dcrCoadd.getMaskedImage().getImage().getArray()
             var_in = dcrCoadd.getMaskedImage().getVariance().getArray()
@@ -1104,6 +1118,13 @@ class GenerateTemplate:
         return dcr_kernel
 
     def _subband_weights(self):
+        """Helper function to evaluate the filter profile across each sub-band.
+
+        Returns
+        -------
+        list of np.ndarrays
+            An array of bandpass values across each sub-band.
+        """
         weights = []
         for wl_start, wl_end in self._wavelength_iterator(self.bandpass, use_midpoint=False):
             inds_use = (self.bandpass_highres.wavelen < wl_end) & (self.bandpass_highres.wavelen > wl_start)
