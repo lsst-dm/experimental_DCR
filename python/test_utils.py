@@ -21,6 +21,8 @@
 #
 
 from __future__ import print_function, division, absolute_import
+from builtins import range
+from builtins import object
 import numpy as np
 
 from lsst.afw.coord import IcrsCoord
@@ -277,7 +279,7 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
         self.psf_size = psf_size
 
 
-class DcrCoaddTestBase:
+class DcrCoaddTestBase(object):
     """Base class many unit tests can inherit from to simplify setup.
 
     Attributes

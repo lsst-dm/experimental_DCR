@@ -22,6 +22,9 @@
 #
 
 from __future__ import print_function, division, absolute_import
+from builtins import next
+from builtins import range
+from builtins import object
 from collections import namedtuple
 
 import numpy as np
@@ -67,7 +70,7 @@ y0 = 500
 dy = 200
 
 
-class GenerateTemplate:
+class GenerateTemplate(object):
     """Lightweight object with only the minimum needed to generate DCR-matched template exposures.
 
     This class will generate template exposures suitable for
@@ -949,7 +952,7 @@ class GenerateTemplate:
         self.write_exposure(ref_exp, datasetType="deepCoadd", butler=butler)
         butler.put(self.skyMap, "dcrCoadd_skyMap")
         for f in range(self.n_step):
-            wl_start, wl_end = wave_gen.next()
+            wl_start, wl_end = next(wave_gen)
             # variance = self.model[f][:, :]
             image_use, var_use, mask_use = _resize_image(self.model[f], variance, self.mask,
                                                          bbox_old=self.bbox, bbox_new=patch_bbox,

@@ -21,7 +21,8 @@
 #
 
 from __future__ import print_function, division, absolute_import
-from itertools import izip
+from builtins import zip
+
 import numpy as np
 import unittest
 
@@ -81,7 +82,7 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
         #     self.dcrTemplate.write_exposure(exposure)
         template_ref_gen = self.dcrTemplate.read_exposures(obsids=obsids)
 
-        for template_test, template_ref in izip(template_gen, template_ref_gen):
+        for template_test, template_ref in zip(template_gen, template_ref_gen):
             self.assertMaskedImagesNearlyEqual(template_test.getMaskedImage(), template_ref.getMaskedImage())
 
     def test_warp_exposure(self):
@@ -125,7 +126,7 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
         # This requires the full GenerateTemplate class, not just the lightweight test class.
         dcrTemplate2 = GenerateTemplate(butler=self.butler)
         # Note that butler.get() reads the FITS file in 32 bit precision.
-        for m_new, m_ref in izip(dcrTemplate2.model, self.dcrTemplate.model):
+        for m_new, m_ref in zip(dcrTemplate2.model, self.dcrTemplate.model):
             self.assertFloatsAlmostEqual(m_new, m_ref, rtol=1e-7)
 
         # Next, test that the required parameters have been restored

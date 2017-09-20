@@ -21,7 +21,9 @@
 #
 
 from __future__ import print_function, division, absolute_import
-from itertools import izip
+from builtins import zip
+from builtins import range
+
 import unittest
 
 import numpy as np
@@ -91,7 +93,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, model_vals, allow_pickle=False)
         model_ref = np.load(data_file)
-        for m_new, m_ref in izip(model_vals, model_ref):
+        for m_new, m_ref in zip(model_vals, model_ref):
             self.assertFloatsAlmostEqual(m_new, m_ref)
 
     def test_build_matched_template(self):
@@ -120,9 +122,9 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, (new_solution, inverse_var_arr), allow_pickle=False)
         new_solution_ref, inverse_var_arr_ref = np.load(data_file)
-        for soln_new, soln_ref in izip(new_solution, new_solution_ref):
+        for soln_new, soln_ref in zip(new_solution, new_solution_ref):
             self.assertFloatsAlmostEqual(soln_new, soln_ref)
-        for inv_var_new, inv_var_ref in izip(inverse_var_arr, inverse_var_arr_ref):
+        for inv_var_new, inv_var_ref in zip(inverse_var_arr, inverse_var_arr_ref):
             self.assertFloatsAlmostEqual(inv_var_new, inv_var_ref)
 
     def test_calc_model_metric(self):
@@ -186,7 +188,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, model_arr, allow_pickle=False)
         model_ref = np.load(data_file)
-        for m_new, m_ref in izip(model_arr, model_ref):
+        for m_new, m_ref in zip(model_arr, model_ref):
             self.assertFloatsAlmostEqual(m_new, m_ref)
 
 

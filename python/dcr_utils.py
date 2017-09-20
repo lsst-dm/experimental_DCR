@@ -23,6 +23,7 @@
 
 from __future__ import print_function, division, absolute_import
 
+from builtins import range
 from astropy import units as u
 from astropy.units import cds as u_cds
 import numpy as np
