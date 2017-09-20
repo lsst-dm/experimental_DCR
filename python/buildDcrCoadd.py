@@ -254,7 +254,7 @@ class BuildDcrCoadd(GenerateTemplate):
         psfK = afwMath.FixedKernel(psf_image)
         self.psf = measAlg.KernelPsf(psfK)
 
-    def build_model(self, verbose=True, max_iter=10, min_iter=None, gain=None, clamp=None,
+    def build_model(self, verbose=True, max_iter=10, min_iter=None, clamp=None,
                     frequency_regularization=False, max_slope=None, initial_solution=None,
                     test_convergence=False, convergence_threshold=None, use_variance=True,
                     refine_solution=False, spatial_filter=None, airmass_weight=False,
@@ -269,10 +269,6 @@ class BuildDcrCoadd(GenerateTemplate):
             The maximum number of iterations of forward modeling allowed.
         min_iter : int, optional
             The minimum number of iterations of forward modeling before checking for convergence.
-        gain : float, optional
-            The weight of the new solution relative to the last solution
-            when calculating the model to use for the next iteration.
-            The defualt value is 1.0, and should only be changed if you know what you are doing.
         clamp : float, optional
             Restrict new solutions from being more than a factor of ``clamp`` different from the last solution
             before `gain` is applied.
@@ -341,7 +337,7 @@ class BuildDcrCoadd(GenerateTemplate):
 
         self._build_model_subroutine(initial_solution, verbose=verbose, max_iter=max_iter, min_iter=min_iter,
                                      frequency_regularization=frequency_regularization,
-                                     gain=gain, clamp=clamp, max_slope=max_slope,
+                                     clamp=clamp, max_slope=max_slope,
                                      test_convergence=test_convergence,
                                      convergence_threshold=convergence_threshold,
                                      use_variance=use_variance,
@@ -361,7 +357,7 @@ class BuildDcrCoadd(GenerateTemplate):
             self._build_model_subroutine(initial_solution, verbose=verbose,
                                          max_iter=refine_max_iter, min_iter=min_iter,
                                          frequency_regularization=frequency_regularization,
-                                         gain=gain, clamp=clamp, max_slope=max_slope,
+                                         clamp=clamp, max_slope=max_slope,
                                          test_convergence=test_convergence,
                                          convergence_threshold=convergence_threshold,
                                          use_variance=use_variance,
@@ -375,7 +371,7 @@ class BuildDcrCoadd(GenerateTemplate):
 
     def _build_model_subroutine(self, initial_solution, verbose=True, max_iter=10, min_iter=None,
                                 test_convergence=False, frequency_regularization=True, max_slope=None,
-                                gain=None, clamp=None, convergence_threshold=None, use_variance=True,
+                                clamp=None, convergence_threshold=None, use_variance=True,
                                 spatial_filter=None, airmass_weight=False, use_stretch=None):
         """Extract the math from building the model so it can be re-used.
 
@@ -398,9 +394,6 @@ class BuildDcrCoadd(GenerateTemplate):
             Set to restrict variations between frequency planes
         max_slope : float, optional
             Maximum slope to allow between sub-band model planes.
-        gain : float, optional
-            The weight of the new solution when calculating the model to use for the next iteration.
-            The defualt value is 1.0, and should only be changed if you know what you are doing.
         clamp : float, optional
             Restrict new solutions from being more than a factor of `clamp` different from the last solution.
         convergence_threshold : float, optional
@@ -421,8 +414,6 @@ class BuildDcrCoadd(GenerateTemplate):
         Sets self.model as a list of np.ndarrays
         Sets self.weights as a np.ndarray
         """
-        if gain is None:
-            gain = 1.
         if clamp is None:
             # The value of clamp is chosen so that the solution never changes by
             #  more than a factor of 2 between iterations: if new = old*3 then (old + new)/2 = 2*old
@@ -440,11 +431,12 @@ class BuildDcrCoadd(GenerateTemplate):
 
         if verbose:
             print("Fractional change per iteration:")
-        if test_convergence:
-            last_convergence_metric_full = self.calc_model_metric(last_solution, use_stretch=use_stretch)
-            init_convergence_metric_full = last_convergence_metric_full
+        last_convergence_metric_full = self.calc_model_metric(last_solution, use_stretch=use_stretch)
+        init_convergence_metric_full = last_convergence_metric_full
+        last_convergence_metric = np.mean(last_convergence_metric_full)
+        if verbose:
             print("Full initial convergence metric: ", last_convergence_metric_full)
-            last_convergence_metric = np.mean(last_convergence_metric_full)
+            print("Convergence metric: %f" % last_convergence_metric)
 
         exp_cut = [False for exp_i in range(self.n_images)]
         final_soln_iter = None
@@ -476,6 +468,11 @@ class BuildDcrCoadd(GenerateTemplate):
             for f in range(self.n_step - 1):
                 inds_use *= inverse_var_arr[f] > 0
 
+            convergence_metric_full = self.calc_model_metric(new_solution, use_stretch=use_stretch)
+            convergence_metric = np.mean(convergence_metric_full[np.logical_not(exp_cut)])
+            gain = last_convergence_metric/convergence_metric
+            if verbose:
+                print("Convergence-weighted gain used: %f" % gain)
             # Use the average of the new and last solution for the next iteration. This reduces oscillations.
             new_solution_use = [np.abs((last_solution[f] + gain*new_solution[f])/(1 + gain))
                                 for f in range(self.n_step)]

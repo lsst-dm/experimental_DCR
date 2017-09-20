@@ -141,7 +141,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         y_size = self.dcrCoadd.y_size
         initial_solution = [np.ones((y_size, x_size)) for f in range(n_step)]
         did_converge = self.dcrCoadd._build_model_subroutine(initial_solution=initial_solution, verbose=False,
-                                                             gain=-2, test_convergence=True)
+                                                             test_convergence=True)
         self.assertFalse(did_converge)
 
     def test_calculate_psf(self):
