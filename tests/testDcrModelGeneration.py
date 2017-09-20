@@ -57,6 +57,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         cls.n_step = 3
         cls.n_images = 5
         cls.psf_size = 5
+        cls.convergence_threshold = 5e-2
 
         butler = daf_persistence.Butler(inputs="./test_data/")
         exposures = []
@@ -88,7 +89,8 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         """Call build_model with as many options as possible turned off."""
         """Compare the result of build_model to previously computed values."""
         data_file = "test_data/build_model_vals.npy"
-        self.dcrCoadd.build_model(verbose=False)
+        self.dcrCoadd.build_model(verbose=False, test_convergence=True,
+                                  convergence_threshold=self.convergence_threshold)
         model_vals = self.dcrCoadd.model
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, model_vals, allow_pickle=False)
@@ -96,11 +98,18 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         for m_new, m_ref in zip(model_vals, model_ref):
             self.assertFloatsAlmostEqual(m_new, m_ref)
 
+    def test_model_converges(self):
+        """Check that the model did not diverge."""
+        did_converge = self.dcrCoadd.build_model(verbose=False, test_convergence=True,
+                                                 convergence_threshold=self.convergence_threshold)
+        self.assertTrue(did_converge)
+
     def test_build_matched_template(self):
         """Compare the image and variance plane of the template to previously computed values."""
         data_file = "test_data/build_matched_template_vals.npy"
         exposure = self.dcrCoadd.exposures[0]
-        self.dcrCoadd.build_model(verbose=False)
+        self.dcrCoadd.build_model(verbose=False, test_convergence=True,
+                                  convergence_threshold=self.convergence_threshold)
         template, variance = self.dcrCoadd.build_matched_template(exposure)
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, (template, variance), allow_pickle=False)
@@ -130,9 +139,8 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
     def test_calc_model_metric(self):
         """Test that the DCR model convergence metric is calculated consistently."""
         model_file = "test_data/build_model_vals.npy"
-
-        metric_ref = np.array([0.0203724857635, 0.0118324265757, 0.0112328663482,
-                               0.0131832794814, 0.0196719741573, 0.0231001757091])
+        metric_ref = np.array([0.022835006051, 0.014885210227, 0.0120010522772,
+                               0.0140386530451, 0.0204993350076, 0.0237343323628])
         model = np.load(model_file)
         metric = self.dcrCoadd.calc_model_metric(model=model)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)

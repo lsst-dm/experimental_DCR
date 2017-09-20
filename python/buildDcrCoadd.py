@@ -337,16 +337,17 @@ class BuildDcrCoadd(GenerateTemplate):
         if self.debug:
             self.y_size, self.x_size = initial_solution.shape
 
-        self._build_model_subroutine(initial_solution, verbose=verbose, max_iter=max_iter, min_iter=min_iter,
-                                     frequency_regularization=frequency_regularization,
-                                     clamp=clamp, max_slope=max_slope,
-                                     test_convergence=test_convergence,
-                                     convergence_threshold=convergence_threshold,
-                                     use_variance=use_variance,
-                                     spatial_filter=spatial_filter,
-                                     airmass_weight=airmass_weight,
-                                     use_stretch=use_stretch,
-                                     )
+        did_converge = self._build_model_subroutine(initial_solution, verbose=verbose,
+                                                    min_iter=min_iter, max_iter=max_iter,
+                                                    frequency_regularization=frequency_regularization,
+                                                    clamp=clamp, max_slope=max_slope,
+                                                    test_convergence=test_convergence,
+                                                    convergence_threshold=convergence_threshold,
+                                                    use_variance=use_variance,
+                                                    spatial_filter=spatial_filter,
+                                                    airmass_weight=airmass_weight,
+                                                    use_stretch=use_stretch,
+                                                    )
         if refine_solution:
             print("Refining model")
             if spatial_filter is None:
@@ -356,20 +357,21 @@ class BuildDcrCoadd(GenerateTemplate):
             initial_solution = self._model_spatial_filter(self.model, spatial_filter_use)
             if refine_max_iter is None:
                 refine_max_iter = max_iter*2
-            self._build_model_subroutine(initial_solution, verbose=verbose,
-                                         max_iter=refine_max_iter, min_iter=min_iter,
-                                         frequency_regularization=frequency_regularization,
-                                         clamp=clamp, max_slope=max_slope,
-                                         test_convergence=test_convergence,
-                                         convergence_threshold=convergence_threshold,
-                                         use_variance=use_variance,
-                                         spatial_filter=spatial_filter,
-                                         airmass_weight=airmass_weight,
-                                         use_stretch=use_stretch,
-                                         )
+            did_converge = self._build_model_subroutine(initial_solution, verbose=verbose,
+                                                        max_iter=refine_max_iter, min_iter=min_iter,
+                                                        frequency_regularization=frequency_regularization,
+                                                        clamp=clamp, max_slope=max_slope,
+                                                        test_convergence=test_convergence,
+                                                        convergence_threshold=convergence_threshold,
+                                                        use_variance=use_variance,
+                                                        spatial_filter=spatial_filter,
+                                                        airmass_weight=airmass_weight,
+                                                        use_stretch=use_stretch,
+                                                        )
 
         if verbose:
             print("\nFinished building model.")
+        return did_converge
 
     def _build_model_subroutine(self, initial_solution, verbose=True, max_iter=10, min_iter=None,
                                 test_convergence=False, frequency_regularization=True, max_slope=None,
