@@ -787,13 +787,17 @@ class BuildDcrCoadd(GenerateTemplate):
             The calculated metric for each exposure.
         """
         metric = np.zeros(self.n_images)
+        if model is None:
+            avg_model = np.mean(self.model, axis=0)
+        else:
+            avg_model = np.mean(model, axis=0)
         for exp_i, exp in enumerate(self.exposures):
             img_use, inverse_var = self._extract_image(exp, calculate_dcr_gen=False, use_only_detected=True)
             template = self.build_matched_template(exp, model=model, return_weights=False,
                                                    use_stretch=use_stretch)
             inds_use = inverse_var > 0
-            diff_vals = np.abs(img_use - template)
-            ref_vals = np.abs(img_use)
+            diff_vals = np.abs(img_use - template)*avg_model
+            ref_vals = np.abs(img_use)*avg_model
             if np.sum(inds_use) == 0:
                 metric[exp_i] = float("inf")
             else:
