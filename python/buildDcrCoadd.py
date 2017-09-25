@@ -335,7 +335,7 @@ class BuildDcrCoadd(GenerateTemplate):
         self.model_base = initial_solution
         # When debugging, the image returned by _extract_image might be cropped to speed up calculations.
         if self.debug:
-            self.y_size, self.x_size = initial_solution.shape
+            self.y_size, self.x_size = initial_solution[0].shape
 
         did_converge = self._build_model_subroutine(initial_solution, verbose=verbose,
                                                     min_iter=min_iter, max_iter=max_iter,
