@@ -260,7 +260,8 @@ class BuildDcrCoadd(GenerateTemplate):
                     frequency_regularization=False, max_slope=None, initial_solution=None,
                     test_convergence=False, convergence_threshold=None, use_variance=True,
                     refine_solution=False, spatial_filter=None, airmass_weight=False,
-                    refine_max_iter=None, use_stretch=None):
+                    refine_max_iter=None, use_stretch=None,
+                    divergence_threshold=None, obs_divergence_threshold=None):
         """Build a model of the sky in multiple sub-bands.
 
         Parameters
@@ -302,6 +303,11 @@ class BuildDcrCoadd(GenerateTemplate):
             The maximum number of iterations of forward modeling allowed when refining the solution.
         use_stretch : bool, optional
             Set to simulate the effect of DCR across each sub-band by stretching the model.
+        divergence_threshold : float, optional
+            Maximum increase in the difference between old and new solutions before
+            exiting from lack of convergence.
+        obs_divergence_threshold : float, optional
+            Maximum degradation of convergence for one observation before it is cut.
         """
         # Set up an initial guess with all model planes equal as a starting point of the iterative solution
         # The solution is initialized to 0. and not an array so that it can adapt
@@ -347,6 +353,8 @@ class BuildDcrCoadd(GenerateTemplate):
                                                     spatial_filter=spatial_filter,
                                                     airmass_weight=airmass_weight,
                                                     use_stretch=use_stretch,
+                                                    divergence_threshold=divergence_threshold,
+                                                    obs_divergence_threshold=obs_divergence_threshold,
                                                     )
         if refine_solution:
             print("Refining model")
@@ -367,6 +375,8 @@ class BuildDcrCoadd(GenerateTemplate):
                                                         spatial_filter=spatial_filter,
                                                         airmass_weight=airmass_weight,
                                                         use_stretch=use_stretch,
+                                                        divergence_threshold=divergence_threshold,
+                                                        obs_divergence_threshold=obs_divergence_threshold,
                                                         )
 
         if verbose:
@@ -376,7 +386,8 @@ class BuildDcrCoadd(GenerateTemplate):
     def _build_model_subroutine(self, initial_solution, verbose=True, max_iter=10, min_iter=None,
                                 test_convergence=False, frequency_regularization=True, max_slope=None,
                                 clamp=None, convergence_threshold=None, use_variance=True,
-                                spatial_filter=None, airmass_weight=False, use_stretch=None):
+                                spatial_filter=None, airmass_weight=False, use_stretch=None,
+                                divergence_threshold=None, obs_divergence_threshold=None):
         """Extract the math from building the model so it can be re-used.
 
         Parameters
@@ -410,6 +421,11 @@ class BuildDcrCoadd(GenerateTemplate):
             Set to weight each observation by its airmass.
         use_stretch : bool, optional
             Set to simulate the effect of DCR across each sub-band by stretching the model.
+        divergence_threshold : float, optional
+            Maximum increase in the difference between old and new solutions before
+            exiting from lack of convergence.
+        obs_divergence_threshold : float, optional
+            Maximum degradation of convergence for one observation before it is cut.
 
         Returns
         -------
@@ -418,6 +434,10 @@ class BuildDcrCoadd(GenerateTemplate):
         Sets self.model as a list of np.ndarrays
         Sets self.weights as a np.ndarray
         """
+        if divergence_threshold is None:
+            divergence_threshold = 1.0
+        if obs_divergence_threshold is None:
+            obs_divergence_threshold = 1.05
         if clamp is None:
             # The value of clamp is chosen so that the solution never changes by
             #  more than a factor of 2 between iterations: if new = old*3 then (old + new)/2 = 2*old
@@ -486,7 +506,7 @@ class BuildDcrCoadd(GenerateTemplate):
                      np.sum(np.abs([soln[inds_use] for soln in last_solution])))
             if verbose:
                 print("Iteration %i: delta=%f" % (sol_iter, delta))
-            if delta > last_delta:
+            if delta > divergence_threshold*last_delta:
                 print("BREAK from diverging model difference.")
                 final_soln_iter = sol_iter - 1
                 break
@@ -497,7 +517,7 @@ class BuildDcrCoadd(GenerateTemplate):
                 if verbose:
                     print("Full convergence metric:", convergence_metric_full)
                 if sol_iter >= min_iter:
-                    exp_cut = convergence_metric_full > last_convergence_metric_full*1.05
+                    exp_cut = convergence_metric_full > last_convergence_metric_full*obs_divergence_threshold
                     exp_cut1 = convergence_metric_full > init_convergence_metric_full
                     exp_cut[exp_cut1] = True
 
