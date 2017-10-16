@@ -456,7 +456,7 @@ class BuildDcrCoadd(GenerateTemplate):
         if verbose:
             print("Fractional change per iteration:")
         last_convergence_metric_full = self.calc_model_metric(last_solution, use_stretch=use_stretch)
-        init_convergence_metric_full = last_convergence_metric_full
+        test_convergence_metric_full = last_convergence_metric_full
         last_convergence_metric = np.mean(last_convergence_metric_full)
         if verbose:
             print("Full initial convergence metric: ", last_convergence_metric_full)
@@ -466,6 +466,8 @@ class BuildDcrCoadd(GenerateTemplate):
         final_soln_iter = None
         did_converge = False
         last_delta = 1.
+        n_exp_cut = 0
+        n_exp_cut_last = 0
         for sol_iter in range(int(max_iter)):
             if use_stretch:
                 new_solution, inverse_var_arr = self._calculate_stretched_model(last_solution, exp_cut,
@@ -506,7 +508,11 @@ class BuildDcrCoadd(GenerateTemplate):
                      np.sum(np.abs([soln[inds_use] for soln in last_solution])))
             if verbose:
                 print("Iteration %i: delta=%f" % (sol_iter, delta))
-            if delta > divergence_threshold*last_delta:
+            if n_exp_cut != n_exp_cut_last:
+                divergence_threshold_use = 2.0
+            else:
+                divergence_threshold_use = divergence_threshold
+            if delta > divergence_threshold_use*last_delta:
                 print("BREAK from diverging model difference.")
                 final_soln_iter = sol_iter - 1
                 break
@@ -518,12 +524,19 @@ class BuildDcrCoadd(GenerateTemplate):
                     print("Full convergence metric:", convergence_metric_full)
                 if sol_iter >= min_iter:
                     exp_cut = convergence_metric_full > last_convergence_metric_full*obs_divergence_threshold
-                    exp_cut1 = convergence_metric_full > init_convergence_metric_full
+                    exp_cut1 = convergence_metric_full > test_convergence_metric_full*obs_divergence_threshold
                     exp_cut[exp_cut1] = True
+                    # Only cut exposures that are beginning to diverge if they are also worse than most.
+                    exp_cut_test = convergence_metric_full > np.median(convergence_metric_full)
+                    exp_cut *= exp_cut_test
+                else:
+                    test_convergence_metric_full = last_convergence_metric_full
 
+                n_exp_cut_last = n_exp_cut
                 n_exp_cut = np.sum(exp_cut)
                 if n_exp_cut > 0:
-                    print("%i exposure(s) cut from lack of convergence." % int(n_exp_cut))
+                    print("%i exposure(s) cut from lack of convergence: " % int(n_exp_cut),
+                          (np.where(exp_cut))[0])
                 if (self.n_images - n_exp_cut) < min_images:
                     print("Exiting iterative solution: Too few images left.")
                     final_soln_iter = sol_iter - 1
