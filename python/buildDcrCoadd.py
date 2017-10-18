@@ -256,12 +256,14 @@ class BuildDcrCoadd(GenerateTemplate):
         psfK = afwMath.FixedKernel(psf_image)
         self.psf = measAlg.KernelPsf(psfK)
 
-    def build_model(self, verbose=True, max_iter=10, min_iter=None, clamp=None,
-                    frequency_regularization=False, max_slope=None, initial_solution=None,
-                    test_convergence=False, convergence_threshold=None, use_variance=True,
-                    refine_solution=False, spatial_filter=None, airmass_weight=False,
-                    refine_max_iter=None, use_stretch=None,
-                    divergence_threshold=None, obs_divergence_threshold=None):
+    def build_model(self, verbose=True, max_iter=None, min_iter=None, clamp=None, use_variance=True,
+                    frequency_regularization=False, max_slope=None,
+                    initial_solution=None,
+                    test_convergence=False, convergence_threshold=None,
+                    spatial_filter=None, airmass_weight=False,
+                    use_stretch=None,
+                    divergence_threshold=None, obs_divergence_threshold=None,
+                    refine_solution=False, refine_max_iter=None, refine_convergence_threshold=None):
         """Build a model of the sky in multiple sub-bands.
 
         Parameters
@@ -365,12 +367,14 @@ class BuildDcrCoadd(GenerateTemplate):
             initial_solution = self._model_spatial_filter(self.model, spatial_filter_use)
             if refine_max_iter is None:
                 refine_max_iter = max_iter*2
+            if refine_convergence_threshold is None:
+                refine_convergence_threshold = convergence_threshold/10.
             did_converge = self._build_model_subroutine(initial_solution, verbose=verbose,
                                                         max_iter=refine_max_iter, min_iter=min_iter,
                                                         frequency_regularization=frequency_regularization,
                                                         clamp=clamp, max_slope=max_slope,
                                                         test_convergence=test_convergence,
-                                                        convergence_threshold=convergence_threshold,
+                                                        convergence_threshold=refine_convergence_threshold,
                                                         use_variance=use_variance,
                                                         spatial_filter=spatial_filter,
                                                         airmass_weight=airmass_weight,
@@ -383,7 +387,7 @@ class BuildDcrCoadd(GenerateTemplate):
             print("\nFinished building model.")
         return did_converge
 
-    def _build_model_subroutine(self, initial_solution, verbose=True, max_iter=10, min_iter=None,
+    def _build_model_subroutine(self, initial_solution, verbose=True, max_iter=None, min_iter=None,
                                 test_convergence=False, frequency_regularization=True, max_slope=None,
                                 clamp=None, convergence_threshold=None, use_variance=True,
                                 spatial_filter=None, airmass_weight=False, use_stretch=None,
@@ -435,7 +439,7 @@ class BuildDcrCoadd(GenerateTemplate):
         Sets self.weights as a np.ndarray
         """
         if divergence_threshold is None:
-            divergence_threshold = 1.0
+            divergence_threshold = 1.05
         if obs_divergence_threshold is None:
             obs_divergence_threshold = 1.05
         if clamp is None:
@@ -449,6 +453,8 @@ class BuildDcrCoadd(GenerateTemplate):
         min_images = self.n_step + 1
         if min_iter is None:
             min_iter = 2
+        if max_iter is None:
+            max_iter = 20
         last_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
         for f in range(self.n_step):
             last_solution[f] += initial_solution[f]
@@ -460,7 +466,7 @@ class BuildDcrCoadd(GenerateTemplate):
         last_convergence_metric = np.mean(last_convergence_metric_full)
         if verbose:
             print("Full initial convergence metric: ", last_convergence_metric_full)
-            print("Convergence metric: %f" % last_convergence_metric)
+            print("Initial convergence metric: %f" % last_convergence_metric)
 
         exp_cut = [False for exp_i in range(self.n_images)]
         final_soln_iter = None
@@ -484,7 +490,7 @@ class BuildDcrCoadd(GenerateTemplate):
 
             # Optionally restrict spatial variations in frequency structure
             if spatial_filter is not None:
-                new_solution = self._model_spatial_filter(new_solution, spatial_filter, mask=self.mask)
+                new_solution = self._model_spatial_filter(new_solution, spatial_filter, mask=None)
 
             # Restrict new solutions from being wildly different from the last solution
             if clamp > 0:
@@ -497,8 +503,6 @@ class BuildDcrCoadd(GenerateTemplate):
             convergence_metric_full = self.calc_model_metric(new_solution, use_stretch=use_stretch)
             convergence_metric = np.mean(convergence_metric_full[np.logical_not(exp_cut)])
             gain = last_convergence_metric/convergence_metric
-            if verbose:
-                print("Convergence-weighted gain used: %f" % gain)
             # Use the average of the new and last solution for the next iteration. This reduces oscillations.
             new_solution_use = [np.abs((last_solution[f] + gain*new_solution[f])/(1 + gain))
                                 for f in range(self.n_step)]
@@ -508,6 +512,7 @@ class BuildDcrCoadd(GenerateTemplate):
                      np.sum(np.abs([soln[inds_use] for soln in last_solution])))
             if verbose:
                 print("Iteration %i: delta=%f" % (sol_iter, delta))
+                print("Convergence-weighted gain used: %f" % gain)
             if n_exp_cut != n_exp_cut_last:
                 divergence_threshold_use = 2.0
             else:
@@ -537,21 +542,23 @@ class BuildDcrCoadd(GenerateTemplate):
                 if n_exp_cut > 0:
                     print("%i exposure(s) cut from lack of convergence: " % int(n_exp_cut),
                           (np.where(exp_cut))[0])
+                    last_convergence_metric = np.mean(last_convergence_metric_full[np.logical_not(exp_cut)])
                 if (self.n_images - n_exp_cut) < min_images:
                     print("Exiting iterative solution: Too few images left.")
                     final_soln_iter = sol_iter - 1
                     break
-                last_convergence_metric = np.mean(last_convergence_metric_full[np.logical_not(exp_cut)])
                 last_convergence_metric_full = convergence_metric_full
                 convergence_metric = np.mean(convergence_metric_full[np.logical_not(exp_cut)])
-                print("Convergence metric: %f" % convergence_metric)
+                conv_change = (1. - convergence_metric/last_convergence_metric)*100.
+                print("Iteration %i convergence metric: %f (%f%% change)" %
+                      (sol_iter, convergence_metric, conv_change))
+                convergence_check2 = (1 - convergence_threshold)*last_convergence_metric
 
                 if sol_iter > min_iter:
                     if convergence_metric > last_convergence_metric:
                         print("BREAK from lack of convergence")
                         final_soln_iter = sol_iter - 1
                         break
-                    convergence_check2 = (1 - convergence_threshold)*last_convergence_metric
                     if convergence_metric > convergence_check2:
                         print("BREAK after reaching convergence threshold")
                         final_soln_iter = sol_iter

@@ -126,9 +126,9 @@ def fft_shift_convolve(image, shift, n_substep=100, useInverse=False, weights=No
     """
     y_size, x_size = image.shape
     kernel_x = kernel_1d(shift.dx, x_size, n_substep=n_substep, debug_sinc=False,
-                         useInverse=useInverse, weights=weights)
+                         useInverse=useInverse, weights=weights, lanczos=4)
     kernel_y = kernel_1d(shift.dy, y_size, n_substep=n_substep, debug_sinc=False,
-                         useInverse=useInverse, weights=weights)
+                         useInverse=useInverse, weights=weights, lanczos=4)
     kernel = np.einsum('i,j->ij', kernel_y, kernel_x)
     fft_image = np.fft.rfft2(image)
     fft_kernel = np.fft.rfft2(kernel)
