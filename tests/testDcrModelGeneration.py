@@ -140,8 +140,8 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
     def test_calc_model_metric(self):
         """Test that the DCR model convergence metric is calculated consistently."""
         model_file = "test_data/build_model_vals.npy"
-        metric_ref = np.array([0.022835006051, 0.014885210227, 0.0120010522772,
-                               0.0140386530451, 0.0204993350076, 0.0237343323628])
+        metric_ref = np.array([0.0719102938278, 0.0243621751, 0.00996798332164,
+                               0.0235583355852, 0.0309890648232, 0.0339528991862])
         model = np.load(model_file)
         metric = self.dcrCoadd.calc_model_metric(model=model)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)

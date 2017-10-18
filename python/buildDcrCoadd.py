@@ -52,9 +52,9 @@ class BuildDcrCoadd(GenerateTemplate):
 
     Attributes
     ----------
-    bandpass : lsst.sims.photUtils.Bandpass object
+    bandpass : BandpassHelper object
         Bandpass object returned by `load_bandpass`
-    bandpass_highres : lsst.sims.photUtils.Bandpass object
+    bandpass_highres : BandpassHelper object
         A second Bandpass object returned by load_bandpass, at the highest resolution available.
     bbox : lsst.afw.geom.Box2I object
         A bounding box.
@@ -121,7 +121,7 @@ class BuildDcrCoadd(GenerateTemplate):
 
     def __init__(self, obsids=None, input_repository='.', filter_name='g',
                  wavelength_step=10., n_step=None, exposures=None,
-                 warp=False, debug_mode=False, verbose=False, **kwargs):
+                 warp=False, debug_mode=False, verbose=False):
         """Load images from the repository and set up parameters.
 
         Parameters
@@ -146,8 +146,6 @@ class BuildDcrCoadd(GenerateTemplate):
             Temporary debugging option.
         verbose : bool, optional
             Set to print additional status messages.
-        **kwargs : TYPE
-            Allows additional keyword arguments to be passed to `load_bandpass`.
 
         Raises
         ------
@@ -205,17 +203,17 @@ class BuildDcrCoadd(GenerateTemplate):
         self.psf = None
         self.mask = self._combine_masks()
 
-        bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
-        bandpass_highres = self.load_bandpass(filter_name=filter_name, wavelength_step=None, **kwargs)
+        bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step)
+        bandpass_highres = self.load_bandpass(filter_name=filter_name, wavelength_step=None)
         if n_step is not None:
             wavelength_step = (bandpass.wavelen_max - bandpass.wavelen_min) / n_step
-            bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
+            bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step)
         else:
             n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
         if n_step >= self.n_images:
             print("Warning! Under-constrained system. Reducing number of frequency planes.")
             wavelength_step *= n_step / self.n_images
-            bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
+            bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step)
             n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
         self.n_step = n_step
         self.bandpass = bandpass
@@ -778,7 +776,7 @@ class BuildDcrCoadd(GenerateTemplate):
         ----------
         new_solution : list of np.ndarrays
             The model solution from the current iteration.
-        bandpass : lsst.sims.photUtils.Bandpass object
+        bandpass : BandpassHelper object
             Bandpass object returned by `load_bandpass`
         max_slope : float, optional
             Maximum slope to allow between sub-band model planes.

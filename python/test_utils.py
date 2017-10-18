@@ -57,9 +57,7 @@ def BasicBandpass(filter_name='g', wavelength_step=1.):
     -------
     Returns a lsst.sims.photUtils.Bandpass object.
     """
-    bandpass = GenerateTemplate.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step,
-                                              use_mirror=False, use_lens=False, use_atmos=False,
-                                              use_filter=False, use_detector=False)
+    bandpass = GenerateTemplate.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step)
     return(bandpass)
 
 

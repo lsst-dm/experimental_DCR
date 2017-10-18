@@ -28,6 +28,7 @@ from astropy import units as u
 from astropy.units import cds as u_cds
 import numpy as np
 import scipy.optimize.nnls
+from scipy import constants
 
 from lsst.afw.geom import Angle
 import lsst.afw.image as afwImage
@@ -37,6 +38,99 @@ from .lsst_defaults import lsst_observatory, lsst_weather
 
 __all__ = ["calculate_hour_angle", "parallactic_angle", "wrap_warpExposure", "solve_model",
            "calculate_rotation_angle", "refraction", "diff_refraction"]
+
+
+class BandpassHelper(object):
+    def __init__(self, filter_name='g', profile='semi', wavelen_step=None):
+        """A dummy bandpass object that mimics Bandpass from sims_photUtils.
+
+        This approximates the filter profile with the supplied function.
+
+        Parameters
+        ----------
+        filter_name : str, optional
+            Common name of the filter used. For LSST, use u, g, r, i, z, or y
+        profile : str, optional
+            Name of the filter profile approximation to use.
+            The defualt profile is a semicircle.
+        wavelen_step : float, optional
+            Wavelength resolution in nm.
+        """
+        if wavelen_step is None:
+            wavelen_step = 1.0
+        band_dict = {'u': (324.0, 395.0), 'g': (405.0, 552.0), 'r': (552.0, 691.0),
+                     'i': (818.0, 921.0), 'z': (922.0, 997.0), 'y': (975.0, 1075.0)}
+        band_range = band_dict[filter_name]
+        self.wavelen_min = band_range[0]
+        self.wavelen_max = band_range[1]
+        self.wavelen = np.arange(self.wavelen_min, self.wavelen_max + wavelen_step, wavelen_step)
+        self.wavelen_step = wavelen_step
+        n_step = len(self.wavelen)
+        self.phi = None
+        if profile == 'semi':
+            self.sb = np.sqrt(1. - (2.*np.arange(n_step)/(n_step - 1) - 1.)**2.)
+        elif profile == 'quadratic':
+            self.sb = -(self.wavelen - np.median(self.wavelen))**2.
+            self.sb -= np.min(self.sb)
+            self.sb /= np.max(self.sb)
+        else:
+            self.sb = np.ones(n_step)
+        self.sbTophi()
+
+    def calc_eff_wavelen(self, wavelength_min=None, wavelength_max=None):
+        """Calculate effective wavelengths for filters.
+
+        Parameters
+        ----------
+        wavelength_min : float, optional
+            Starting wavelength, in nm
+        wavelength_max : float, optional
+            End wavelength, in nm
+
+        Returns
+        -------
+        Returns the weighted average wavelength within the range given, taken over the bandpass.
+        """
+        if self.phi is None:
+            self.sbTophi()
+        if wavelength_min is None:
+            wavelength_min = np.min(self.wavelen)
+        if wavelength_max is None:
+            wavelength_max = np.max(self.wavelen)
+        w_inds = (self.wavelen >= wavelength_min) & (self.wavelen <= wavelength_max)
+        effwavelenphi = (self.wavelen[w_inds]*self.phi[w_inds]).sum()/self.phi[w_inds].sum()
+        return effwavelenphi
+
+    def calc_bandwidth(self):
+        """Calculate the bandwidth of a filter."""
+        f0 = constants.speed_of_light/(self.wavelen_min*1.0e-9)
+        f1 = constants.speed_of_light/(self.wavelen_max*1.0e-9)
+        f_cen = constants.speed_of_light/(self.calc_eff_wavelen()*1.0e-9)
+        return(f_cen*2.0*(f0 - f1)/(f0 + f1))
+
+    def getBandpass(self):
+        wavelen = np.copy(self.wavelen)
+        sb = np.copy(self.sb)
+        return wavelen, sb
+
+    def sbTophi(self):
+        """
+        Calculate and set phi - the normalized system response.
+
+        This function only updates self.phi.
+        Copied verbatim from sims_photUtils.
+        """
+        # The definition of phi = (Sb/wavelength)/\int(Sb/wavelength)dlambda.
+        # Due to definition of class, self.sb and self.wavelen are guaranteed equal-gridded.
+        dlambda = self.wavelen[1]-self.wavelen[0]
+        self.phi = self.sb/self.wavelen
+        # Normalize phi so that the integral of phi is 1.
+        phisum = self.phi.sum()
+        if phisum < 1e-300:
+            raise Exception("Phi is poorly defined (nearly 0) over bandpass range.")
+        norm = phisum * dlambda
+        self.phi = self.phi / norm
+        return
 
 
 def kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False, useInverse=False, weights=None):

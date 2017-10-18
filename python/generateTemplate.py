@@ -28,7 +28,6 @@ from builtins import object
 from collections import namedtuple
 
 import numpy as np
-from scipy import constants
 from scipy.ndimage.interpolation import shift as scipy_shift
 from scipy.ndimage.morphology import binary_dilation
 
@@ -41,12 +40,9 @@ from lsst.daf.base import DateTime
 import lsst.daf.persistence as daf_persistence
 from lsst.geom import convexHull as convexHull
 import lsst.meas.algorithms as measAlg
-# import lsst.pex.exceptions
 import lsst.pex.policy as pexPolicy
 from lsst.pipe.tasks import coaddBase
-from lsst.sims.photUtils import Bandpass
 from lsst.skymap import DiscreteSkyMap
-from lsst.utils import getPackageDir
 
 from .lsst_defaults import lsst_observatory, lsst_weather
 from .dcr_utils import calculate_rotation_angle
@@ -56,6 +52,7 @@ from .dcr_utils import kernel_1d
 from .dcr_utils import solve_model
 from .dcr_utils import wrap_warpExposure
 from .dcr_utils import calculate_hour_angle
+from .dcr_utils import BandpassHelper
 
 __all__ = ['GenerateTemplate']
 
@@ -81,9 +78,9 @@ class GenerateTemplate(object):
 
     Attributes
     ----------
-    bandpass : lsst.sims.photUtils.Bandpass object
+    bandpass : BandpassHelper object
         Bandpass object returned by load_bandpass
-    bandpass_highres : lsst.sims.photUtils.Bandpass object
+    bandpass_highres : BandpassHelper object
         A second Bandpass object returned by load_bandpass, at the highest resolution available.
     bbox : lsst.afw.geom.Box2I object
         A bounding box.
@@ -98,8 +95,7 @@ class GenerateTemplate(object):
         Length of the exposure, in seconds.
     filter_name : str
         Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
-        Filter names are restricted by the filter profiles stored in lsst.sims.photUtils.Bandpass.
-        If other filters are used, the profiles should be provided with a new Bandpass class.
+        Filter names are restricted by the filter profiles stored in dcr_utils.
     mask : np.ndarray
         Mask plane of the model. This mask is saved as the mask plane of the template exposure.
     model : list of np.ndarrays
@@ -128,7 +124,7 @@ class GenerateTemplate(object):
         Height of the model, in pixels.
     """
 
-    def __init__(self, model_repository=None, filter_name='g', butler=None, **kwargs):
+    def __init__(self, model_repository=None, filter_name='g', butler=None):
         """Restore a persisted DCR model created with BuildDcrModel.
 
         Only run when restoring a model or for testing; otherwise superceded by BuildDcrModel __init__.
@@ -141,14 +137,12 @@ class GenerateTemplate(object):
             Name of the bandpass-defining filter of the data. Expected values are u,g,r,i,z,y.
         butler : None, lsst.daf.persistence Butler object
             Optionally pass in a pre-initialized butler to manage persistence to and from a repository.
-        **kwargs : TYPE
-            Any additional keyword arguments to pass to load_bandpass
         """
         self.butler = butler
         self.default_repository = model_repository
         self.bbox = None
         self.wcs = None
-        self.load_model(model_repository=model_repository, filter_name=filter_name, **kwargs)
+        self.load_model(model_repository=model_repository, filter_name=filter_name)
 
     def generate_templates_from_model(self, obsids=None, exposures=None,
                                       input_repository=None, output_repository=None,
@@ -557,8 +551,7 @@ class GenerateTemplate(object):
         return dataRef[0]
 
     @staticmethod
-    def load_bandpass(filter_name='g', wavelength_step=None, use_mirror=True, use_lens=True, use_atmos=True,
-                      use_filter=True, use_detector=True, **kwargs):
+    def load_bandpass(filter_name='g', wavelength_step=None):
         """Load in Bandpass object from sims_photUtils.
 
         Parameters
@@ -567,87 +560,13 @@ class GenerateTemplate(object):
             Common name of the filter used. For LSST, use u, g, r, i, z, or y
         wavelength_step : float, optional
             Wavelength resolution in nm, also the wavelength range of each sub-band plane.
-            If not set, the entire band range is used.
-        use_mirror : bool, optional
-            Set to include the mirror in the filter throughput calculation.
-        use_lens : bool, optional
-            Set to use the LSST lens in the filter throughput calculation
-        use_atmos : bool, optional
-            Set to use the standard atmosphere transmission in the filter throughput calculation
-        use_filter : bool, optional
-            Set to use the LSST filters in the filter throughput calculation.
-        use_detector : bool, optional
-            Set to use the LSST detector efficiency in the filter throughput calculation.
-        **kwargs
-            Accept and ignore any additional keyword arguments.
+            If not set, the native resolution of the bandpass model is used.
 
         Returns
         -------
-        Returns a lsst.sims.photUtils.Bandpass object.
+        Returns a BandpassHelper object that has an interface similar to lsst.sims.photUtils.Bandpass.
         """
-        class BandpassMod(Bandpass):
-            """Customize a few methods of the Bandpass class from sims_photUtils."""
-
-            def calc_eff_wavelen(self, wavelength_min=None, wavelength_max=None):
-                """Calculate effective wavelengths for filters.
-
-                Parameters
-                ----------
-                wavelength_min : float, optional
-                    Starting wavelength, in nm
-                wavelength_max : float, optional
-                    End wavelength, in nm
-
-                Returns
-                -------
-                Returns the weighted average wavelength within the range given, taken over the bandpass.
-                """
-                if self.phi is None:
-                    self.sbTophi()
-                if wavelength_min is None:
-                    wavelength_min = np.min(self.wavelen)
-                if wavelength_max is None:
-                    wavelength_max = np.max(self.wavelen)
-                w_inds = (self.wavelen >= wavelength_min) & (self.wavelen <= wavelength_max)
-                effwavelenphi = (self.wavelen[w_inds]*self.phi[w_inds]).sum()/self.phi[w_inds].sum()
-                return effwavelenphi
-
-            def calc_bandwidth(self):
-                f0 = constants.speed_of_light/(self.wavelen_min*1.0e-9)
-                f1 = constants.speed_of_light/(self.wavelen_max*1.0e-9)
-                f_cen = constants.speed_of_light/(self.calc_eff_wavelen()*1.0e-9)
-                return(f_cen*2.0*(f0 - f1)/(f0 + f1))
-
-        """
-        Define the wavelength range and resolution for a given ugrizy band.
-        These are defined in case the LSST filter throughputs are not used.
-        """
-        band_dict = {'u': (324.0, 395.0), 'g': (405.0, 552.0), 'r': (552.0, 691.0),
-                     'i': (818.0, 921.0), 'z': (922.0, 997.0), 'y': (975.0, 1075.0)}
-        band_range = band_dict[filter_name]
-        bandpass = BandpassMod(wavelen_min=band_range[0], wavelen_max=band_range[1],
-                               wavelen_step=wavelength_step)
-        throughput_dir = getPackageDir('throughputs')
-        lens_list = ['baseline/lens1.dat', 'baseline/lens2.dat', 'baseline/lens3.dat']
-        mirror_list = ['baseline/m1.dat', 'baseline/m2.dat', 'baseline/m3.dat']
-        atmos_list = ['atmos/atmos_11.dat']
-        detector_list = ['baseline/detector.dat']
-        filter_list = ['baseline/filter_' + filter_name + '.dat']
-        component_list = []
-        if use_mirror:
-            component_list += mirror_list
-        if use_lens:
-            component_list += lens_list
-        if use_atmos:
-            component_list += atmos_list
-        if use_detector:
-            component_list += detector_list
-        if use_filter:
-            component_list += filter_list
-        bandpass.readThroughputList(rootDir=throughput_dir, componentList=component_list)
-        # Calculate bandpass phi value if required.
-        if bandpass.phi is None:
-            bandpass.sbTophi()
+        bandpass = BandpassHelper(filter_name=filter_name, profile='semi', wavelen_step=wavelength_step)
         return bandpass
 
     @staticmethod
@@ -656,7 +575,7 @@ class GenerateTemplate(object):
 
         Parameters
         ----------
-        bandpass : lsst.sims.photUtils.Bandpass object
+        bandpass : BandpassHelper object
             Bandpass object returned by load_bandpass
         use_midpoint : bool, optional
             If set to True return the filter-weighted average wavelength.
@@ -686,7 +605,7 @@ class GenerateTemplate(object):
 
         Parameters
         ----------
-        bandpass : lsst.sims.photUtils.Bandpass object
+        bandpass : BandpassHelper object
             Bandpass object returned by load_bandpass
         pixel_scale : lsst.afw.geom.Angle
             Plate scale, as an Angle.
@@ -963,7 +882,7 @@ class GenerateTemplate(object):
             exp.getMaskedImage().getMask().addMaskPlane("CLIPPED")
             self.write_exposure(exp, datasetType="dcrCoadd", subfilter=f, butler=butler)
 
-    def load_model(self, model_repository=None, filter_name='g', doWarp=False, **kwargs):
+    def load_model(self, model_repository=None, filter_name='g', doWarp=False):
         """Depersist a DCR model from a repository and set up the metadata.
 
         Parameters
@@ -975,8 +894,6 @@ class GenerateTemplate(object):
             Common name of the filter used. For LSST, use u, g, r, i, z, or y
         doWarp : bool, optional
             Set if the input coadds need to be warped to the reference wcs.
-        **kwargs
-            Any additional keyword arguments to pass to ``load_bandpass``
 
         Returns
         ------------------
@@ -1017,10 +934,10 @@ class GenerateTemplate(object):
         self.pixel_scale = self.wcs.pixelScale()
         self.exposure_time = dcrCoadd.getInfo().getVisitInfo().getExposureTime()
         self.observatory = dcrCoadd.getInfo().getVisitInfo().getObservatory()
-        bandpass_init = self.load_bandpass(filter_name=filter_name, **kwargs)
+        bandpass_init = self.load_bandpass(filter_name=filter_name)
         wavelength_step = (bandpass_init.wavelen_max - bandpass_init.wavelen_min) / self.n_step
-        self.bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
-        self.bandpass_highres = self.load_bandpass(filter_name=filter_name, wavelength_step=None, **kwargs)
+        self.bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step)
+        self.bandpass_highres = self.load_bandpass(filter_name=filter_name, wavelength_step=None)
 
         self.psf = dcrCoadd.getPsf()
         psf_avg = self.psf.computeKernelImage().getArray()
@@ -1080,7 +997,7 @@ class GenerateTemplate(object):
             This helps avoid edge effects when computing A^T A.
         exposure : lsst.afw.image.ExposureF object, optional
             If not supplied, the covariance matrix for all exposures in ``self.exposures`` is calculated.
-        bandpass : lsst.sims.photUtils.Bandpass object
+        bandpass : BandpassHelper object
             Bandpass object returned by load_bandpass
         n_step : int, optional
             Number of sub-band planes to use. Default is to use ``self.n_step``
