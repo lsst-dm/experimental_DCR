@@ -52,9 +52,9 @@ class BuildDcrCoadd(GenerateTemplate):
 
     Attributes
     ----------
-    bandpass : lsst.sims.photUtils.Bandpass object
+    bandpass : BandpassHelper object
         Bandpass object returned by `load_bandpass`
-    bandpass_highres : lsst.sims.photUtils.Bandpass object
+    bandpass_highres : BandpassHelper object
         A second Bandpass object returned by load_bandpass, at the highest resolution available.
     bbox : lsst.afw.geom.Box2I object
         A bounding box.
@@ -121,7 +121,7 @@ class BuildDcrCoadd(GenerateTemplate):
 
     def __init__(self, obsids=None, input_repository='.', filter_name='g',
                  wavelength_step=10., n_step=None, exposures=None,
-                 warp=False, debug_mode=False, verbose=False, **kwargs):
+                 warp=False, debug_mode=False, verbose=False):
         """Load images from the repository and set up parameters.
 
         Parameters
@@ -146,8 +146,6 @@ class BuildDcrCoadd(GenerateTemplate):
             Temporary debugging option.
         verbose : bool, optional
             Set to print additional status messages.
-        **kwargs : TYPE
-            Allows additional keyword arguments to be passed to `load_bandpass`.
 
         Raises
         ------
@@ -205,17 +203,17 @@ class BuildDcrCoadd(GenerateTemplate):
         self.psf = None
         self.mask = self._combine_masks()
 
-        bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
-        bandpass_highres = self.load_bandpass(filter_name=filter_name, wavelength_step=None, **kwargs)
+        bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step)
+        bandpass_highres = self.load_bandpass(filter_name=filter_name, wavelength_step=None)
         if n_step is not None:
             wavelength_step = (bandpass.wavelen_max - bandpass.wavelen_min) / n_step
-            bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
+            bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step)
         else:
             n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
         if n_step >= self.n_images:
             print("Warning! Under-constrained system. Reducing number of frequency planes.")
             wavelength_step *= n_step / self.n_images
-            bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step, **kwargs)
+            bandpass = self.load_bandpass(filter_name=filter_name, wavelength_step=wavelength_step)
             n_step = int(np.ceil((bandpass.wavelen_max - bandpass.wavelen_min) / bandpass.wavelen_step))
         self.n_step = n_step
         self.bandpass = bandpass
@@ -256,11 +254,14 @@ class BuildDcrCoadd(GenerateTemplate):
         psfK = afwMath.FixedKernel(psf_image)
         self.psf = measAlg.KernelPsf(psfK)
 
-    def build_model(self, verbose=True, max_iter=10, min_iter=None, clamp=None,
-                    frequency_regularization=False, max_slope=None, initial_solution=None,
-                    test_convergence=False, convergence_threshold=None, use_variance=True,
-                    refine_solution=False, spatial_filter=None, airmass_weight=False,
-                    refine_max_iter=None, use_stretch=None):
+    def build_model(self, verbose=True, max_iter=None, min_iter=None, clamp=None, use_variance=True,
+                    frequency_regularization=False, max_slope=None,
+                    initial_solution=None,
+                    test_convergence=False, convergence_threshold=None,
+                    spatial_filter=None, airmass_weight=False,
+                    use_stretch=None,
+                    divergence_threshold=None, obs_divergence_threshold=None,
+                    refine_solution=False, refine_max_iter=None, refine_convergence_threshold=None):
         """Build a model of the sky in multiple sub-bands.
 
         Parameters
@@ -302,6 +303,11 @@ class BuildDcrCoadd(GenerateTemplate):
             The maximum number of iterations of forward modeling allowed when refining the solution.
         use_stretch : bool, optional
             Set to simulate the effect of DCR across each sub-band by stretching the model.
+        divergence_threshold : float, optional
+            Maximum increase in the difference between old and new solutions before
+            exiting from lack of convergence.
+        obs_divergence_threshold : float, optional
+            Maximum degradation of convergence for one observation before it is cut.
         """
         # Set up an initial guess with all model planes equal as a starting point of the iterative solution
         # The solution is initialized to 0. and not an array so that it can adapt
@@ -347,6 +353,8 @@ class BuildDcrCoadd(GenerateTemplate):
                                                     spatial_filter=spatial_filter,
                                                     airmass_weight=airmass_weight,
                                                     use_stretch=use_stretch,
+                                                    divergence_threshold=divergence_threshold,
+                                                    obs_divergence_threshold=obs_divergence_threshold,
                                                     )
         if refine_solution:
             print("Refining model")
@@ -357,26 +365,32 @@ class BuildDcrCoadd(GenerateTemplate):
             initial_solution = self._model_spatial_filter(self.model, spatial_filter_use)
             if refine_max_iter is None:
                 refine_max_iter = max_iter*2
+            if refine_convergence_threshold is None:
+                # If the refined convergence threshold is not set, simply drop the initial threshold by 10.
+                refine_convergence_threshold = convergence_threshold/10.
             did_converge = self._build_model_subroutine(initial_solution, verbose=verbose,
                                                         max_iter=refine_max_iter, min_iter=min_iter,
                                                         frequency_regularization=frequency_regularization,
                                                         clamp=clamp, max_slope=max_slope,
                                                         test_convergence=test_convergence,
-                                                        convergence_threshold=convergence_threshold,
+                                                        convergence_threshold=refine_convergence_threshold,
                                                         use_variance=use_variance,
                                                         spatial_filter=spatial_filter,
                                                         airmass_weight=airmass_weight,
                                                         use_stretch=use_stretch,
+                                                        divergence_threshold=divergence_threshold,
+                                                        obs_divergence_threshold=obs_divergence_threshold,
                                                         )
 
         if verbose:
             print("\nFinished building model.")
         return did_converge
 
-    def _build_model_subroutine(self, initial_solution, verbose=True, max_iter=10, min_iter=None,
+    def _build_model_subroutine(self, initial_solution, verbose=True, max_iter=None, min_iter=None,
                                 test_convergence=False, frequency_regularization=True, max_slope=None,
                                 clamp=None, convergence_threshold=None, use_variance=True,
-                                spatial_filter=None, airmass_weight=False, use_stretch=None):
+                                spatial_filter=None, airmass_weight=False, use_stretch=None,
+                                divergence_threshold=None, obs_divergence_threshold=None):
         """Extract the math from building the model so it can be re-used.
 
         Parameters
@@ -410,6 +424,11 @@ class BuildDcrCoadd(GenerateTemplate):
             Set to weight each observation by its airmass.
         use_stretch : bool, optional
             Set to simulate the effect of DCR across each sub-band by stretching the model.
+        divergence_threshold : float, optional
+            Maximum increase in the difference between old and new solutions before
+            exiting from lack of convergence.
+        obs_divergence_threshold : float, optional
+            Maximum degradation of convergence for one observation before it is cut.
 
         Returns
         -------
@@ -418,6 +437,16 @@ class BuildDcrCoadd(GenerateTemplate):
         Sets self.model as a list of np.ndarrays
         Sets self.weights as a np.ndarray
         """
+        if divergence_threshold is None:
+            # A new solution may slightly degrade the overall convergence, but as long it does not get
+            #   much worse than a few percent overall future iterations may still lead to an improvement.
+            # From trial and error, 5% seems about right
+            divergence_threshold = 1.05
+        if obs_divergence_threshold is None:
+            # Individual observations may degrade slightly even when the overall solution improves.
+            # Allow a slight tolerance in that degradation before excluding them from the calculation.
+            # From trial and error, 5% seems about right.
+            obs_divergence_threshold = 1.05
         if clamp is None:
             # The value of clamp is chosen so that the solution never changes by
             #  more than a factor of 2 between iterations: if new = old*3 then (old + new)/2 = 2*old
@@ -429,6 +458,8 @@ class BuildDcrCoadd(GenerateTemplate):
         min_images = self.n_step + 1
         if min_iter is None:
             min_iter = 2
+        if max_iter is None:
+            max_iter = 20
         last_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
         for f in range(self.n_step):
             last_solution[f] += initial_solution[f]
@@ -436,16 +467,18 @@ class BuildDcrCoadd(GenerateTemplate):
         if verbose:
             print("Fractional change per iteration:")
         last_convergence_metric_full = self.calc_model_metric(last_solution, use_stretch=use_stretch)
-        init_convergence_metric_full = last_convergence_metric_full
+        test_convergence_metric_full = last_convergence_metric_full
         last_convergence_metric = np.mean(last_convergence_metric_full)
         if verbose:
             print("Full initial convergence metric: ", last_convergence_metric_full)
-            print("Convergence metric: %f" % last_convergence_metric)
+            print("Initial convergence metric: %f" % last_convergence_metric)
 
         exp_cut = [False for exp_i in range(self.n_images)]
         final_soln_iter = None
         did_converge = False
         last_delta = 1.
+        n_exp_cut = 0
+        n_exp_cut_last = 0
         for sol_iter in range(int(max_iter)):
             if use_stretch:
                 new_solution, inverse_var_arr = self._calculate_stretched_model(last_solution, exp_cut,
@@ -462,7 +495,7 @@ class BuildDcrCoadd(GenerateTemplate):
 
             # Optionally restrict spatial variations in frequency structure
             if spatial_filter is not None:
-                new_solution = self._model_spatial_filter(new_solution, spatial_filter, mask=self.mask)
+                new_solution = self._model_spatial_filter(new_solution, spatial_filter, mask=None)
 
             # Restrict new solutions from being wildly different from the last solution
             if clamp > 0:
@@ -475,8 +508,6 @@ class BuildDcrCoadd(GenerateTemplate):
             convergence_metric_full = self.calc_model_metric(new_solution, use_stretch=use_stretch)
             convergence_metric = np.mean(convergence_metric_full[np.logical_not(exp_cut)])
             gain = last_convergence_metric/convergence_metric
-            if verbose:
-                print("Convergence-weighted gain used: %f" % gain)
             # Use the average of the new and last solution for the next iteration. This reduces oscillations.
             new_solution_use = [np.abs((last_solution[f] + gain*new_solution[f])/(1 + gain))
                                 for f in range(self.n_step)]
@@ -486,7 +517,17 @@ class BuildDcrCoadd(GenerateTemplate):
                      np.sum(np.abs([soln[inds_use] for soln in last_solution])))
             if verbose:
                 print("Iteration %i: delta=%f" % (sol_iter, delta))
-            if delta > last_delta:
+                print("Convergence-weighted gain used: %f" % gain)
+            if n_exp_cut != n_exp_cut_last:
+                # When an exposure is removed (or added back in), the next step size may be
+                #   significantly larger without indicating that the solutions are diverging.
+                # However, it is also possible for the solutions to diverge wildly once exposures start
+                #   being cut, so we can't eliminate the divergence test entirely.
+                # I allow a factor of 2, but the ideal threshold has not been investigated
+                divergence_threshold_use = 2.
+            else:
+                divergence_threshold_use = divergence_threshold
+            if delta > divergence_threshold_use*last_delta:
                 print("BREAK from diverging model difference.")
                 final_soln_iter = sol_iter - 1
                 break
@@ -497,28 +538,37 @@ class BuildDcrCoadd(GenerateTemplate):
                 if verbose:
                     print("Full convergence metric:", convergence_metric_full)
                 if sol_iter >= min_iter:
-                    exp_cut = convergence_metric_full > last_convergence_metric_full*1.05
-                    exp_cut1 = convergence_metric_full > init_convergence_metric_full
+                    exp_cut = convergence_metric_full > last_convergence_metric_full*obs_divergence_threshold
+                    exp_cut1 = convergence_metric_full > test_convergence_metric_full*obs_divergence_threshold
                     exp_cut[exp_cut1] = True
+                    # Only cut exposures that are beginning to diverge if they are also worse than most.
+                    exp_cut_test = convergence_metric_full > np.median(convergence_metric_full)
+                    exp_cut *= exp_cut_test
+                else:
+                    test_convergence_metric_full = last_convergence_metric_full
 
+                n_exp_cut_last = n_exp_cut
                 n_exp_cut = np.sum(exp_cut)
                 if n_exp_cut > 0:
-                    print("%i exposure(s) cut from lack of convergence." % int(n_exp_cut))
+                    print("%i exposure(s) cut from lack of convergence: " % int(n_exp_cut),
+                          (np.where(exp_cut))[0])
+                    last_convergence_metric = np.mean(last_convergence_metric_full[np.logical_not(exp_cut)])
                 if (self.n_images - n_exp_cut) < min_images:
                     print("Exiting iterative solution: Too few images left.")
                     final_soln_iter = sol_iter - 1
                     break
-                last_convergence_metric = np.mean(last_convergence_metric_full[np.logical_not(exp_cut)])
                 last_convergence_metric_full = convergence_metric_full
                 convergence_metric = np.mean(convergence_metric_full[np.logical_not(exp_cut)])
-                print("Convergence metric: %f" % convergence_metric)
+                conv_change = (1. - convergence_metric/last_convergence_metric)*100.
+                print("Iteration %i convergence metric: %f (%f%% change)" %
+                      (sol_iter, convergence_metric, conv_change))
+                convergence_check2 = (1 - convergence_threshold)*last_convergence_metric
 
                 if sol_iter > min_iter:
                     if convergence_metric > last_convergence_metric:
                         print("BREAK from lack of convergence")
                         final_soln_iter = sol_iter - 1
                         break
-                    convergence_check2 = (1 - convergence_threshold)*last_convergence_metric
                     if convergence_metric > convergence_check2:
                         print("BREAK after reaching convergence threshold")
                         final_soln_iter = sol_iter
@@ -738,7 +788,7 @@ class BuildDcrCoadd(GenerateTemplate):
         ----------
         new_solution : list of np.ndarrays
             The model solution from the current iteration.
-        bandpass : lsst.sims.photUtils.Bandpass object
+        bandpass : BandpassHelper object
             Bandpass object returned by `load_bandpass`
         max_slope : float, optional
             Maximum slope to allow between sub-band model planes.

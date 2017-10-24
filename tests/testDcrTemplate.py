@@ -62,7 +62,7 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, phase_arr, allow_pickle=False)
         phase_arr_ref = np.load(data_file)
-        self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref)
+        self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref, printFailures=False)
 
     def test_generate_template(self):
         """Compare the result of generate_templates_from_model to previously computed values."""

@@ -58,6 +58,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         cls.n_images = 5
         cls.psf_size = 5
         cls.convergence_threshold = 5e-2
+        cls.printFailures = False
 
         butler = daf_persistence.Butler(inputs="./test_data/")
         exposures = []
@@ -83,7 +84,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         """Test that the extracted values are the same as `ref_vals`."""
         for exp_i, exp in enumerate(self.dcrCoadd.exposures):
             image, inverse_var = self.dcrCoadd._extract_image(exp, calculate_dcr_gen=False)
-            self.assertFloatsAlmostEqual(self.ref_vals[exp_i], image)
+            self.assertFloatsAlmostEqual(self.ref_vals[exp_i], image, printFailures=self.printFailures)
 
     def test_build_model(self):
         """Call build_model with as many options as possible turned off."""
@@ -96,7 +97,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         # np.save(data_file, model_vals, allow_pickle=False)
         model_ref = np.load(data_file)
         for m_new, m_ref in zip(model_vals, model_ref):
-            self.assertFloatsAlmostEqual(m_new, m_ref)
+            self.assertFloatsAlmostEqual(m_new, m_ref, printFailures=self.printFailures)
 
     def test_model_converges(self):
         """Check that the model did not diverge."""
@@ -114,8 +115,8 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, (template, variance), allow_pickle=False)
         template_ref, variance_ref = np.load(data_file)
-        self.assertFloatsAlmostEqual(template, template_ref)
-        self.assertFloatsAlmostEqual(variance, variance_ref)
+        self.assertFloatsAlmostEqual(template, template_ref, printFailures=self.printFailures)
+        self.assertFloatsAlmostEqual(variance, variance_ref, printFailures=self.printFailures)
 
     def test_calculate_new_model(self):
         """Compare the new model prediction for one iteration of the solver to previously-computed values."""
@@ -132,15 +133,17 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         # np.save(data_file, (new_solution, inverse_var_arr), allow_pickle=False)
         new_solution_ref, inverse_var_arr_ref = np.load(data_file)
         for soln_new, soln_ref in zip(new_solution, new_solution_ref):
-            self.assertFloatsAlmostEqual(soln_new, soln_ref)
+            self.assertFloatsAlmostEqual(soln_new, soln_ref, printFailures=self.printFailures)
         for inv_var_new, inv_var_ref in zip(inverse_var_arr, inverse_var_arr_ref):
-            self.assertFloatsAlmostEqual(inv_var_new, inv_var_ref)
+            self.assertFloatsAlmostEqual(inv_var_new, inv_var_ref, printFailures=self.printFailures)
 
     def test_calc_model_metric(self):
         """Test that the DCR model convergence metric is calculated consistently."""
         model_file = "test_data/build_model_vals.npy"
-        metric_ref = np.array([0.022835006051, 0.014885210227, 0.0120010522772,
-                               0.0140386530451, 0.0204993350076, 0.0237343323628])
+        # The expected values from a calculation with default settings
+        #   and the model created with `test_calculate_new_model`
+        metric_ref = np.array([0.0719102938278, 0.0243621751, 0.00996798332164,
+                               0.0235583355852, 0.0309890648232, 0.0339528991862])
         model = np.load(model_file)
         metric = self.dcrCoadd.calc_model_metric(model=model)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)
@@ -173,7 +176,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, kernel, allow_pickle=False)
         kernel_ref = np.load(data_file)
-        self.assertFloatsAlmostEqual(kernel, kernel_ref)
+        self.assertFloatsAlmostEqual(kernel, kernel_ref, printFailures=self.printFailures)
 
     def test_solve_model(self):
         """Compare the result of _solve_model to previously computed values."""
@@ -197,7 +200,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         # np.save(data_file, model_arr, allow_pickle=False)
         model_ref = np.load(data_file)
         for m_new, m_ref in zip(model_arr, model_ref):
-            self.assertFloatsAlmostEqual(m_new, m_ref)
+            self.assertFloatsAlmostEqual(m_new, m_ref, printFailures=self.printFailures)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
