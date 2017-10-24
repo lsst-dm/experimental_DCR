@@ -148,7 +148,7 @@ class GenerateTemplate(object):
                                       input_repository=None, output_repository=None,
                                       warp=False, verbose=True,
                                       output_obsid_offset=None,
-                                      use_stretch=False):
+                                      stretch_threshold=None):
         """Use the previously generated model and construct a dcr template image.
 
         Parameters
@@ -174,9 +174,10 @@ class GenerateTemplate(object):
         output_obsid_offset : int, optional
             Optional offset to add to the output obsids.
             Use if writing to the same repository as the input to avoid over-writing the input data.
-        use_stretch : bool, optional
+        stretch_threshold : float, optional
             Set to simulate the effect of DCR across each sub-band by stretching the model.
-
+            If any sub-band has DCR greater than this amount for an exposure the finite bandwidth
+            FFT-based shift will be used for that instance rather than a simple shift.
         Yields
         ------
         lsst.afw.image ExposureF object.
@@ -209,8 +210,9 @@ class GenerateTemplate(object):
             dec = visitInfo.getBoresightRaDec().getLatitude()
             rotation_angle = calculate_rotation_angle(calexp)
             weather = visitInfo.getWeather()
-            template, variance = self.build_matched_template(calexp, el=el, rotation_angle=rotation_angle,
-                                                             weather=weather, use_stretch=use_stretch)
+            template, variance = self.build_matched_template(calexp, el=el, weather=weather,
+                                                             rotation_angle=rotation_angle,
+                                                             stretch_threshold=stretch_threshold)
 
             if verbose:
                 print(" ... Done!")
@@ -338,7 +340,7 @@ class GenerateTemplate(object):
         dataRef.put(exposure)
 
     def build_matched_template(self, exposure=None, model=None, el=None, rotation_angle=None,
-                               return_weights=True, weather=None, use_stretch=False):
+                               return_weights=True, weather=None, stretch_threshold=None):
         """Sub-routine to calculate the sum of the model images shifted by DCR for a given exposure.
 
         Parameters
@@ -357,8 +359,10 @@ class GenerateTemplate(object):
             Class containing the measured temperature, pressure, and humidity
             at the observatory during an observation
             Weather data is read from the exposure metadata if not supplied.
-        use_stretch : bool, optional
+        stretch_threshold : float, optional
             Set to simulate the effect of DCR across each sub-band by stretching the model.
+            If any sub-band has DCR greater than this amount for an exposure the finite bandwidth
+            FFT-based shift will be used for that instance rather than a simple shift.
 
         Returns
         -------
@@ -375,10 +379,15 @@ class GenerateTemplate(object):
                 weather = exposure.getInfo().getVisitInfo().getWeather()
             except:
                 weather = lsst_weather
-        use_midpoint = not use_stretch
         dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                       observatory=self.observatory, weather=weather,
-                                      elevation=el, rotation_angle=rotation_angle, use_midpoint=use_midpoint)
+                                      elevation=el, rotation_angle=rotation_angle, use_midpoint=False)
+        dcr_list = [dcr for dcr in dcr_gen]
+        if stretch_threshold is None:
+            stretch_test = [False for dcr in dcr_list]
+        else:
+            stretch_test = [(abs(dcr.dy.start - dcr.dy.end) > stretch_threshold) or
+                            (abs(dcr.dx.start - dcr.dx.end) > stretch_threshold) for dcr in dcr_list]
         template = np.zeros((self.y_size, self.x_size))
         if return_weights:
             weights = np.zeros((self.y_size, self.x_size))
@@ -387,13 +396,13 @@ class GenerateTemplate(object):
         else:
             model_use = model
         subband_weights = self._subband_weights()
-        for f, dcr in enumerate(dcr_gen):
-            if use_stretch:
+        for f, dcr in enumerate(dcr_list):
+            if stretch_test[f]:
                 template += fft_shift_convolve(model_use[f], dcr, weights=subband_weights[f])
                 if return_weights:
                     weights += fft_shift_convolve(self.weights, dcr, weights=subband_weights[f])
             else:
-                shift = (dcr.dy, dcr.dx)
+                shift = ((dcr.dy.start + dcr.dy.end)/2., (dcr.dx.start + dcr.dx.end)/2.)
                 template += scipy_shift(model_use[f], shift)
                 if return_weights:
                     weights += scipy_shift(self.weights, shift)
@@ -440,8 +449,8 @@ class GenerateTemplate(object):
         psf = measAlg.KernelPsf(psfK)
         return psf
 
-    def _extract_image(self, exposure, airmass_weight=False, calculate_dcr_gen=True,
-                       use_only_detected=False, use_variance=True, use_midpoint_dcr=True):
+    def _extract_image(self, exposure, airmass_weight=False,
+                       use_only_detected=False, use_variance=True):
         """Helper function to extract image array values from an exposure.
 
         Parameters
@@ -450,16 +459,11 @@ class GenerateTemplate(object):
             Input single exposure to extract the image and variance planes
         airmass_weight : bool, optional
             Set to True to scale the variance by the airmass of the observation.
-        calculate_dcr_gen : bool, optional
-            Set to True to also return a GenerateTemplate.dcr_generator generator.
         use_only_detected : bool, optional
             If True, set all pixels to zero that do not have the detected bit set in the mask plane.
         use_variance : bool, optional
             If True, return the true inverse variance.
             Otherwise, return calculated weights in the range 0 - 1 for each pixel.
-        use_midpoint_dcr : bool, optional
-            Return the DCR at the midpoint of the band if set, or the DCR at the endpoints of the band
-            otherwise. Ignored if `calculate_dcr_gen=False`.
 
         Returns
         -------
@@ -496,20 +500,10 @@ class GenerateTemplate(object):
             img_vals = img_vals[slice_inds]
             inverse_var = inverse_var[slice_inds]
 
-        visitInfo = exposure.getInfo().getVisitInfo()
         if airmass_weight:
+            visitInfo = exposure.getInfo().getVisitInfo()
             inverse_var /= visitInfo.getBoresightAirmass()
-        if calculate_dcr_gen:
-            el = visitInfo.getBoresightAzAlt().getLatitude()
-            rotation_angle = calculate_rotation_angle(exposure)
-            weather = visitInfo.getWeather()
-            dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
-                                          observatory=self.observatory, weather=weather,
-                                          elevation=el, rotation_angle=rotation_angle,
-                                          use_midpoint=use_midpoint_dcr)
-            return (img_vals, inverse_var, dcr_gen)
-        else:
-            return (img_vals, inverse_var)
+        return (img_vals, inverse_var)
 
     def makeDataRef(self, datasetType, butler=None, level=None, **kwargs):
         """Construct a dataRef to a repository from the given data IDs.

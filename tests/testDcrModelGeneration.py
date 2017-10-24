@@ -83,7 +83,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
     def test_extract_image(self):
         """Test that the extracted values are the same as `ref_vals`."""
         for exp_i, exp in enumerate(self.dcrCoadd.exposures):
-            image, inverse_var = self.dcrCoadd._extract_image(exp, calculate_dcr_gen=False)
+            image, inverse_var = self.dcrCoadd._extract_image(exp)
             self.assertFloatsAlmostEqual(self.ref_vals[exp_i], image, printFailures=self.printFailures)
 
     def test_build_model(self):
@@ -92,6 +92,22 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         data_file = "test_data/build_model_vals.npy"
         self.dcrCoadd.build_model(verbose=False, test_convergence=True,
                                   convergence_threshold=self.convergence_threshold)
+        model_vals = self.dcrCoadd.model
+        # Uncomment the following code to over-write the reference data:
+        # np.save(data_file, model_vals, allow_pickle=False)
+        model_ref = np.load(data_file)
+        for m_new, m_ref in zip(model_vals, model_ref):
+            self.assertFloatsAlmostEqual(m_new, m_ref, printFailures=self.printFailures)
+
+    def test_build_finite_model(self):
+        """Call build_model with as many options as possible turned off."""
+        """Compare the result of build_model to previously computed values."""
+        data_file = "test_data/build_model_finite_vals.npy"
+        self.dcrCoadd.build_model(verbose=True, test_convergence=True, stretch_threshold=0,
+                                  min_iter=self.min_iter, convergence_threshold=self.convergence_threshold)
+        # NOTE: This test data doesn't converge well with the finite bandwidth shift.
+        #       That should be investigated more in the future, but for now this test
+        #       just verifies that those results are unchanged.
         model_vals = self.dcrCoadd.model
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, model_vals, allow_pickle=False)
@@ -142,10 +158,21 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         model_file = "test_data/build_model_vals.npy"
         # The expected values from a calculation with default settings
         #   and the model created with `test_calculate_new_model`
-        metric_ref = np.array([0.0719102938278, 0.0243621751, 0.00996798332164,
-                               0.0235583355852, 0.0309890648232, 0.0339528991862])
+        metric_ref = np.array([0.0174033131646, 0.0100226677605, 0.00552115068845,
+                               0.00943797042194, 0.0131841460046, 0.0142680755258])
         model = np.load(model_file)
-        metric = self.dcrCoadd.calc_model_metric(model=model)
+        metric = self.dcrCoadd.calc_model_metric(model=model, stretch_threshold=None)
+        self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)
+
+    def test_calc_finite_model_metric(self):
+        """Test that the DCR model convergence metric is calculated consistently."""
+        model_file = "test_data/build_model_finite_vals.npy"
+        # The expected values from a calculation with default settings
+        #   and the model created with `test_calculate_new_model`
+        metric_ref = np.array([0.0320294903519, 0.0189311337442, 0.0102895481573,
+                               0.00546965373085, 0.0092179957832, 0.0110233952666])
+        model = np.load(model_file)
+        metric = self.dcrCoadd.calc_model_metric(model=model, stretch_threshold=0)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)
 
     def test_build_model_convergence_failure(self):
