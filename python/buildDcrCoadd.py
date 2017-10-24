@@ -366,6 +366,7 @@ class BuildDcrCoadd(GenerateTemplate):
             if refine_max_iter is None:
                 refine_max_iter = max_iter*2
             if refine_convergence_threshold is None:
+                # If the refined convergence threshold is not set, simply drop the initial threshold by 10.
                 refine_convergence_threshold = convergence_threshold/10.
             did_converge = self._build_model_subroutine(initial_solution, verbose=verbose,
                                                         max_iter=refine_max_iter, min_iter=min_iter,
@@ -437,8 +438,14 @@ class BuildDcrCoadd(GenerateTemplate):
         Sets self.weights as a np.ndarray
         """
         if divergence_threshold is None:
+            # A new solution may slightly degrade the overall convergence, but as long it does not get
+            #   much worse than a few percent overall future iterations may still lead to an improvement.
+            # From trial and error, 5% seems about right
             divergence_threshold = 1.05
         if obs_divergence_threshold is None:
+            # Individual observations may degrade slightly even when the overall solution improves.
+            # Allow a slight tolerance in that degradation before excluding them from the calculation.
+            # From trial and error, 5% seems about right.
             obs_divergence_threshold = 1.05
         if clamp is None:
             # The value of clamp is chosen so that the solution never changes by
@@ -512,7 +519,12 @@ class BuildDcrCoadd(GenerateTemplate):
                 print("Iteration %i: delta=%f" % (sol_iter, delta))
                 print("Convergence-weighted gain used: %f" % gain)
             if n_exp_cut != n_exp_cut_last:
-                divergence_threshold_use = 2.0
+                # When an exposure is removed (or added back in), the next step size may be
+                #   significantly larger without indicating that the solutions are diverging.
+                # However, it is also possible for the solutions to diverge wildly once exposures start
+                #   being cut, so we can't eliminate the divergence test entirely.
+                # I allow a factor of 2, but the ideal threshold has not been investigated
+                divergence_threshold_use = 2.
             else:
                 divergence_threshold_use = divergence_threshold
             if delta > divergence_threshold_use*last_delta:

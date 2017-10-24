@@ -219,10 +219,14 @@ def fft_shift_convolve(image, shift, n_substep=100, useInverse=False, weights=No
         The shifted image.
     """
     y_size, x_size = image.shape
+    # A 4th order lanczos kernel preserves the first few sidelobes of the sinc function,
+    #   but ensures that artifacts from any poorly modeled sources
+    #   are damped within the typical psf footprint size.
+    lanczos_order = 4
     kernel_x = kernel_1d(shift.dx, x_size, n_substep=n_substep, debug_sinc=False,
-                         useInverse=useInverse, weights=weights, lanczos=4)
+                         useInverse=useInverse, weights=weights, lanczos=lanczos_order)
     kernel_y = kernel_1d(shift.dy, y_size, n_substep=n_substep, debug_sinc=False,
-                         useInverse=useInverse, weights=weights, lanczos=4)
+                         useInverse=useInverse, weights=weights, lanczos=lanczos_order)
     kernel = np.einsum('i,j->ij', kernel_y, kernel_x)
     fft_image = np.fft.rfft2(image)
     fft_kernel = np.fft.rfft2(kernel)

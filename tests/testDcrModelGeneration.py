@@ -140,6 +140,8 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
     def test_calc_model_metric(self):
         """Test that the DCR model convergence metric is calculated consistently."""
         model_file = "test_data/build_model_vals.npy"
+        # The expected values from a calculation with default settings
+        #   and the model created with `test_calculate_new_model`
         metric_ref = np.array([0.0719102938278, 0.0243621751, 0.00996798332164,
                                0.0235583355852, 0.0309890648232, 0.0339528991862])
         model = np.load(model_file)
