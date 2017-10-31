@@ -76,7 +76,8 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
         for el, obsid in zip(elevation_arr, obsids):
             exposures.append(self.dcrTemplate.create_exposure(self.array, variance=None, exposureId=obsid,
                                                               elevation=Angle(el), azimuth=az))
-        template_gen = self.dcrTemplate.generate_templates_from_model(exposures=exposures)
+        template_gen = self.dcrTemplate.generate_templates_from_model(exposures=exposures,
+                                                                      stretch_threshold=None)
         # Uncomment the following code to over-write the reference data:
         # for exposure in template_gen:
         #     self.dcrTemplate.write_exposure(exposure)

@@ -166,6 +166,7 @@ def kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False, useI
         n_substep = int(n_substep)
     pi = np.pi
     pix = np.arange(size, dtype=np.float64)
+    tol = 1e-4
 
     kernel = np.zeros(size, dtype=np.float64)
     if weights is None:
@@ -178,8 +179,8 @@ def kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False, useI
             loc = size/2. + (-offset.start*(n_substep - (n + 0.5)) - offset.end*(n + 0.5))/n_substep
         else:
             loc = size/2. + (offset.start*(n_substep - (n + 0.5)) + offset.end*(n + 0.5))/n_substep
-        if loc % 1.0 == 0:
-            kernel[int(loc)] += weights_interp[n]
+        if np.abs(loc - np.round(loc)) < tol:
+            kernel[int(np.round(loc))] += weights_interp[n]
         else:
             if debug_sinc:
                 i_low = int(np.floor(loc))

@@ -219,47 +219,73 @@ class BuildDcrCoadd(GenerateTemplate):
         self.bandpass = bandpass
         self.bandpass_highres = bandpass_highres
 
-    def calc_psf_model(self):
+    def calc_psf_model(self, fast_psf_approximation=False):
         """Calculate the fiducial psf from a given set of exposures, accounting for DCR.
+
+        Parameters
+        ----------
+        fast_psf_approximation : bool, optional
+            Set to `True` to calculate the average PSF, instead of solving a linear system of equations
 
         Returns
         -------
         None
             Sets self.psf with a lsst.meas.algorithms KernelPsf object.
         """
-        n_pix = self.psf_size**2
-        psf_mat = np.zeros(self.n_images*self.psf_size**2)
-        for exp_i, exp in enumerate(self.exposures):
-            # Use the measured PSF as the solution of the shifted PSFs.
-            psf_img = exp.getPsf().computeKernelImage().getArray()
-            psf_y_size, psf_x_size = psf_img.shape
-            if self.psf_size > psf_x_size:
-                i0 = int(self.psf_size//2 - psf_x_size//2)
-                i1 = i0 + psf_x_size
-                psf_img_use = np.zeros((self.psf_size, self.psf_size))
-                psf_img_use[i0:i1, i0:i1] = psf_img
-            else:
-                i0 = int(psf_x_size//2 - self.psf_size//2)
-                i1 = i0 + self.psf_size
-                psf_img_use = psf_img[i0:i1, i0:i1]
+        if fast_psf_approximation:
+            psf_vals = np.zeros((self.psf_size, self.psf_size))
+            psf_weights = 0.
+            for exp in self.exposures:
+                airmass_weight = 1./exp.getInfo().getVisitInfo().getBoresightAirmass()
+                # Use the measured PSF as the solution of the shifted PSFs.
+                psf_img = exp.getPsf().computeKernelImage().getArray()
+                psf_y_size, psf_x_size = psf_img.shape
+                if self.psf_size > psf_x_size:
+                    i0 = int(self.psf_size//2 - psf_x_size//2)
+                    i1 = i0 + psf_x_size
+                    psf_img_use = np.zeros((self.psf_size, self.psf_size))
+                    psf_img_use[i0:i1, i0:i1] = psf_img
+                else:
+                    i0 = int(psf_x_size//2 - self.psf_size//2)
+                    i1 = i0 + self.psf_size
+                    psf_img_use = psf_img[i0:i1, i0:i1]
+                psf_vals += psf_img_use*airmass_weight
+                psf_weights += airmass_weight
+            psf_vals /= psf_weights
+        else:
+            n_pix = self.psf_size**2
+            psf_mat = np.zeros(self.n_images*self.psf_size**2)
+            for exp_i, exp in enumerate(self.exposures):
+                # Use the measured PSF as the solution of the shifted PSFs.
+                psf_img = exp.getPsf().computeKernelImage().getArray()
+                psf_y_size, psf_x_size = psf_img.shape
+                if self.psf_size > psf_x_size:
+                    i0 = int(self.psf_size//2 - psf_x_size//2)
+                    i1 = i0 + psf_x_size
+                    psf_img_use = np.zeros((self.psf_size, self.psf_size))
+                    psf_img_use[i0:i1, i0:i1] = psf_img
+                else:
+                    i0 = int(psf_x_size//2 - self.psf_size//2)
+                    i1 = i0 + self.psf_size
+                    psf_img_use = psf_img[i0:i1, i0:i1]
 
-            psf_mat[exp_i*n_pix: (exp_i + 1)*n_pix] = np.ravel(psf_img_use)
+                psf_mat[exp_i*n_pix: (exp_i + 1)*n_pix] = np.ravel(psf_img_use)
 
-        dcr_shift = self._build_dcr_kernel(size=self.psf_size)
-        psf_model_gen = solve_model(self.psf_size, psf_mat, n_step=self.n_step, kernel_dcr=dcr_shift)
-
-        psf_vals = np.sum(psf_model_gen)/self.n_step
+            dcr_shift = self._build_dcr_kernel(size=self.psf_size)
+            psf_model_gen = solve_model(self.psf_size, psf_mat, n_step=self.n_step, kernel_dcr=dcr_shift)
+            psf_vals = np.sum(psf_model_gen)/self.n_step
         psf_image = afwImage.ImageD(self.psf_size, self.psf_size)
         psf_image.getArray()[:, :] = psf_vals
         psfK = afwMath.FixedKernel(psf_image)
         self.psf = measAlg.KernelPsf(psfK)
+        return None
 
     def build_model(self, verbose=True, max_iter=None, min_iter=None, clamp=None, use_variance=True,
                     frequency_regularization=False, max_slope=None,
                     initial_solution=None,
                     test_convergence=False, convergence_threshold=None,
                     spatial_filter=None, airmass_weight=False,
-                    use_stretch=None,
+                    stretch_threshold=None,
                     divergence_threshold=None, obs_divergence_threshold=None,
                     refine_solution=False, refine_max_iter=None, refine_convergence_threshold=None):
         """Build a model of the sky in multiple sub-bands.
@@ -277,6 +303,8 @@ class BuildDcrCoadd(GenerateTemplate):
             before `gain` is applied.
             The default value is 3, chosen so that a gain of 1 restricts the change of the solution between
             iterations to less than a factor of 2.
+        use_variance : bool, optional
+            Set to weight pixels by their inverse variance when combining images.
         frequency_regularization : bool, optional
             Set to restrict variations between frequency planes
         max_slope : float, optional
@@ -291,23 +319,31 @@ class BuildDcrCoadd(GenerateTemplate):
         convergence_threshold : float, optional
             Return once the convergence metric changes by less than ``convergence_threshold``
             between iterations.
-        use_variance : bool, optional
-            Set to weight pixels by their inverse variance when combining images.
-        refine_solution : bool, optional
-            If set, recalculate the initial solution from the model, and repeat iteration.
         spatial_filter : bool, optional
             For testing only! Apply a spatial filter to the solution at each iteration of forward modeling.
         airmass_weight : bool, optional
             Set to weight each observation by its airmass.
-        refine_max_iter : bool, optional
-            The maximum number of iterations of forward modeling allowed when refining the solution.
-        use_stretch : bool, optional
+        stretch_threshold : float, optional
             Set to simulate the effect of DCR across each sub-band by stretching the model.
+            If any sub-band has DCR greater than this amount for an exposure the finite bandwidth
+            FFT-based shift will be used for that instance rather than a simple shift.
         divergence_threshold : float, optional
             Maximum increase in the difference between old and new solutions before
             exiting from lack of convergence.
         obs_divergence_threshold : float, optional
             Maximum degradation of convergence for one observation before it is cut.
+        refine_solution : bool, optional
+            If set, recalculate the initial solution from the model, and repeat iteration.
+        refine_max_iter : bool, optional
+            The maximum number of iterations of forward modeling allowed when refining the solution.
+        refine_convergence_threshold : None, optional
+            Optionally set a separate convergence threshold for a second iteration of refining the solution.
+            If not set but `refine_solution` is set, the default is 1/10th of `convergence_threshold`.
+
+        Returns
+        -------
+        bool
+            Returns `True` if the convergence threshold was reached.
         """
         # Set up an initial guess with all model planes equal as a starting point of the iterative solution
         # The solution is initialized to 0. and not an array so that it can adapt
@@ -318,8 +354,7 @@ class BuildDcrCoadd(GenerateTemplate):
             initial_solution = 0.
             initial_weights = 0.
             for exp in self.exposures:
-                img, inverse_var = self._extract_image(exp, airmass_weight=True, calculate_dcr_gen=False,
-                                                       use_variance=use_variance)
+                img, inverse_var = self._extract_image(exp, airmass_weight=True, use_variance=use_variance)
                 initial_solution += img*inverse_var
                 initial_weights += inverse_var
 
@@ -352,7 +387,7 @@ class BuildDcrCoadd(GenerateTemplate):
                                                     use_variance=use_variance,
                                                     spatial_filter=spatial_filter,
                                                     airmass_weight=airmass_weight,
-                                                    use_stretch=use_stretch,
+                                                    stretch_threshold=stretch_threshold,
                                                     divergence_threshold=divergence_threshold,
                                                     obs_divergence_threshold=obs_divergence_threshold,
                                                     )
@@ -377,7 +412,7 @@ class BuildDcrCoadd(GenerateTemplate):
                                                         use_variance=use_variance,
                                                         spatial_filter=spatial_filter,
                                                         airmass_weight=airmass_weight,
-                                                        use_stretch=use_stretch,
+                                                        stretch_threshold=stretch_threshold,
                                                         divergence_threshold=divergence_threshold,
                                                         obs_divergence_threshold=obs_divergence_threshold,
                                                         )
@@ -389,7 +424,7 @@ class BuildDcrCoadd(GenerateTemplate):
     def _build_model_subroutine(self, initial_solution, verbose=True, max_iter=None, min_iter=None,
                                 test_convergence=False, frequency_regularization=True, max_slope=None,
                                 clamp=None, convergence_threshold=None, use_variance=True,
-                                spatial_filter=None, airmass_weight=False, use_stretch=None,
+                                spatial_filter=None, airmass_weight=False, stretch_threshold=None,
                                 divergence_threshold=None, obs_divergence_threshold=None):
         """Extract the math from building the model so it can be re-used.
 
@@ -422,8 +457,10 @@ class BuildDcrCoadd(GenerateTemplate):
             For testing only! Apply a spatial filter to the solution at each iteration of forward modeling.
         airmass_weight : bool, optional
             Set to weight each observation by its airmass.
-        use_stretch : bool, optional
+        stretch_threshold : float, optional
             Set to simulate the effect of DCR across each sub-band by stretching the model.
+            If any sub-band has DCR greater than this amount for an exposure the finite bandwidth
+            FFT-based shift will be used for that instance rather than a simple shift.
         divergence_threshold : float, optional
             Maximum increase in the difference between old and new solutions before
             exiting from lack of convergence.
@@ -433,7 +470,7 @@ class BuildDcrCoadd(GenerateTemplate):
         Returns
         -------
         bool
-            False if the solutions failed to converge, True otherwise.
+            Returns `True` if the convergence threshold was reached.
         Sets self.model as a list of np.ndarrays
         Sets self.weights as a np.ndarray
         """
@@ -453,8 +490,8 @@ class BuildDcrCoadd(GenerateTemplate):
             clamp = 3.
         if convergence_threshold is None:
             convergence_threshold = 1e-3
-        if use_stretch is None:
-            use_stretch = False
+        # if stretch_threshold is None:
+        #     stretch_threshold = 0.25  # Use a default of a quarter of a pixel
         min_images = self.n_step + 1
         if min_iter is None:
             min_iter = 2
@@ -466,7 +503,8 @@ class BuildDcrCoadd(GenerateTemplate):
 
         if verbose:
             print("Fractional change per iteration:")
-        last_convergence_metric_full = self.calc_model_metric(last_solution, use_stretch=use_stretch)
+        last_convergence_metric_full = self.calc_model_metric(last_solution,
+                                                              stretch_threshold=stretch_threshold)
         test_convergence_metric_full = last_convergence_metric_full
         last_convergence_metric = np.mean(last_convergence_metric_full)
         if verbose:
@@ -480,14 +518,10 @@ class BuildDcrCoadd(GenerateTemplate):
         n_exp_cut = 0
         n_exp_cut_last = 0
         for sol_iter in range(int(max_iter)):
-            if use_stretch:
-                new_solution, inverse_var_arr = self._calculate_stretched_model(last_solution, exp_cut,
-                                                                                use_variance=use_variance,
-                                                                                airmass_weight=airmass_weight)
-            else:
-                new_solution, inverse_var_arr = self._calculate_new_model(last_solution, exp_cut,
-                                                                          use_variance=use_variance,
-                                                                          airmass_weight=airmass_weight)
+            new_solution, inverse_var_arr = self._calculate_new_model(last_solution, exp_cut,
+                                                                      use_variance=use_variance,
+                                                                      airmass_weight=airmass_weight,
+                                                                      stretch_threshold=stretch_threshold)
 
             # Optionally restrict variations between frequency planes
             if frequency_regularization:
@@ -505,7 +539,8 @@ class BuildDcrCoadd(GenerateTemplate):
             for f in range(self.n_step - 1):
                 inds_use *= inverse_var_arr[f] > 0
 
-            convergence_metric_full = self.calc_model_metric(new_solution, use_stretch=use_stretch)
+            convergence_metric_full = self.calc_model_metric(new_solution,
+                                                             stretch_threshold=stretch_threshold)
             convergence_metric = np.mean(convergence_metric_full[np.logical_not(exp_cut)])
             gain = last_convergence_metric/convergence_metric
             # Use the average of the new and last solution for the next iteration. This reduces oscillations.
@@ -534,7 +569,8 @@ class BuildDcrCoadd(GenerateTemplate):
             else:
                 last_delta = delta
             if test_convergence:
-                convergence_metric_full = self.calc_model_metric(new_solution_use, use_stretch=use_stretch)
+                convergence_metric_full = self.calc_model_metric(new_solution_use,
+                                                                 stretch_threshold=stretch_threshold)
                 if verbose:
                     print("Full convergence metric:", convergence_metric_full)
                 if sol_iter >= min_iter:
@@ -585,7 +621,8 @@ class BuildDcrCoadd(GenerateTemplate):
         self.weights = np.sum(inverse_var_arr, axis=0)/self.n_step
         return did_converge
 
-    def _calculate_new_model(self, last_solution, exp_cut=None, use_variance=True, airmass_weight=False):
+    def _calculate_new_model(self, last_solution, exp_cut=None, use_variance=True,
+                             airmass_weight=False, stretch_threshold=None):
         """Sub-routine to calculate a new model from the residuals of forward-modeling the previous solution.
 
         Parameters
@@ -599,6 +636,10 @@ class BuildDcrCoadd(GenerateTemplate):
             Set to weight pixels by their inverse variance when combining images.
         airmass_weight : bool, optional
             Set to weight each observation by its airmass.
+        stretch_threshold : float, optional
+            Set to simulate the effect of DCR across each sub-band by stretching the model.
+            If any sub-band has DCR greater than this amount for an exposure the finite bandwidth
+            FFT-based shift will be used for that instance rather than a simple shift.
 
         Returns
         -------
@@ -607,89 +648,51 @@ class BuildDcrCoadd(GenerateTemplate):
         """
         residual_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
         inverse_var_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        sub_weights = self._subband_weights()
         if exp_cut is None:
             exp_cut = [False for exp_i in range(self.n_images)]
         for exp_i, exp in enumerate(self.exposures):
             if exp_cut[exp_i]:
                 continue
-            img, inverse_var, dcr_gen = self._extract_image(exp, use_variance=use_variance)
+            img, inverse_var = self._extract_image(exp, use_variance=use_variance)
+
             visitInfo = exp.getInfo().getVisitInfo()
+            el = visitInfo.getBoresightAzAlt().getLatitude()
+            rotation_angle = calculate_rotation_angle(exp)
+            weather = visitInfo.getWeather()
+            dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
+                                          observatory=self.observatory, weather=weather,
+                                          elevation=el, rotation_angle=rotation_angle,
+                                          use_midpoint=False)
             if airmass_weight:
                 inverse_var *= visitInfo.getBoresightAirmass()
             if use_variance:
                 inverse_var = np.sqrt(inverse_var)
             dcr_list = [dcr for dcr in dcr_gen]
             last_model_shift = []
+            if stretch_threshold is None:
+                stretch_test = [False for dcr in dcr_list]
+            else:
+                stretch_test = [(abs(dcr.dy.start - dcr.dy.end) > stretch_threshold) or
+                                (abs(dcr.dx.start - dcr.dx.end) > stretch_threshold) for dcr in dcr_list]
+
             for f, dcr in enumerate(dcr_list):
-                shift = (dcr.dy, dcr.dx)
-                last_model_shift.append(scipy_shift(last_solution[f], shift))
+                if stretch_test[f]:
+                    last_model_shift.append(fft_shift_convolve(last_solution[f], dcr, weights=sub_weights[f]))
+                else:
+                    shift = ((dcr.dy.start + dcr.dy.end)/2., (dcr.dx.start + dcr.dx.end)/2.)
+                    last_model_shift.append(scipy_shift(last_solution[f], shift))
             for f, dcr in enumerate(dcr_list):
-                inv_shift = (-dcr.dy, -dcr.dx)
                 last_model = np.zeros((self.y_size, self.x_size))
                 for f2 in range(self.n_step):
                     if f2 != f:
                         last_model += last_model_shift[f2]
                 img_residual = img - last_model
+                # NOTE: We do NOT use the finite bandwidth shift here,
+                #       since that would require a deconvolution.
+                inv_shift = (-(dcr.dy.start + dcr.dy.end)/2., -(dcr.dx.start + dcr.dx.end)/2.)
                 residual_shift = scipy_shift(img_residual, inv_shift)
                 inv_var_shift = scipy_shift(inverse_var, inv_shift)
-                inv_var_shift[inv_var_shift < 0] = 0.
-
-                residual_arr[f] += residual_shift*inv_var_shift  # *weights_shift
-                inverse_var_arr[f] += inv_var_shift
-        new_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
-        for f in range(self.n_step):
-            inds_use = inverse_var_arr[f] > 0
-            new_solution[f][inds_use] = residual_arr[f][inds_use]/inverse_var_arr[f][inds_use]
-        return (new_solution, inverse_var_arr)
-
-    def _calculate_stretched_model(self, last_solution, exp_cut=None, use_variance=True,
-                                   airmass_weight=False):
-        """Sub-routine to calculate a new model from the residuals of forward-modeling the previous solution.
-
-        Parameters
-        ----------
-        last_solution : list of np.ndarrays
-            One np.ndarray for each model sub-band, from the previous iteration.
-        exp_cut : List of bools
-            Exposures that failed to converge in the previous iteration are flagged,
-            and not included in the current iteration solution.
-        use_variance : bool, optional
-            Set to weight pixels by their inverse variance when combining images.
-        airmass_weight : bool, optional
-            Set to weight each observation by its airmass.
-
-        Returns
-        -------
-        Tuple of two lists of np.ndarrays
-            One np.ndarray for each model sub-band, and the associated inverse variance array.
-        """
-        residual_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
-        inverse_var_arr = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
-        if exp_cut is None:
-            exp_cut = [False for exp_i in range(self.n_images)]
-        for exp_i, exp in enumerate(self.exposures):
-            if exp_cut[exp_i]:
-                continue
-            img, inverse_var, dcr_gen = self._extract_image(exp, use_variance=use_variance,
-                                                            use_midpoint_dcr=False)
-            visitInfo = exp.getInfo().getVisitInfo()
-            if airmass_weight:
-                inverse_var *= visitInfo.getBoresightAirmass()
-            if use_variance:
-                inverse_var = np.sqrt(inverse_var)
-            dcr_list = [dcr for dcr in dcr_gen]
-            sub_weights = self._subband_weights()
-            last_model_shift = [fft_shift_convolve(last_solution[f], dcr, weights=sub_weights[f])
-                                for f, dcr in enumerate(dcr_list)]
-            for f, dcr in enumerate(dcr_list):
-                last_model = np.zeros((self.y_size, self.x_size))
-                for f2 in range(self.n_step):
-                    if f2 != f:
-                        last_model += last_model_shift[f2]
-                img_residual = img - last_model
-                residual_shift = fft_shift_convolve(img_residual, dcr, useInverse=True,
-                                                    weights=sub_weights[f])
-                inv_var_shift = fft_shift_convolve(inverse_var, dcr, useInverse=True, weights=sub_weights[f])
                 inv_var_shift[inv_var_shift < 0] = 0.
 
                 residual_arr[f] += residual_shift*inv_var_shift  # *weights_shift
@@ -825,15 +828,17 @@ class BuildDcrCoadd(GenerateTemplate):
             new_solution[f][slope_cut_high] = (offset + slope*(wl - wl_cen))[slope_cut_high]
             new_solution[f][slope_cut_low] = (offset + slope*(wl - wl_cen))[slope_cut_low]
 
-    def calc_model_metric(self, model=None, use_stretch=False):
+    def calc_model_metric(self, model=None, stretch_threshold=None):
         """Calculate a quality of fit metric for the DCR model given the set of exposures.
 
         Parameters
         ----------
         model : None, optional
             The DCR model. If not set, then self.model is used.
-        use_stretch : bool, optional
+        stretch_threshold : float, optional
             Set to simulate the effect of DCR across each sub-band by stretching the model.
+            If any sub-band has DCR greater than this amount for an exposure the finite bandwidth
+            FFT-based shift will be used for that instance rather than a simple shift.
 
         Returns
         -------
@@ -846,9 +851,9 @@ class BuildDcrCoadd(GenerateTemplate):
         else:
             avg_model = np.mean(model, axis=0)
         for exp_i, exp in enumerate(self.exposures):
-            img_use, inverse_var = self._extract_image(exp, calculate_dcr_gen=False, use_only_detected=True)
+            img_use, inverse_var = self._extract_image(exp, use_only_detected=True)
             template = self.build_matched_template(exp, model=model, return_weights=False,
-                                                   use_stretch=use_stretch)
+                                                   stretch_threshold=stretch_threshold)
             inds_use = inverse_var > 0
             diff_vals = np.abs(img_use - template)*avg_model
             ref_vals = np.abs(img_use)*avg_model
