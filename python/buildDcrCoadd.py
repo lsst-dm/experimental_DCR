@@ -219,40 +219,66 @@ class BuildDcrCoadd(GenerateTemplate):
         self.bandpass = bandpass
         self.bandpass_highres = bandpass_highres
 
-    def calc_psf_model(self):
+    def calc_psf_model(self, fast_psf_approximation=False):
         """Calculate the fiducial psf from a given set of exposures, accounting for DCR.
+
+        Parameters
+        ----------
+        fast_psf_approximation : bool, optional
+            Set to `True` to calculate the average PSF, instead of solving a linear system of equations
 
         Returns
         -------
         None
             Sets self.psf with a lsst.meas.algorithms KernelPsf object.
         """
-        n_pix = self.psf_size**2
-        psf_mat = np.zeros(self.n_images*self.psf_size**2)
-        for exp_i, exp in enumerate(self.exposures):
-            # Use the measured PSF as the solution of the shifted PSFs.
-            psf_img = exp.getPsf().computeKernelImage().getArray()
-            psf_y_size, psf_x_size = psf_img.shape
-            if self.psf_size > psf_x_size:
-                i0 = int(self.psf_size//2 - psf_x_size//2)
-                i1 = i0 + psf_x_size
-                psf_img_use = np.zeros((self.psf_size, self.psf_size))
-                psf_img_use[i0:i1, i0:i1] = psf_img
-            else:
-                i0 = int(psf_x_size//2 - self.psf_size//2)
-                i1 = i0 + self.psf_size
-                psf_img_use = psf_img[i0:i1, i0:i1]
+        if fast_psf_approximation:
+            psf_vals = np.zeros((self.psf_size, self.psf_size))
+            psf_weights = 0.
+            for exp in self.exposures:
+                airmass_weight = 1./exp.getInfo().getVisitInfo().getBoresightAirmass()
+                # Use the measured PSF as the solution of the shifted PSFs.
+                psf_img = exp.getPsf().computeKernelImage().getArray()
+                psf_y_size, psf_x_size = psf_img.shape
+                if self.psf_size > psf_x_size:
+                    i0 = int(self.psf_size//2 - psf_x_size//2)
+                    i1 = i0 + psf_x_size
+                    psf_img_use = np.zeros((self.psf_size, self.psf_size))
+                    psf_img_use[i0:i1, i0:i1] = psf_img
+                else:
+                    i0 = int(psf_x_size//2 - self.psf_size//2)
+                    i1 = i0 + self.psf_size
+                    psf_img_use = psf_img[i0:i1, i0:i1]
+                psf_vals += psf_img_use*airmass_weight
+                psf_weights += airmass_weight
+            psf_vals /= psf_weights
+        else:
+            n_pix = self.psf_size**2
+            psf_mat = np.zeros(self.n_images*self.psf_size**2)
+            for exp_i, exp in enumerate(self.exposures):
+                # Use the measured PSF as the solution of the shifted PSFs.
+                psf_img = exp.getPsf().computeKernelImage().getArray()
+                psf_y_size, psf_x_size = psf_img.shape
+                if self.psf_size > psf_x_size:
+                    i0 = int(self.psf_size//2 - psf_x_size//2)
+                    i1 = i0 + psf_x_size
+                    psf_img_use = np.zeros((self.psf_size, self.psf_size))
+                    psf_img_use[i0:i1, i0:i1] = psf_img
+                else:
+                    i0 = int(psf_x_size//2 - self.psf_size//2)
+                    i1 = i0 + self.psf_size
+                    psf_img_use = psf_img[i0:i1, i0:i1]
 
-            psf_mat[exp_i*n_pix: (exp_i + 1)*n_pix] = np.ravel(psf_img_use)
+                psf_mat[exp_i*n_pix: (exp_i + 1)*n_pix] = np.ravel(psf_img_use)
 
-        dcr_shift = self._build_dcr_kernel(size=self.psf_size)
-        psf_model_gen = solve_model(self.psf_size, psf_mat, n_step=self.n_step, kernel_dcr=dcr_shift)
-
-        psf_vals = np.sum(psf_model_gen)/self.n_step
+            dcr_shift = self._build_dcr_kernel(size=self.psf_size)
+            psf_model_gen = solve_model(self.psf_size, psf_mat, n_step=self.n_step, kernel_dcr=dcr_shift)
+            psf_vals = np.sum(psf_model_gen)/self.n_step
         psf_image = afwImage.ImageD(self.psf_size, self.psf_size)
         psf_image.getArray()[:, :] = psf_vals
         psfK = afwMath.FixedKernel(psf_image)
         self.psf = measAlg.KernelPsf(psfK)
+        return None
 
     def build_model(self, verbose=True, max_iter=None, min_iter=None, clamp=None, use_variance=True,
                     frequency_regularization=False, max_slope=None,
