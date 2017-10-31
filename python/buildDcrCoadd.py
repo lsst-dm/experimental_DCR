@@ -470,7 +470,7 @@ class BuildDcrCoadd(GenerateTemplate):
         Returns
         -------
         bool
-            False if the solutions failed to converge, True otherwise.
+            Returns `True` if the convergence threshold was reached.
         Sets self.model as a list of np.ndarrays
         Sets self.weights as a np.ndarray
         """

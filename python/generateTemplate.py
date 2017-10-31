@@ -545,13 +545,16 @@ class GenerateTemplate(object):
         return dataRef[0]
 
     @staticmethod
-    def load_bandpass(filter_name='g', wavelength_step=None):
+    def load_bandpass(filter_name='g', profile='semi', wavelength_step=None):
         """Load in Bandpass object from sims_photUtils.
 
         Parameters
         ----------
         filter_name : str, optional
             Common name of the filter used. For LSST, use u, g, r, i, z, or y
+        profile : str, optional
+            Name of the filter profile approximation to use.
+            The defualt profile is a semicircle.
         wavelength_step : float, optional
             Wavelength resolution in nm, also the wavelength range of each sub-band plane.
             If not set, the native resolution of the bandpass model is used.
@@ -560,7 +563,7 @@ class GenerateTemplate(object):
         -------
         Returns a BandpassHelper object that has an interface similar to lsst.sims.photUtils.Bandpass.
         """
-        bandpass = BandpassHelper(filter_name=filter_name, profile='semi', wavelen_step=wavelength_step)
+        bandpass = BandpassHelper(filter_name=filter_name, profile=profile, wavelen_step=wavelength_step)
         return bandpass
 
     @staticmethod

@@ -59,6 +59,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         cls.psf_size = 5
         cls.convergence_threshold = 5e-2
         cls.printFailures = False
+        cls.min_iter = 1
 
         butler = daf_persistence.Butler(inputs="./test_data/")
         exposures = []
@@ -90,7 +91,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         """Call build_model with as many options as possible turned off."""
         """Compare the result of build_model to previously computed values."""
         data_file = "test_data/build_model_vals.npy"
-        self.dcrCoadd.build_model(verbose=False, test_convergence=True,
+        self.dcrCoadd.build_model(verbose=False, test_convergence=True, min_iter=self.min_iter,
                                   convergence_threshold=self.convergence_threshold)
         model_vals = self.dcrCoadd.model
         # Uncomment the following code to over-write the reference data:
@@ -117,7 +118,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
 
     def test_model_converges(self):
         """Check that the model did not diverge."""
-        did_converge = self.dcrCoadd.build_model(verbose=False, test_convergence=True,
+        did_converge = self.dcrCoadd.build_model(verbose=False, test_convergence=True, min_iter=self.min_iter,
                                                  convergence_threshold=self.convergence_threshold)
         self.assertTrue(did_converge)
 
@@ -125,7 +126,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         """Compare the image and variance plane of the template to previously computed values."""
         data_file = "test_data/build_matched_template_vals.npy"
         exposure = self.dcrCoadd.exposures[0]
-        self.dcrCoadd.build_model(verbose=False, test_convergence=True,
+        self.dcrCoadd.build_model(verbose=False, test_convergence=True, min_iter=self.min_iter,
                                   convergence_threshold=self.convergence_threshold)
         template, variance = self.dcrCoadd.build_matched_template(exposure)
         # Uncomment the following code to over-write the reference data:
@@ -182,7 +183,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         y_size = self.dcrCoadd.y_size
         initial_solution = [np.ones((y_size, x_size)) for f in range(n_step)]
         did_converge = self.dcrCoadd._build_model_subroutine(initial_solution=initial_solution, verbose=False,
-                                                             test_convergence=True)
+                                                             min_iter=self.min_iter, test_convergence=True)
         self.assertFalse(did_converge)
 
     def test_calculate_psf(self):
