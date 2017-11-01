@@ -33,7 +33,6 @@ import lsst.utils.tests
 from python.dcr_utils import wrap_warpExposure
 from python.dcr_utils import calculate_rotation_angle
 from python.generateTemplate import GenerateTemplate
-from python.test_utils import BasicGenerateTemplate
 from python.test_utils import DcrCoaddTestBase
 
 
@@ -51,18 +50,6 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
     def tearDownClass(cls):
         """Clean up."""
         del cls.butler
-
-    def test_simple_phase_kernel(self):
-        """Compare the result of _calc_offset_phase to previously computed values."""
-        data_file = "test_data/simple_phase_kernel.npy"
-        psf = self.exposure.getPsf()
-        psf_size = psf.computeKernelImage().getArray().shape[0]
-        phase_arr = BasicGenerateTemplate._calc_offset_phase(exposure=self.exposure,
-                                                             dcr_gen=self.dcr_gen, size=psf_size)
-        # Uncomment the following code to over-write the reference data:
-        # np.save(data_file, phase_arr, allow_pickle=False)
-        phase_arr_ref = np.load(data_file)
-        self.assertFloatsAlmostEqual(phase_arr, phase_arr_ref, printFailures=False)
 
     def test_generate_template(self):
         """Compare the result of generate_templates_from_model to previously computed values."""

@@ -27,7 +27,6 @@ from builtins import range
 from astropy import units as u
 from astropy.units import cds as u_cds
 import numpy as np
-import scipy.optimize.nnls
 from scipy import constants
 
 from lsst.afw.geom import Angle
@@ -36,7 +35,7 @@ import lsst.afw.math as afwMath
 
 from .lsst_defaults import lsst_observatory, lsst_weather
 
-__all__ = ["calculate_hour_angle", "parallactic_angle", "wrap_warpExposure", "solve_model",
+__all__ = ["calculate_hour_angle", "parallactic_angle", "wrap_warpExposure",
            "calculate_rotation_angle", "refraction", "diff_refraction"]
 
 
@@ -316,45 +315,6 @@ def wrap_warpExposure(exposure, wcs, BBox, warpingControl=None):
     warpVariance = warpExp.getMaskedImage().getVariance().getArray()
     exposure.getMaskedImage().getVariance().getArray()[:, :] = warpVariance
     exposure.setWcs(wcs)
-
-
-def solve_model(kernel_size, img_vals, n_step, kernel_dcr, kernel_ref=None, kernel_restore=None):
-    """Wrapper to call a fitter using a given covariance matrix, image values, and any regularization.
-
-    Parameters
-    ----------
-    kernel_size : int
-        Size of the kernel to use for calculating the covariance matrix, in pixels.
-    img_vals : np.ndarray
-        Image data values for the pixels being used for the calculation, as a 1D vector.
-    n_step : int, optional
-        Number of sub-filter wavelength planes to model.
-    kernel_dcr : np.ndarray
-        The covariance matrix describing the effect of DCR
-    kernel_ref : np.ndarray, optional
-        The covariance matrix for the reference image
-    kernel_restore : np.ndarray, optional
-        The covariance matrix for the final restored image
-
-    Returns
-    -------
-    np.ndarray
-        Array of the solution values.
-    """
-    x_size = kernel_size
-    y_size = kernel_size
-    if (kernel_restore is None) or (kernel_ref is None):
-        vals_use = img_vals
-        kernel_use = kernel_dcr
-    else:
-        vals_use = kernel_restore.dot(img_vals)
-        kernel_use = kernel_ref.dot(kernel_dcr)
-
-    model_solution = scipy.optimize.nnls(kernel_use, vals_use)
-    model_vals = model_solution[0]
-    n_pix = x_size*y_size
-    for f in range(n_step):
-        yield np.reshape(model_vals[f*n_pix: (f + 1)*n_pix], (y_size, x_size))
 
 
 def calculate_rotation_angle(exposure):
