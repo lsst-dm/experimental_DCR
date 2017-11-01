@@ -31,7 +31,6 @@ import numpy as np
 import lsst.daf.persistence as daf_persistence
 import lsst.utils.tests
 
-from python.dcr_utils import solve_model
 from python.test_utils import BasicBuildDcrCoadd
 
 
@@ -195,40 +194,6 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         # np.save(data_file, psf_new, allow_pickle=False)
         psf_ref = np.load(data_file)
         self.assertFloatsAlmostEqual(psf_ref, psf_new)
-
-    def test_build_dcr_kernel(self):
-        """Compare the result of _build_dcr_kernel to previously computed values."""
-        data_file = "test_data/build_dcr_kernel_vals.npy"
-        kernel_size = 5
-        kernel = self.dcrCoadd._build_dcr_kernel(kernel_size)
-        # Uncomment the following code to over-write the reference data:
-        # np.save(data_file, kernel, allow_pickle=False)
-        kernel_ref = np.load(data_file)
-        self.assertFloatsAlmostEqual(kernel, kernel_ref, printFailures=self.printFailures)
-
-    def test_solve_model(self):
-        """Compare the result of _solve_model to previously computed values."""
-        data_file = "test_data/solve_model_vals.npy"
-        y_size, x_size = self.dcrCoadd.exposures[0].getDimensions()
-        kernel_size = 5
-        n_step = self.dcrCoadd.n_step
-        pix_radius = kernel_size//2
-        # Make j and i different slightly so we can tell if the indices get swapped
-        i = x_size//2 + 1
-        j = y_size//2 - 1
-        slice_inds = np.s_[j - pix_radius: j + pix_radius + 1, i - pix_radius: i + pix_radius + 1]
-        image_arr = []
-        for exp in self.dcrCoadd.exposures:
-            image_arr.append(np.ravel(exp.getMaskedImage().getImage().getArray()[slice_inds]))
-        image_vals = np.hstack(image_arr)
-        dcr_kernel = self.dcrCoadd._build_dcr_kernel(kernel_size)
-        model_vals_gen = solve_model(kernel_size, image_vals, n_step=n_step, kernel_dcr=dcr_kernel)
-        model_arr = [model for model in model_vals_gen]
-        # Uncomment the following code to over-write the reference data:
-        # np.save(data_file, model_arr, allow_pickle=False)
-        model_ref = np.load(data_file)
-        for m_new, m_ref in zip(model_arr, model_ref):
-            self.assertFloatsAlmostEqual(m_new, m_ref, printFailures=self.printFailures)
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
