@@ -412,7 +412,7 @@ class GenerateTemplate(object):
         else:
             return template
 
-    def build_matched_psf(self, el, rotation_angle, weather):
+    def build_matched_psf(self, el, rotation_angle, weather=lsst_weather, stretch_threshold=None):
         """Sub-routine to calculate the PSF as elongated by DCR for a given exposure.
 
         Once the matched templates incorporate variable seeing, this function should also match the seeing.
@@ -434,13 +434,25 @@ class GenerateTemplate(object):
         """
         dcr_gen = self._dcr_generator(self.bandpass, pixel_scale=self.pixel_scale,
                                       observatory=self.observatory, weather=weather,
-                                      elevation=el, rotation_angle=rotation_angle, use_midpoint=True)
+                                      elevation=el, rotation_angle=rotation_angle, use_midpoint=False)
+        dcr_list = [dcr for dcr in dcr_gen]
+        sub_weights = self._subband_weights()
         psf_vals = self.psf.computeKernelImage().getArray()
         psf_vals_out = np.zeros((self.psf_size, self.psf_size))
 
-        for dcr in dcr_gen:
-            shift = (dcr.dy, dcr.dx)
-            psf_vals_out += scipy_shift(psf_vals, shift)
+        if stretch_threshold is None:
+            stretch_test = [False for dcr in dcr_list]
+        else:
+            stretch_test = [(abs(dcr.dy.start - dcr.dy.end) > stretch_threshold) or
+                            (abs(dcr.dx.start - dcr.dx.end) > stretch_threshold) for dcr in dcr_list]
+
+        for f, dcr in enumerate(dcr_list):
+            if stretch_test[f]:
+                psf_vals_out += fft_shift_convolve(psf_vals, dcr, weights=sub_weights[f])
+            else:
+                shift = ((dcr.dy.start + dcr.dy.end)/2., (dcr.dx.start + dcr.dx.end)/2.)
+                psf_vals_out += scipy_shift(psf_vals, shift)
+
         psf_image = afwImage.ImageD(self.psf_size, self.psf_size)
         psf_image.getArray()[:, :] = psf_vals_out
         psfK = afwMath.FixedKernel(psf_image)
