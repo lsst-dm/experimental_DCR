@@ -262,7 +262,8 @@ class BuildDcrCoadd(GenerateTemplate):
                     spatial_filter=None, airmass_weight=False,
                     stretch_threshold=None,
                     divergence_threshold=None, obs_divergence_threshold=None,
-                    refine_solution=False, refine_max_iter=None, refine_convergence_threshold=None):
+                    refine_solution=False, refine_max_iter=None, refine_convergence_threshold=None,
+                    preserve_exposure_flag=None):
         """Build a model of the sky in multiple sub-bands.
 
         Parameters
@@ -365,6 +366,7 @@ class BuildDcrCoadd(GenerateTemplate):
                                                     stretch_threshold=stretch_threshold,
                                                     divergence_threshold=divergence_threshold,
                                                     obs_divergence_threshold=obs_divergence_threshold,
+                                                    preserve_exposure_flag=preserve_exposure_flag,
                                                     )
         if refine_solution:
             print("Refining model")
@@ -390,6 +392,7 @@ class BuildDcrCoadd(GenerateTemplate):
                                                         stretch_threshold=stretch_threshold,
                                                         divergence_threshold=divergence_threshold,
                                                         obs_divergence_threshold=obs_divergence_threshold,
+                                                        preserve_exposure_flag=preserve_exposure_flag,
                                                         )
 
         if verbose:
@@ -400,7 +403,8 @@ class BuildDcrCoadd(GenerateTemplate):
                                 test_convergence=False, frequency_regularization=True, max_slope=None,
                                 clamp=None, convergence_threshold=None, use_variance=True,
                                 spatial_filter=None, airmass_weight=False, stretch_threshold=None,
-                                divergence_threshold=None, obs_divergence_threshold=None):
+                                divergence_threshold=None, obs_divergence_threshold=None,
+                                preserve_exposure_flag=None):
         """Extract the math from building the model so it can be re-used.
 
         Parameters
@@ -465,8 +469,8 @@ class BuildDcrCoadd(GenerateTemplate):
             clamp = 3.
         if convergence_threshold is None:
             convergence_threshold = 1e-3
-        # if stretch_threshold is None:
-        #     stretch_threshold = 0.25  # Use a default of a quarter of a pixel
+        if preserve_exposure_flag is None:
+            preserve_exposure_flag = [False for exp_i in range(self.n_images)]
         min_images = self.n_step + 1
         if min_iter is None:
             min_iter = 2
@@ -555,6 +559,7 @@ class BuildDcrCoadd(GenerateTemplate):
                     # Only cut exposures that are beginning to diverge if they are also worse than most.
                     exp_cut_test = convergence_metric_full > np.median(convergence_metric_full)
                     exp_cut *= exp_cut_test
+                    exp_cut[preserve_exposure_flag] = False
                 else:
                     test_convergence_metric_full = last_convergence_metric_full
 
