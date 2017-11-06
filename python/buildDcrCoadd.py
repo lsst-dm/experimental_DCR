@@ -523,9 +523,8 @@ class BuildDcrCoadd(GenerateTemplate):
             convergence_metric = np.mean(convergence_metric_full[np.logical_not(exp_cut)])
             gain = last_convergence_metric/convergence_metric
             # Use the average of the new and last solution for the next iteration. This reduces oscillations.
-            new_solution_use = [np.abs((last_solution[f] + gain*new_solution[f])/(1 + gain))
+            new_solution_use = [((last_solution[f] + gain*new_solution[f])/(1 + gain))
                                 for f in range(self.n_step)]
-
             delta = (np.sum(np.abs([last_solution[f][inds_use] - new_solution_use[f][inds_use]
                                     for f in range(self.n_step)])) /
                      np.sum(np.abs([soln[inds_use] for soln in last_solution])))
@@ -755,11 +754,11 @@ class BuildDcrCoadd(GenerateTemplate):
             Modifies new_solution in place.
         """
         for s_i, solution in enumerate(new_solution):
-            # Note: last_solution is always positive
-            clamp_high_i = solution > clamp*last_solution[s_i]
+            # Note: last_solution is not always positive
+            clamp_high_i = np.abs(solution) > np.abs(clamp*last_solution[s_i])
             high_excess = solution - clamp*last_solution[s_i]
             solution[clamp_high_i] = clamp*last_solution[s_i][clamp_high_i] + high_excess[clamp_high_i]/2.
-            clamp_low_i = solution < last_solution[s_i]/clamp
+            clamp_low_i = np.abs(solution) < np.abs(last_solution[s_i]/clamp)
             low_excess = solution - last_solution[s_i]/clamp
             solution[clamp_low_i] = last_solution[s_i][clamp_low_i]/clamp + low_excess[clamp_low_i]/2.
 
