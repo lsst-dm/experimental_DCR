@@ -159,7 +159,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         # The expected values from a calculation with default settings
         #   and the model created with `test_calculate_new_model`
         metric_ref = np.array([0.0174033131646, 0.0100226677605, 0.00552115068845,
-                               0.00943797042194, 0.0131841460046, 0.0142680755258])
+                               0.00943797042194, 0.0131841460046, 0.0142680752955])
         model = np.load(model_file)
         metric = self.dcrCoadd.calc_model_metric(model=model, stretch_threshold=None)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)
@@ -169,8 +169,8 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         model_file = "test_data/build_model_finite_vals.npy"
         # The expected values from a calculation with default settings
         #   and the model created with `test_calculate_new_model`
-        metric_ref = np.array([0.0320294903519, 0.0189311337442, 0.0102895481573,
-                               0.00546965373085, 0.0092179957832, 0.0110233952666])
+        metric_ref = np.array([0.0320168458036, 0.0189225097343, 0.0102999878892,
+                               0.00549592562452, 0.00925618509241, 0.0110499176157])
         model = np.load(model_file)
         metric = self.dcrCoadd.calc_model_metric(model=model, stretch_threshold=0)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)
