@@ -829,10 +829,10 @@ class BuildDcrCoadd(GenerateTemplate):
         else:
             avg_model = np.mean(model, axis=0)
         for exp_i, exp in enumerate(self.exposures):
-            img_use, inverse_var = self._extract_image(exp, use_only_detected=True)
+            img_use, inverse_var = self._extract_image(exp, use_only_detected=True, use_variance=False)
             template = self.build_matched_template(exp, model=model, return_weights=False,
                                                    stretch_threshold=stretch_threshold)
-            inds_use = inverse_var > 0
+            inds_use = inverse_var >= 1
             diff_vals = np.abs(img_use - template)*avg_model
             ref_vals = np.abs(img_use)*avg_model
             if np.sum(inds_use) == 0:
