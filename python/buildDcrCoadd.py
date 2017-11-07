@@ -324,29 +324,31 @@ class BuildDcrCoadd(GenerateTemplate):
         # Set up an initial guess with all model planes equal as a starting point of the iterative solution
         # The solution is initialized to 0. and not an array so that it can adapt
         # to the size of the array returned by _extract_image. This should only matter in debugging.
+        wl_iter = self._wavelength_iterator(self.bandpass, use_midpoint=False)
+        flux_out = []
+        wl_in = self.bandpass_highres.wavelen
+        flux_in = self.bandpass_highres.sb
+        for wl_start, wl_end in wl_iter:
+            wl_use = (wl_in >= wl_start) & (wl_in < wl_end)
+            flux = np.sum(flux_in[wl_use])
+            flux_out.append(flux)
+        band_power = np.array(flux_out)
+        band_power /= np.sum(band_power)
         if initial_solution is None:
             if verbose:
                 print("Calculating initial solution...", end="")
-            initial_solution = 0.
-            initial_weights = 0.
+            model_sum = 0.
+            weights_sum = 0.
             for exp in self.exposures:
                 img, inverse_var = self._extract_image(exp, airmass_weight=True, use_variance=use_variance)
-                initial_solution += img*inverse_var
-                initial_weights += inverse_var
+                model_sum += img*inverse_var
+                weights_sum += inverse_var
 
-            weight_inds = initial_weights > 0
-            initial_solution[weight_inds] /= initial_weights[weight_inds]
-            wl_iter = self._wavelength_iterator(self.bandpass, use_midpoint=False)
-            flux_out = []
-            wl_in = self.bandpass_highres.wavelen
-            flux_in = self.bandpass_highres.sb
-            for wl_start, wl_end in wl_iter:
-                wl_use = (wl_in >= wl_start) & (wl_in < wl_end)
-                flux = np.sum(flux_in[wl_use])
-                flux_out.append(flux)
-            band_power = np.array(flux_out)
-            band_power /= np.sum(band_power)
-            initial_solution = [np.abs(initial_solution)*power for power in band_power]
+            weight_inds = weights_sum > 0
+            inv_weights_sum = np.zeros_like(weights_sum)
+            inv_weights_sum[weight_inds] = 1./weights_sum[weight_inds]
+            model_sum *= inv_weights_sum
+            initial_solution = [model_sum*power for power in band_power]
             if verbose:
                 print(" Done!")
         self.model_base = initial_solution
@@ -370,11 +372,8 @@ class BuildDcrCoadd(GenerateTemplate):
                                                     )
         if refine_solution:
             print("Refining model")
-            if spatial_filter is None:
-                spatial_filter_use = self.psf_size//2
-            else:
-                spatial_filter_use = spatial_filter
-            initial_solution = self._model_spatial_filter(self.model, spatial_filter_use)
+            model_sum = np.sum(self.model, axis=0)
+            initial_solution = [model_sum*power for power in band_power]
             if refine_max_iter is None:
                 refine_max_iter = max_iter*2
             if refine_convergence_threshold is None:
