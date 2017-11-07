@@ -530,21 +530,6 @@ class BuildDcrCoadd(GenerateTemplate):
             if verbose:
                 print("Iteration %i: delta=%f" % (sol_iter, delta))
                 print("Convergence-weighted gain used: %f" % gain)
-            if n_exp_cut != n_exp_cut_last:
-                # When an exposure is removed (or added back in), the next step size may be
-                #   significantly larger without indicating that the solutions are diverging.
-                # However, it is also possible for the solutions to diverge wildly once exposures start
-                #   being cut, so we can't eliminate the divergence test entirely.
-                # I allow a factor of 2, but the ideal threshold has not been investigated
-                divergence_threshold_use = 2.
-            else:
-                divergence_threshold_use = divergence_threshold
-            if delta > divergence_threshold_use*last_delta:
-                print("BREAK from diverging model difference.")
-                final_soln_iter = sol_iter - 1
-                break
-            else:
-                last_delta = delta
             if test_convergence:
                 convergence_metric_full = self.calc_model_metric(new_solution_use,
                                                                  stretch_threshold=stretch_threshold)
@@ -590,6 +575,22 @@ class BuildDcrCoadd(GenerateTemplate):
                         did_converge = True
                         break
                 last_convergence_metric = convergence_metric
+            else:
+                if n_exp_cut != n_exp_cut_last:
+                    # When an exposure is removed (or added back in), the next step size may be
+                    #   significantly larger without indicating that the solutions are diverging.
+                    # However, it is also possible for the solutions to diverge wildly once exposures start
+                    #   being cut, so we can't eliminate the divergence test entirely.
+                    # I allow a factor of 2, but the ideal threshold has not been investigated
+                    divergence_threshold_use = 2.
+                else:
+                    divergence_threshold_use = divergence_threshold
+                if delta > divergence_threshold_use*last_delta:
+                    print("BREAK from diverging model difference.")
+                    final_soln_iter = sol_iter - 1
+                    break
+                else:
+                    last_delta = delta
             last_solution = new_solution_use
         if final_soln_iter is None:
             final_soln_iter = sol_iter
