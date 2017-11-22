@@ -372,8 +372,7 @@ class BuildDcrCoadd(GenerateTemplate):
                                                     )
         if refine_solution:
             print("Refining model")
-            model_sum = np.sum(self.model, axis=0)
-            initial_solution = [model_sum*power for power in band_power]
+            initial_solution = self._model_spatial_filter(self.model, 5, mask=None)
             if refine_max_iter is None:
                 refine_max_iter = max_iter*2
             if refine_convergence_threshold is None:
@@ -503,7 +502,7 @@ class BuildDcrCoadd(GenerateTemplate):
 
             # Optionally restrict variations between frequency planes
             if frequency_regularization:
-                self._regularize_model_solution(new_solution, self.bandpass, max_slope=max_slope)
+                new_solution = self._regularize_model_solution(new_solution, max_slope=max_slope)
 
             # Optionally restrict spatial variations in frequency structure
             if spatial_filter is not None:
@@ -670,8 +669,8 @@ class BuildDcrCoadd(GenerateTemplate):
                 # NOTE: We do NOT use the finite bandwidth shift here,
                 #       since that would require a deconvolution.
                 inv_shift = (-(dcr.dy.start + dcr.dy.end)/2., -(dcr.dx.start + dcr.dx.end)/2.)
-                residual_shift = scipy_shift(img_residual, inv_shift)
                 inv_var_shift = scipy_shift(inverse_var, inv_shift)
+                residual_shift = scipy_shift(img_residual, inv_shift)
                 inv_var_shift[inv_var_shift < 0] = 0.
 
                 residual_arr[f] += residual_shift*inv_var_shift  # *weights_shift
@@ -683,7 +682,8 @@ class BuildDcrCoadd(GenerateTemplate):
         return (new_solution, inverse_var_arr)
 
     @staticmethod
-    def _model_spatial_filter(new_solution, filter_width, mask=None, filter_fn=ndimage.gaussian_filter):
+    def _model_spatial_filter(new_solution, filter_width=2., clamp=3., mask=None,
+                              filter_fn=ndimage.gaussian_filter):
         """Restrict spatial variations between model planes.
 
         Parameters
@@ -703,10 +703,15 @@ class BuildDcrCoadd(GenerateTemplate):
             One np.ndarray for each model sub-band
         """
         avg_solution = np.mean(new_solution, axis=0)
+        # Avoid dividing by zero
+        avg_solution_inverse = np.zeros_like(avg_solution)
+        non_zero_inds = avg_solution != 0
+        avg_solution_inverse[non_zero_inds] = 1./avg_solution[non_zero_inds]
         if mask is not None:
             detected_bit = 32  # Should eventually use actual mask with mask plane info.
-            mask_use = (mask & detected_bit) == detected_bit
-            inds_use = mask_use == 1
+            inds_use = (mask & detected_bit) == detected_bit
+            mask_use = np.zeros_like(avg_solution)
+            mask_use[inds_use] = 1
             print("Before %f" % np.mean(avg_solution[inds_use]))
             mask_use = filter_fn(mask_use, filter_width, mode='constant')
             avg_solution *= mask_use
@@ -716,13 +721,15 @@ class BuildDcrCoadd(GenerateTemplate):
             scale_arr = [np.mean(soln/np.mean(avg_solution)) for soln in new_solution]
         scale_arr = [scale if scale > 0 else 1. for scale in scale_arr]
 
-        # Avoid dividing by zero
-        avg_solution_inverse = np.zeros_like(avg_solution)
-        non_zero_inds = avg_solution != 0
-        avg_solution_inverse[non_zero_inds] = 1./avg_solution[non_zero_inds]
+        ratio_solution = [soln*avg_solution_inverse for soln in new_solution]
+        for ratio, scale in zip(ratio_solution, scale_arr):
+            clamp_high_i = np.abs(ratio) > scale*clamp
+            ratio[clamp_high_i] = scale*clamp
+            clamp_low_i = np.abs(ratio) < scale/clamp
+            ratio[clamp_low_i] = scale/clamp
 
-        delta_solution = [soln*avg_solution_inverse - scale
-                          for soln, scale in zip(new_solution, scale_arr)]
+        delta_solution = [ratio - scale for ratio, scale in zip(ratio_solution, scale_arr)]
+
         filter_solution = []
         ii = 0
         for delta, scale in zip(delta_solution, scale_arr):
@@ -732,6 +739,9 @@ class BuildDcrCoadd(GenerateTemplate):
                 single_soln *= mask_use
                 single_soln += new_solution[ii]*(1 - mask_use)
             filter_solution.append(single_soln)
+        avg_filter_residual = avg_solution - np.mean(filter_solution, axis=0)
+        for soln in filter_solution:
+            soln += avg_filter_residual
 
         return filter_solution
 
@@ -762,50 +772,43 @@ class BuildDcrCoadd(GenerateTemplate):
             low_excess = solution - last_solution[s_i]/clamp
             solution[clamp_low_i] = last_solution[s_i][clamp_low_i]/clamp + low_excess[clamp_low_i]/2.
 
-    @staticmethod
-    def _regularize_model_solution(new_solution, bandpass, max_slope=None):
+    def _regularize_model_solution(self, model, max_slope=None, regularization_radius=5):
         """Calculate a slope across sub-band model planes, and clip outlier values beyond a given threshold.
 
         Parameters
         ----------
-        new_solution : list of np.ndarrays
+        model : list of np.ndarrays
             The model solution from the current iteration.
-        bandpass : BandpassHelper object
-            Bandpass object returned by `load_bandpass`
         max_slope : float, optional
             Maximum slope to allow between sub-band model planes.
 
         Returns
         ------------------
-        None
-            Modifies new_solution in place.
+        list of np.ndarrays
+            Regularized model solutions.
         """
         if max_slope is None:
             max_slope = 1.
-        n_step = len(new_solution)
-        y_size, x_size = new_solution[0].shape
-        solution_avg = np.median(new_solution, axis=0)
+        y_size, x_size = model[0].shape
+        model_avg = np.median(model, axis=0)
+        model_return = model.copy()
 
-        slope_ratio = max_slope
-        sum_x = 0.
-        sum_y = np.zeros((y_size, x_size))
-        sum_xy = np.zeros((y_size, x_size))
-        sum_xx = 0.
-        wl_cen = bandpass.calc_eff_wavelen()
-        for f, wl in enumerate(GenerateTemplate._wavelength_iterator(bandpass, use_midpoint=True)):
-            sum_x += wl - wl_cen
-            sum_xx += (wl - wl_cen)**2
-            sum_xy += (wl - wl_cen)*(new_solution[f] - solution_avg)
-            sum_y += new_solution[f] - solution_avg
-        slope = (n_step*sum_xy - sum_x*sum_y)/(n_step*sum_xx + sum_x**2)
-        slope_cut_high = slope*bandpass.wavelen_step > solution_avg*slope_ratio
-        slope_cut_low = slope*bandpass.wavelen_step < -solution_avg*slope_ratio
-        slope[slope_cut_high] = solution_avg[slope_cut_high]*slope_ratio/bandpass.wavelen_step
-        slope[slope_cut_low] = -solution_avg[slope_cut_low]*slope_ratio/bandpass.wavelen_step
-        offset = solution_avg
-        for f, wl in enumerate(GenerateTemplate._wavelength_iterator(bandpass, use_midpoint=True)):
-            new_solution[f][slope_cut_high] = (offset + slope*(wl - wl_cen))[slope_cut_high]
-            new_solution[f][slope_cut_low] = (offset + slope*(wl - wl_cen))[slope_cut_low]
+        wl_cen = self.bandpass.calc_eff_wavelen()
+        slope_term1 = np.zeros((y_size, x_size))
+        slope_term2 = 0.
+        for f, wl in enumerate(GenerateTemplate._wavelength_iterator(self.bandpass, use_midpoint=True)):
+            slope_term1 += (wl - wl_cen)*(model[f] - model_avg)
+            slope_term2 += (wl - wl_cen)**2.
+        slope = slope_term1/slope_term2
+        fit_slope = ndimage.gaussian_filter(slope, regularization_radius, mode='constant')
+        slope_cut_high = slope*self.bandpass.wavelen_step > model_avg*max_slope
+        slope_cut_low = slope*self.bandpass.wavelen_step < -model_avg*max_slope
+        slope[slope_cut_high] = model_avg[slope_cut_high]*fit_slope[slope_cut_high]/self.bandpass.wavelen_step
+        slope[slope_cut_low] = -model_avg[slope_cut_low]*fit_slope[slope_cut_low]/self.bandpass.wavelen_step
+        for f, wl in enumerate(self._wavelength_iterator(self.bandpass, use_midpoint=True)):
+            model_return[f][slope_cut_high] = (model_avg + slope*(wl - wl_cen))[slope_cut_high]
+            model_return[f][slope_cut_low] = (model_avg + slope*(wl - wl_cen))[slope_cut_low]
+        return model_return
 
     def calc_model_metric(self, model=None, stretch_threshold=None):
         """Calculate a quality of fit metric for the DCR model given the set of exposures.
