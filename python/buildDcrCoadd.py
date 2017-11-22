@@ -261,6 +261,7 @@ class BuildDcrCoadd(GenerateTemplate):
                     test_convergence=False, convergence_threshold=None,
                     spatial_filter=None, airmass_weight=False,
                     stretch_threshold=None,
+                    useNonnegative=False,
                     divergence_threshold=None, obs_divergence_threshold=None,
                     refine_solution=False, refine_max_iter=None, refine_convergence_threshold=None,
                     preserve_exposure_flag=None):
@@ -366,6 +367,7 @@ class BuildDcrCoadd(GenerateTemplate):
                                                     spatial_filter=spatial_filter,
                                                     airmass_weight=airmass_weight,
                                                     stretch_threshold=stretch_threshold,
+                                                    useNonnegative=useNonnegative,
                                                     divergence_threshold=divergence_threshold,
                                                     obs_divergence_threshold=obs_divergence_threshold,
                                                     preserve_exposure_flag=preserve_exposure_flag,
@@ -388,6 +390,7 @@ class BuildDcrCoadd(GenerateTemplate):
                                                         spatial_filter=spatial_filter,
                                                         airmass_weight=airmass_weight,
                                                         stretch_threshold=stretch_threshold,
+                                                        useNonnegative=useNonnegative,
                                                         divergence_threshold=divergence_threshold,
                                                         obs_divergence_threshold=obs_divergence_threshold,
                                                         preserve_exposure_flag=preserve_exposure_flag,
@@ -401,6 +404,7 @@ class BuildDcrCoadd(GenerateTemplate):
                                 test_convergence=False, frequency_regularization=True, max_slope=None,
                                 clamp=None, convergence_threshold=None, use_variance=True,
                                 spatial_filter=None, airmass_weight=False, stretch_threshold=None,
+                                useNonnegative=False,
                                 divergence_threshold=None, obs_divergence_threshold=None,
                                 preserve_exposure_flag=None):
         """Extract the math from building the model so it can be re-used.
@@ -498,7 +502,8 @@ class BuildDcrCoadd(GenerateTemplate):
             new_solution, inverse_var_arr = self._calculate_new_model(last_solution, exp_cut,
                                                                       use_variance=use_variance,
                                                                       airmass_weight=airmass_weight,
-                                                                      stretch_threshold=stretch_threshold)
+                                                                      stretch_threshold=stretch_threshold,
+                                                                      useNonnegative=useNonnegative)
 
             # Optionally restrict variations between frequency planes
             if frequency_regularization:
@@ -600,7 +605,7 @@ class BuildDcrCoadd(GenerateTemplate):
         return did_converge
 
     def _calculate_new_model(self, last_solution, exp_cut=None, use_variance=True,
-                             airmass_weight=False, stretch_threshold=None):
+                             airmass_weight=False, stretch_threshold=None, useNonnegative=False):
         """Sub-routine to calculate a new model from the residuals of forward-modeling the previous solution.
 
         Parameters
@@ -679,6 +684,9 @@ class BuildDcrCoadd(GenerateTemplate):
         for f in range(self.n_step):
             inds_use = inverse_var_arr[f] > 0
             new_solution[f][inds_use] = residual_arr[f][inds_use]/inverse_var_arr[f][inds_use]
+            if useNonnegative:
+                neg_inds = new_solution[f] < 0
+                new_solution[f][neg_inds] = 0.
         return (new_solution, inverse_var_arr)
 
     @staticmethod
