@@ -1,0 +1,7 @@
+!RepositoryCfg_v1
+_mapper: !!python/name:lsst.obs.lsstSim.lsstSimMapper.LsstSimMapper ''
+_mapperArgs: null
+_parents: null
+_policy: null
+_root: ..
+dirty: true
