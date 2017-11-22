@@ -50,13 +50,6 @@ class BandpassTestCase(lsst.utils.tests.TestCase):
         self.bandpass = BasicGenerateTemplate.load_bandpass(filter_name=self.filter_name,
                                                             wavelength_step=self.wavelength_step)
 
-    def test_step_bandpass(self):
-        """Check that the bandpass has necessary methods, and those return the correct number of values."""
-        bp = self.bandpass
-        bp_wavelen, bandpass_vals = bp.getBandpass()
-        n_step = int(np.ceil((bp.wavelen_max - bp.wavelen_min) / bp.wavelen_step))
-        self.assertEqual(n_step + 1, len(bandpass_vals))
-
     def test_bandpass(self):
         """Verify the calculated bandpass values."""
         data_file = "test_data/bandpass.npy"
