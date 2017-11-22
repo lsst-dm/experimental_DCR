@@ -555,7 +555,7 @@ class GenerateTemplate(object):
         return dataRef[0]
 
     @staticmethod
-    def load_bandpass(filter_name='g', profile='semi', wavelength_step=None):
+    def load_bandpass(filter_name='g', profile='lsstSim', wavelength_step=None):
         """Load in Bandpass object from sims_photUtils.
 
         Parameters

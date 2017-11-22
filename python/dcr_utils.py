@@ -40,7 +40,7 @@ __all__ = ["calculate_hour_angle", "parallactic_angle", "wrap_warpExposure",
 
 
 class BandpassHelper(object):
-    def __init__(self, filter_name='g', profile='semi', wavelen_step=None):
+    def __init__(self, filter_name='g', profile='lsstSim', wavelen_step=None):
         """A dummy bandpass object that mimics Bandpass from sims_photUtils.
 
         This approximates the filter profile with the supplied function.
@@ -72,6 +72,9 @@ class BandpassHelper(object):
             self.sb = -(self.wavelen - np.median(self.wavelen))**2.
             self.sb -= np.min(self.sb)
             self.sb /= np.max(self.sb)
+        elif profile == 'lsstSim':
+            data_file = str("test_data/LsstSim_bandpass_%s.npy" % filter_name)
+            self.wavelen, self.sb = np.load(data_file)
         else:
             self.sb = np.ones(n_step)
         self.sbTophi()
@@ -173,6 +176,7 @@ def kernel_1d(offset, size, n_substep=None, lanczos=None, debug_sinc=False, useI
     else:
         interp_x = np.linspace(0, len(weights), num=n_substep)
         weights_interp = np.interp(interp_x, np.arange(len(weights)), weights)
+        weights_interp *= np.sum(weights)/np.sum(weights_interp)
     for n in range(n_substep):
         if useInverse:
             loc = size/2. + (-offset.start*(n_substep - (n + 0.5)) - offset.end*(n + 0.5))/n_substep
