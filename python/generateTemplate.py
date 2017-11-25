@@ -555,7 +555,7 @@ class GenerateTemplate(object):
         return dataRef[0]
 
     @staticmethod
-    def load_bandpass(filter_name='g', profile='semi', wavelength_step=None):
+    def load_bandpass(filter_name='g', profile='lsstSim', wavelength_step=None):
         """Load in Bandpass object from sims_photUtils.
 
         Parameters
@@ -962,7 +962,8 @@ class GenerateTemplate(object):
         weights = []
         for wl_start, wl_end in self._wavelength_iterator(self.bandpass, use_midpoint=False):
             inds_use = (self.bandpass_highres.wavelen < wl_end) & (self.bandpass_highres.wavelen > wl_start)
-            weights.append(self.bandpass_highres.sb[inds_use])
+            weights_single = self.bandpass_highres.sb[inds_use]
+            weights.append(weights_single)
         return weights
 
 
