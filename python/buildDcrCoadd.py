@@ -36,7 +36,6 @@ import lsst.meas.algorithms as measAlg
 from .dcr_utils import calculate_rotation_angle  # Likely can remove soon
 from .dcr_utils import fft_shift_convolve
 from .dcr_utils import wrap_warpExposure
-# from .dcr_utils import solve_model
 from .generateTemplate import GenerateTemplate
 
 __all__ = ["BuildDcrCoadd"]

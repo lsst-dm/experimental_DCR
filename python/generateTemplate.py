@@ -32,6 +32,7 @@ from scipy.ndimage.interpolation import shift as scipy_shift
 from scipy.ndimage.morphology import binary_dilation
 
 from lsst.afw.coord import Coord, IcrsCoord
+from lsst.afw.coord.refraction import differentialRefraction
 import lsst.afw.geom as afwGeom
 from lsst.afw.geom import Angle
 import lsst.afw.image as afwImage
@@ -46,7 +47,6 @@ from lsst.skymap import DiscreteSkyMap
 
 from .lsst_defaults import lsst_observatory, lsst_weather
 from .dcr_utils import calculate_rotation_angle
-from .dcr_utils import diff_refraction
 from .dcr_utils import fft_shift_convolve
 from .dcr_utils import wrap_warpExposure
 from .dcr_utils import calculate_hour_angle
@@ -637,28 +637,27 @@ class GenerateTemplate(object):
             DCR offsets for the start and end of the next sub-band.
 
         """
-        zenith_angle = Angle(np.pi/2) - elevation
-        wavelength_midpoint = bandpass.calc_eff_wavelen()
+        wavelength_mid = bandpass.calc_eff_wavelen()
         delta = namedtuple("delta", ["start", "end"])
         dcr = namedtuple("dcr", ["dx", "dy"])
         if use_midpoint:
             for wl in GenerateTemplate._wavelength_iterator(bandpass, use_midpoint=True):
                 # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
-                refract_mid = diff_refraction(wavelength=wl, wavelength_ref=wavelength_midpoint,
-                                              zenith_angle=zenith_angle,
-                                              observatory=observatory, weather=weather)
+                refract_mid = differentialRefraction(wavelength=wl, wavelengthRef=wavelength_mid,
+                                                     elevation=elevation,
+                                                     observatory=observatory, weather=weather)
                 refract_mid_pixels = refract_mid.asArcseconds()/pixel_scale.asArcseconds()
                 yield dcr(dx=refract_mid_pixels*np.sin(rotation_angle.asRadians()),
                           dy=refract_mid_pixels*np.cos(rotation_angle.asRadians()))
         else:
             for wl_start, wl_end in GenerateTemplate._wavelength_iterator(bandpass, use_midpoint=False):
                 # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
-                refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
-                                                zenith_angle=zenith_angle,
-                                                observatory=observatory, weather=weather)
-                refract_end = diff_refraction(wavelength=wl_end, wavelength_ref=wavelength_midpoint,
-                                              zenith_angle=zenith_angle,
-                                              observatory=observatory, weather=weather)
+                refract_start = differentialRefraction(wavelength=wl_start, wavelengthRef=wavelength_mid,
+                                                       elevation=elevation,
+                                                       observatory=observatory, weather=weather)
+                refract_end = differentialRefraction(wavelength=wl_end, wavelengthRef=wavelength_mid,
+                                                     elevation=elevation,
+                                                     observatory=observatory, weather=weather)
                 refract_start_pixels = refract_start.asArcseconds()/pixel_scale.asArcseconds()
                 refract_end_pixels = refract_end.asArcseconds()/pixel_scale.asArcseconds()
                 dx = delta(start=refract_start_pixels*np.sin(rotation_angle.asRadians()),

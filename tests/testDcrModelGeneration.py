@@ -56,9 +56,10 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         cls.n_step = 3
         cls.n_images = 5
         cls.psf_size = 5
-        cls.convergence_threshold = 5e-2
+        cls.convergence_threshold = 0.25
         cls.printFailures = False
         cls.min_iter = 1
+        cls.max_iter = 3
 
         butler = daf_persistence.Butler(inputs="./test_data/")
         exposures = []
@@ -91,7 +92,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         """Compare the result of build_model to previously computed values."""
         data_file = "test_data/build_model_vals.npy"
         self.dcrCoadd.build_model(verbose=False, test_convergence=True, min_iter=self.min_iter,
-                                  convergence_threshold=self.convergence_threshold)
+                                  max_iter=self.max_iter, convergence_threshold=self.convergence_threshold)
         model_vals = self.dcrCoadd.model
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, model_vals, allow_pickle=False)
@@ -104,7 +105,8 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         """Compare the result of build_model to previously computed values."""
         data_file = "test_data/build_model_finite_vals.npy"
         self.dcrCoadd.build_model(verbose=True, test_convergence=True, stretch_threshold=0,
-                                  min_iter=self.min_iter, convergence_threshold=self.convergence_threshold)
+                                  min_iter=self.min_iter, max_iter=self.max_iter,
+                                  convergence_threshold=self.convergence_threshold)
         # NOTE: This test data doesn't converge well with the finite bandwidth shift.
         #       That should be investigated more in the future, but for now this test
         #       just verifies that those results are unchanged.
@@ -117,7 +119,8 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
 
     def test_model_converges(self):
         """Check that the model did not diverge."""
-        did_converge = self.dcrCoadd.build_model(verbose=False, test_convergence=True, min_iter=self.min_iter,
+        did_converge = self.dcrCoadd.build_model(verbose=False, test_convergence=True,
+                                                 min_iter=self.min_iter, max_iter=self.max_iter,
                                                  convergence_threshold=self.convergence_threshold)
         self.assertTrue(did_converge)
 
@@ -126,7 +129,7 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         data_file = "test_data/build_matched_template_vals.npy"
         exposure = self.dcrCoadd.exposures[0]
         self.dcrCoadd.build_model(verbose=False, test_convergence=True, min_iter=self.min_iter,
-                                  convergence_threshold=self.convergence_threshold)
+                                  max_iter=self.max_iter, convergence_threshold=self.convergence_threshold)
         template, variance = self.dcrCoadd.build_matched_template(exposure)
         # Uncomment the following code to over-write the reference data:
         # np.save(data_file, (template, variance), allow_pickle=False)
@@ -158,10 +161,8 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         model_file = "test_data/build_model_vals.npy"
         # The expected values from a calculation with default settings
         #   and the model created with `test_calculate_new_model`
-        0.0191203436693, 0.0104065762187, 0.00546658344968,
-        0.00907776417786, 0.0141130064074, 0.0157624950195
-        metric_ref = np.array([0.0191203436693, 0.0104065762187, 0.00546658344968,
-                               0.00907776417786, 0.0141130064074, 0.0157624950195])
+        metric_ref = np.array([0.0482216359912, 0.0490128370654, 0.0311775994647,
+                               0.0303639209553, 0.0207077142539, 0.0261195631701])
         model = np.load(model_file)
         metric = self.dcrCoadd.calc_model_metric(model=model, stretch_threshold=None)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)
@@ -171,9 +172,8 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         model_file = "test_data/build_model_finite_vals.npy"
         # The expected values from a calculation with default settings
         #   and the model created with `test_calculate_new_model`
-
-        metric_ref = np.array([0.0201761363605, 0.0106212733787, 0.00501928993722,
-                               0.00814949463952, 0.0130898202713, 0.0151274665443])
+        metric_ref = np.array([0.0472412018511, 0.0471062469376, 0.0312967583804,
+                               0.0293807793313, 0.0210541137049, 0.0263662741794])
         model = np.load(model_file)
         metric = self.dcrCoadd.calc_model_metric(model=model, stretch_threshold=0)
         self.assertFloatsAlmostEqual(metric, metric_ref, rtol=1e-8, atol=1e-10)
@@ -185,7 +185,8 @@ class DcrCoaddGenerationTestCase(lsst.utils.tests.TestCase):
         y_size = self.dcrCoadd.y_size
         initial_solution = [np.ones((y_size, x_size)) for f in range(n_step)]
         did_converge = self.dcrCoadd._build_model_subroutine(initial_solution=initial_solution, verbose=False,
-                                                             min_iter=self.min_iter, test_convergence=True)
+                                                             min_iter=self.min_iter, test_convergence=True,
+                                                             max_iter=self.max_iter)
         self.assertFalse(did_converge)
 
     def test_calculate_psf(self):

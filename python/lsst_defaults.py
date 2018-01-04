@@ -30,8 +30,8 @@ lsst_lat = -30.244639*degrees
 lsst_lon = -70.749417*degrees
 lsst_alt = 2663.
 lsst_temperature = 20.*u.Celsius  # in degrees Celcius
-lsst_humidity = 10.  # in percent
-lsst_pressure = 101325.*u.pascal  # 1 atmosphere.
+lsst_humidity = 40.  # in percent
+lsst_pressure = 73892.*u.pascal
 
 lsst_weather = Weather(lsst_temperature.value, lsst_pressure.value, lsst_humidity)
 lsst_observatory = Observatory(lsst_lon, lsst_lat, lsst_alt)
