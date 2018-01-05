@@ -333,17 +333,7 @@ def calculate_rotation_angle(exposure):
         A rotation angle of 90 degrees is defined with North along the +x axis and East along the -y axis.
     """
     visitInfo = exposure.getInfo().getVisitInfo()
-
-    az = visitInfo.getBoresightAzAlt().getLongitude()
-    hour_angle = visitInfo.getBoresightHourAngle()
-    # Some simulated data contains invalid hour_angle metadata.
-    # Once DM-9900 is completed, invalid data should instead raise an exception.
-    if np.isfinite(hour_angle.asRadians()):
-        dec = visitInfo.getBoresightRaDec().getDec()
-        lat = visitInfo.getObservatory().getLatitude()
-        p_angle = parallactic_angle(hour_angle, dec, lat)
-    else:
-        p_angle = az.asRadians()
+    p_angle = visitInfo.getBoresightParAngle().asRadians()
     cd = exposure.getInfo().getWcs().getCDMatrix()
     cd_rot = (np.arctan2(-cd[0, 1], cd[0, 0]) + np.arctan2(cd[1, 0], cd[1, 1]))/2.
     rotation_angle = Angle(cd_rot + p_angle)
