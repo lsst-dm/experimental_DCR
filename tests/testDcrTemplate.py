@@ -32,6 +32,7 @@ import lsst.utils.tests
 
 from python.dcr_utils import wrap_warpExposure
 from python.dcr_utils import calculate_rotation_angle
+from python.dcr_utils import parallactic_angle
 from python.generateTemplate import GenerateTemplate
 from python.test_utils import DcrCoaddTestBase
 
@@ -61,8 +62,12 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
         exposures = []
         obsids = np.arange(len(elevation_arr)) + 500
         for el, obsid in zip(elevation_arr, obsids):
+            p_angle = parallactic_angle(self.hour_angle, self.dec, self.latitude)
+            rotation_angle = Angle(p_angle)
             exposures.append(self.dcrTemplate.create_exposure(self.array, variance=None, exposureId=obsid,
-                                                              elevation=Angle(el), azimuth=az))
+                                                              elevation=Angle(el), azimuth=az,
+                                                              ra=self.ra, dec=self.dec,
+                                                              boresightRotAngle=rotation_angle))
         template_gen = self.dcrTemplate.generate_templates_from_model(exposures=exposures,
                                                                       stretch_threshold=None)
         # Uncomment the following code to over-write the reference data:

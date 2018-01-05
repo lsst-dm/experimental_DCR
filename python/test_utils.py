@@ -304,7 +304,7 @@ class DcrCoaddTestBase(object):
         n_step = 3
         pixel_scale = Angle(afwGeom.arcsecToRad(0.25))
         size = 20
-        lsst_lat = lsst_observatory.getLatitude()
+        self.latitude = lsst_observatory.getLatitude()
         # NOTE that this array is randomly generated
         random_seed = 3
         rand_gen = np.random
@@ -313,15 +313,15 @@ class DcrCoaddTestBase(object):
         self.dcrTemplate = BasicGenerateTemplate(size=size, filter_name=filter_name,
                                                  n_step=n_step, pixel_scale=pixel_scale)
         self.dcrTemplate.create_skyMap(doWrite=False)
-        dec = self.dcrTemplate.wcs.getSkyOrigin().getLatitude()
-        ra = self.dcrTemplate.wcs.getSkyOrigin().getLongitude()
+        self.dec = self.dcrTemplate.wcs.getSkyOrigin().getLatitude()
+        self.ra = self.dcrTemplate.wcs.getSkyOrigin().getLongitude()
         self.azimuth = Angle(np.radians(140.0))
         self.elevation = Angle(np.radians(50.0))
         ha_term1 = np.sin(self.elevation.asRadians())
-        ha_term2 = np.sin(dec.asRadians())*np.sin(lsst_lat.asRadians())
-        ha_term3 = np.cos(dec.asRadians())*np.cos(lsst_lat.asRadians())
+        ha_term2 = np.sin(self.dec.asRadians())*np.sin(self.latitude.asRadians())
+        ha_term3 = np.cos(self.dec.asRadians())*np.cos(self.latitude.asRadians())
         self.hour_angle = Angle(np.arccos((ha_term1 - ha_term2) / ha_term3))
-        p_angle = parallactic_angle(self.hour_angle, dec, lsst_lat)
+        p_angle = parallactic_angle(self.hour_angle, self.dec, self.latitude)
         self.rotation_angle = Angle(p_angle)
         self.dcrTemplate.weights = np.zeros_like(self.array)
         nonzero_inds = self.array > 0
@@ -333,7 +333,7 @@ class DcrCoaddTestBase(object):
                                                        use_midpoint=False)
         self.exposure = self.dcrTemplate.create_exposure(self.array, self.elevation, self.azimuth,
                                                          variance=None, boresightRotAngle=self.rotation_angle,
-                                                         dec=dec, ra=ra)
+                                                         dec=self.dec, ra=self.ra)
 
     def tearDown(self):
         """Free memory."""
