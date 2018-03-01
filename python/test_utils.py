@@ -27,7 +27,7 @@ import numpy as np
 
 from lsst.afw.coord import IcrsCoord
 import lsst.afw.geom as afwGeom
-from lsst.afw.geom import Angle
+from lsst.afw.geom import Angle, makeCdMatrix, makeSkyWcs
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
@@ -185,11 +185,9 @@ class BasicGenerateTemplate(GenerateTemplate):
         """
         crval = IcrsCoord(ra, dec)
         crpix = afwGeom.Box2D(bbox).getCenter()
-        cd1_1 = np.cos(sky_rotation.asRadians())*pixel_scale.asDegrees()
-        cd1_2 = -np.sin(sky_rotation.asRadians())*pixel_scale.asDegrees()
-        cd2_1 = np.sin(sky_rotation.asRadians())*pixel_scale.asDegrees()
-        cd2_2 = np.cos(sky_rotation.asRadians())*pixel_scale.asDegrees()
-        return(afwImage.makeWcs(crval, crpix, cd1_1, cd1_2, cd2_1, cd2_2))
+        cd_matrix = makeCdMatrix(scale=pixel_scale, orientation=sky_rotation, flipX=True)
+        wcs = makeSkyWcs(crpix=crpix, crval=crval, cdMatrix=cd_matrix)
+        return(wcs)
 
 
 class BasicBuildDcrCoadd(BuildDcrCoadd):
@@ -266,7 +264,7 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
         y_size, x_size = exposures[0].getDimensions()
         self.x_size = x_size
         self.y_size = y_size
-        self.pixel_scale = exposures[0].getWcs().pixelScale()
+        self.pixel_scale = exposures[0].getWcs().getPixelScale()
         self.exposure_time = exposures[0].getInfo().getVisitInfo().getExposureTime()
         self.bbox = exposures[0].getBBox()
         self.wcs = exposures[0].getWcs()

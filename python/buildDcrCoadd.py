@@ -25,6 +25,7 @@ from __future__ import print_function, division, absolute_import
 
 from builtins import zip
 from builtins import range
+import copy
 import numpy as np
 import scipy.ndimage as ndimage
 from scipy.ndimage.interpolation import shift as scipy_shift
@@ -195,7 +196,7 @@ class BuildDcrCoadd(GenerateTemplate):
         x_size, y_size = self.exposures[ref_exp_i].getDimensions()
         self.x_size = x_size
         self.y_size = y_size
-        self.pixel_scale = self.exposures[ref_exp_i].getWcs().pixelScale()
+        self.pixel_scale = self.exposures[ref_exp_i].getWcs().getPixelScale()
         self.exposure_time = self.exposures[ref_exp_i].getInfo().getVisitInfo().getExposureTime()
         # Use the largest input PSF to calculate the fiducial PSF so that no information is lost.
         self.psf_size = int(np.max(psf_size_arr))
@@ -650,43 +651,67 @@ class BuildDcrCoadd(GenerateTemplate):
                 inverse_var *= visitInfo.getBoresightAirmass()
             if use_variance:
                 inverse_var = np.sqrt(inverse_var)
-            dcr_list = [dcr for dcr in dcr_gen]
-            last_model_shift = []
-            if stretch_threshold is None:
-                stretch_test = [False for dcr in dcr_list]
-            else:
-                stretch_test = [(abs(dcr.dy.start - dcr.dy.end) > stretch_threshold) or
-                                (abs(dcr.dx.start - dcr.dx.end) > stretch_threshold) for dcr in dcr_list]
-
-            for f, dcr in enumerate(dcr_list):
-                if stretch_test[f]:
-                    last_model_shift.append(fft_shift_convolve(last_solution[f], dcr, weights=sub_weights[f]))
-                else:
-                    shift = ((dcr.dy.start + dcr.dy.end)/2., (dcr.dx.start + dcr.dx.end)/2.)
-                    last_model_shift.append(scipy_shift(last_solution[f], shift))
-            for f, dcr in enumerate(dcr_list):
-                last_model = np.zeros((self.y_size, self.x_size))
-                for f2 in range(self.n_step):
-                    if f2 != f:
-                        last_model += last_model_shift[f2]
-                img_residual = img - last_model
+            template = self.build_matched_template(exp, model=last_solution, return_weights=False,
+                                                   stretch_threshold=stretch_threshold)
+            residual = img - template
+            for f, dcr in enumerate(dcr_gen):
                 # NOTE: We do NOT use the finite bandwidth shift here,
                 #       since that would require a deconvolution.
                 inv_shift = (-(dcr.dy.start + dcr.dy.end)/2., -(dcr.dx.start + dcr.dx.end)/2.)
                 inv_var_shift = scipy_shift(inverse_var, inv_shift)
-                residual_shift = scipy_shift(img_residual, inv_shift)
+                residual_shift = scipy_shift(residual, inv_shift)
                 inv_var_shift[inv_var_shift < 0] = 0.
 
                 residual_arr[f] += residual_shift*inv_var_shift  # *weights_shift
                 inverse_var_arr[f] += inv_var_shift
-        new_solution = [np.zeros((self.y_size, self.x_size)) for f in range(self.n_step)]
+        new_solution = copy.deepcopy(last_solution)
         for f in range(self.n_step):
             inds_use = inverse_var_arr[f] > 0
-            new_solution[f][inds_use] = residual_arr[f][inds_use]/inverse_var_arr[f][inds_use]
+            new_solution[f][inds_use] += residual_arr[f][inds_use]/inverse_var_arr[f][inds_use]
             if useNonnegative:
                 neg_inds = new_solution[f] < 0
                 new_solution[f][neg_inds] = 0.
         return (new_solution, inverse_var_arr)
+
+    def _solve_psf_convolution(self, image):
+        psf_vals = self.psf.computeKernelImage().getArray()
+        return_image = 2.*image - self._kernel_convolution(image, psf_vals)
+        return return_image
+
+    def _convolve_psf_shift(self, image, dcr, weights, psf=None, useInverse=False, n_substep=20):
+        if psf is None:
+            psf = self.psf
+        interp_x = np.linspace(0, len(weights), num=n_substep)
+        weights_interp = np.interp(interp_x, np.arange(len(weights)), weights)
+        psf_image = psf.computeKernelImage().getArray()
+        kernel = np.zeros_like(psf_image)
+        for n in range(n_substep):
+            x_loc = (dcr.dx.start*(n_substep - (n + 0.5)) + dcr.dx.end*(n + 0.5))/n_substep
+            y_loc = (dcr.dy.start*(n_substep - (n + 0.5)) + dcr.dy.end*(n + 0.5))/n_substep
+            shift = (y_loc, x_loc)
+            kernel += weights_interp[n]*scipy_shift(psf_image, shift)
+        return self._kernel_convolution(image, kernel, useInverse=useInverse)
+
+    @staticmethod
+    def _kernel_convolution(image, kernel, useInverse=False):
+        ky_size, kx_size = kernel.shape
+        y_size, x_size = image.shape
+        pad_y = y_size//2 - ky_size//2
+        pad_x = x_size//2 - kx_size//2
+        odd_flag_y = y_size - 2*pad_y - ky_size
+        odd_flag_x = x_size - 2*pad_x - kx_size
+        pad_x_use = (pad_x, pad_x + odd_flag_x)
+        pad_y_use = (pad_y, pad_y + odd_flag_y)
+        kernel_pad = np.pad(kernel, (pad_y_use, pad_x_use), mode='constant')
+
+        fft_image = np.fft.rfft2(image)
+        fft_kernel = np.fft.rfft2(kernel_pad)
+        if useInverse:
+            fft_image /= fft_kernel
+        else:
+            fft_image *= fft_kernel
+        return_image = np.fft.fftshift(np.fft.irfft2(fft_image))
+        return return_image
 
     @staticmethod
     def _model_spatial_filter(new_solution, filter_width=2., clamp=3., mask=None,

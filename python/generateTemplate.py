@@ -937,7 +937,7 @@ class GenerateTemplate(object):
         self.n_step = len(self.model)
         self.x_size = x_size
         self.y_size = y_size
-        self.pixel_scale = self.wcs.pixelScale()
+        self.pixel_scale = self.wcs.getPixelScale()
         self.exposure_time = dcrCoadd.getInfo().getVisitInfo().getExposureTime()
         self.observatory = dcrCoadd.getInfo().getVisitInfo().getObservatory()
         bandpass_init = self.load_bandpass(filter_name=filter_name)

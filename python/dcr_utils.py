@@ -334,7 +334,7 @@ def calculate_rotation_angle(exposure):
     """
     visitInfo = exposure.getInfo().getVisitInfo()
     p_angle = visitInfo.getBoresightParAngle().asRadians()
-    cd = exposure.getInfo().getWcs().getCDMatrix()
+    cd = exposure.getInfo().getWcs().getCdMatrix()
     cd_rot = (np.arctan2(-cd[0, 1], cd[0, 0]) + np.arctan2(cd[1, 0], cd[1, 1]))/2.
     rotation_angle = Angle(cd_rot + p_angle)
     return rotation_angle
