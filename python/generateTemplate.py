@@ -31,7 +31,6 @@ import numpy as np
 from scipy.ndimage.interpolation import shift as scipy_shift
 from scipy.ndimage.morphology import binary_dilation
 
-from lsst.afw.coord import Coord, IcrsCoord
 from lsst.afw.coord.refraction import differentialRefraction
 import lsst.afw.geom as afwGeom
 from lsst.afw.geom import Angle
@@ -825,8 +824,8 @@ class GenerateTemplate(object):
                                            date=DateTime(mjd),
                                            ut1=mjd,
                                            era=era,
-                                           boresightRaDec=IcrsCoord(ra, dec),
-                                           boresightAzAlt=Coord(azimuth, elevation),
+                                           boresightRaDec=afwGeom.SpherePoint(ra, dec),
+                                           boresightAzAlt=afwGeom.SpherePoint(azimuth, elevation),
                                            boresightAirmass=airmass,
                                            boresightRotAngle=boresightRotAngle,
                                            observatory=self.observatory,

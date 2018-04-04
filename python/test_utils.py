@@ -25,7 +25,6 @@ from builtins import range
 from builtins import object
 import numpy as np
 
-from lsst.afw.coord import IcrsCoord
 import lsst.afw.geom as afwGeom
 from lsst.afw.geom import Angle, makeCdMatrix, makeSkyWcs
 import lsst.afw.image as afwImage
@@ -183,7 +182,7 @@ class BasicGenerateTemplate(GenerateTemplate):
         -------
         Returns a lsst.afw.image.wcs object.
         """
-        crval = IcrsCoord(ra, dec)
+        crval = afwGeom.SpherePoint(ra, dec)
         crpix = afwGeom.Box2D(bbox).getCenter()
         cd_matrix = makeCdMatrix(scale=pixel_scale, orientation=sky_rotation, flipX=True)
         wcs = makeSkyWcs(crpix=crpix, crval=crval, cdMatrix=cd_matrix)
