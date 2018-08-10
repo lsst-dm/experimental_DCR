@@ -38,7 +38,6 @@ import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 from lsst.daf.base import DateTime
 import lsst.daf.persistence as daf_persistence
-from lsst.geom import convexHull as convexHull
 import lsst.meas.algorithms as measAlg
 import lsst.pex.policy as pexPolicy
 from lsst.pipe.tasks import coaddBase
@@ -64,7 +63,7 @@ y0 = 500
 dy = 200
 
 
-class GenerateTemplate(object):
+class GenerateTemplate:
     """Lightweight object with only the minimum needed to generate DCR-matched template exposures.
 
     This class will generate template exposures suitable for
@@ -540,7 +539,7 @@ class GenerateTemplate(object):
 
         # Load default values. This is a hack, and should go away once DM-9616 is completed.
         default_keys = {'filter': self.filter_name, 'tract': 0, 'patch': '0,0',
-                        'raft': '2,2', 'sensor': '1,1', 'ccdnum': 10}
+                        'raft': '2,2', 'sensor': '1,1', 'ccdnum': 10, 'numSubfilters': 3}
 
         key_dict = {}
         for key in idKeyTypeDict:
@@ -686,16 +685,12 @@ class GenerateTemplate(object):
         skyMapConfig = DiscreteSkyMap.ConfigClass()
         skyMapConfig.update(pixelScale=self.pixel_scale.asArcseconds())
         skyMapConfig.update(patchInnerDimensions=[self.x_size, self.y_size])
+        cenCoord = self.wcs.pixelToSky(afwGeom.Point2D(self.x_size/2., self.y_size/2.))
+        radius = np.sqrt((self.x_size/2.)**2. + (self.y_size/2.)**2.)*self.pixel_scale.asRadians()
 
-        boxI = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.Extent2I(self.x_size, self.y_size))
-        boxD = afwGeom.Box2D(boxI)
-        points = [tuple(self.wcs.pixelToSky(corner).getVector()) for corner in boxD.getCorners()]
-        polygon = convexHull(points)
-        circle = polygon.getBoundingCircle()
-
-        skyMapConfig.raList.append(circle.center[0])
-        skyMapConfig.decList.append(circle.center[1])
-        skyMapConfig.radiusList.append(circle.radius)
+        skyMapConfig.raList.append(cenCoord.getLongitude().asRadians())
+        skyMapConfig.decList.append(cenCoord.getLatitude().asRadians())
+        skyMapConfig.radiusList.append(radius)
         self.skyMap = DiscreteSkyMap(skyMapConfig)
         if doWrite:
             butler.put(self.skyMap, datasetName)

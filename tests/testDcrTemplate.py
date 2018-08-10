@@ -76,7 +76,7 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
         template_ref_gen = self.dcrTemplate.read_exposures(obsids=obsids)
 
         for template_test, template_ref in zip(template_gen, template_ref_gen):
-            self.assertMaskedImagesNearlyEqual(template_test.getMaskedImage(), template_ref.getMaskedImage())
+            self.assertMaskedImagesAlmostEqual(template_test.getMaskedImage(), template_ref.getMaskedImage())
 
     def test_warp_exposure(self):
         """Test that an exposure warped to its own wcs is unchanged."""
@@ -88,12 +88,12 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
         mask = image_warped.getMask()
         no_data_bit = mask.getPlaneBitMask('NO_DATA')
         no_data_mask = (mask.getArray() & no_data_bit) == no_data_bit
-        self.assertMaskedImagesNearlyEqual(image_ref, image_warped, rtol=1e-7, skipMask=no_data_mask)
+        self.assertMaskedImagesAlmostEqual(image_ref, image_warped, rtol=1e-7, skipMask=no_data_mask)
 
     def test_rotation_angle(self):
         """Test that we can calculate the same rotation angle that was originally supplied in setup."""
         rotation_angle = calculate_rotation_angle(self.exposure)
-        self.assertAnglesNearlyEqual(self.rotation_angle, rotation_angle)
+        self.assertAnglesAlmostEqual(self.rotation_angle, rotation_angle)
 
     def test_create_exposure(self):
         """Test that the data retrieved from an exposure is the same as what it was initialized with."""
@@ -103,10 +103,10 @@ class DcrTemplateTestCase(DcrCoaddTestBase, lsst.utils.tests.TestCase):
         visitInfo = self.exposure.getInfo().getVisitInfo()
         el = visitInfo.getBoresightAzAlt().getLatitude()
         az = visitInfo.getBoresightAzAlt().getLongitude()
-        self.assertAnglesNearlyEqual(el, self.elevation)
-        self.assertAnglesNearlyEqual(az, self.azimuth)
+        self.assertAnglesAlmostEqual(el, self.elevation)
+        self.assertAnglesAlmostEqual(az, self.azimuth)
         hour_angle = visitInfo.getBoresightHourAngle()
-        self.assertAnglesNearlyEqual(hour_angle, self.hour_angle)
+        self.assertAnglesAlmostEqual(hour_angle, self.hour_angle)
 
     def test_persist_dcr_model_roundtrip(self):
         """Test that an exposure can be persisted and later depersisted from a repository."""
