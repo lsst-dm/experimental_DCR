@@ -25,9 +25,8 @@ from builtins import range
 from builtins import object
 import numpy as np
 
-from lsst.afw.coord import IcrsCoord
 import lsst.afw.geom as afwGeom
-from lsst.afw.geom import Angle
+from lsst.afw.geom import Angle, makeCdMatrix, makeSkyWcs
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
@@ -183,13 +182,11 @@ class BasicGenerateTemplate(GenerateTemplate):
         -------
         Returns a lsst.afw.image.wcs object.
         """
-        crval = IcrsCoord(ra, dec)
+        crval = afwGeom.SpherePoint(ra, dec)
         crpix = afwGeom.Box2D(bbox).getCenter()
-        cd1_1 = np.cos(sky_rotation.asRadians())*pixel_scale.asDegrees()
-        cd1_2 = -np.sin(sky_rotation.asRadians())*pixel_scale.asDegrees()
-        cd2_1 = np.sin(sky_rotation.asRadians())*pixel_scale.asDegrees()
-        cd2_2 = np.cos(sky_rotation.asRadians())*pixel_scale.asDegrees()
-        return(afwImage.makeWcs(crval, crpix, cd1_1, cd1_2, cd2_1, cd2_2))
+        cd_matrix = makeCdMatrix(scale=pixel_scale, orientation=sky_rotation, flipX=True)
+        wcs = makeSkyWcs(crpix=crpix, crval=crval, cdMatrix=cd_matrix)
+        return(wcs)
 
 
 class BasicBuildDcrCoadd(BuildDcrCoadd):
@@ -266,7 +263,7 @@ class BasicBuildDcrCoadd(BuildDcrCoadd):
         y_size, x_size = exposures[0].getDimensions()
         self.x_size = x_size
         self.y_size = y_size
-        self.pixel_scale = exposures[0].getWcs().pixelScale()
+        self.pixel_scale = exposures[0].getWcs().getPixelScale()
         self.exposure_time = exposures[0].getInfo().getVisitInfo().getExposureTime()
         self.bbox = exposures[0].getBBox()
         self.wcs = exposures[0].getWcs()
@@ -304,7 +301,7 @@ class DcrCoaddTestBase(object):
         n_step = 3
         pixel_scale = Angle(afwGeom.arcsecToRad(0.25))
         size = 20
-        lsst_lat = lsst_observatory.getLatitude()
+        self.latitude = lsst_observatory.getLatitude()
         # NOTE that this array is randomly generated
         random_seed = 3
         rand_gen = np.random
@@ -313,15 +310,15 @@ class DcrCoaddTestBase(object):
         self.dcrTemplate = BasicGenerateTemplate(size=size, filter_name=filter_name,
                                                  n_step=n_step, pixel_scale=pixel_scale)
         self.dcrTemplate.create_skyMap(doWrite=False)
-        dec = self.dcrTemplate.wcs.getSkyOrigin().getLatitude()
-        ra = self.dcrTemplate.wcs.getSkyOrigin().getLongitude()
+        self.dec = self.dcrTemplate.wcs.getSkyOrigin().getLatitude()
+        self.ra = self.dcrTemplate.wcs.getSkyOrigin().getLongitude()
         self.azimuth = Angle(np.radians(140.0))
         self.elevation = Angle(np.radians(50.0))
         ha_term1 = np.sin(self.elevation.asRadians())
-        ha_term2 = np.sin(dec.asRadians())*np.sin(lsst_lat.asRadians())
-        ha_term3 = np.cos(dec.asRadians())*np.cos(lsst_lat.asRadians())
+        ha_term2 = np.sin(self.dec.asRadians())*np.sin(self.latitude.asRadians())
+        ha_term3 = np.cos(self.dec.asRadians())*np.cos(self.latitude.asRadians())
         self.hour_angle = Angle(np.arccos((ha_term1 - ha_term2) / ha_term3))
-        p_angle = parallactic_angle(self.hour_angle, dec, lsst_lat)
+        p_angle = parallactic_angle(self.hour_angle, self.dec, self.latitude)
         self.rotation_angle = Angle(p_angle)
         self.dcrTemplate.weights = np.zeros_like(self.array)
         nonzero_inds = self.array > 0
@@ -333,7 +330,7 @@ class DcrCoaddTestBase(object):
                                                        use_midpoint=False)
         self.exposure = self.dcrTemplate.create_exposure(self.array, self.elevation, self.azimuth,
                                                          variance=None, boresightRotAngle=self.rotation_angle,
-                                                         dec=dec, ra=ra)
+                                                         dec=self.dec, ra=self.ra)
 
     def tearDown(self):
         """Free memory."""

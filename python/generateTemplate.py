@@ -31,14 +31,13 @@ import numpy as np
 from scipy.ndimage.interpolation import shift as scipy_shift
 from scipy.ndimage.morphology import binary_dilation
 
-from lsst.afw.coord import Coord, IcrsCoord
+from lsst.afw.coord.refraction import differentialRefraction
 import lsst.afw.geom as afwGeom
 from lsst.afw.geom import Angle
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 from lsst.daf.base import DateTime
 import lsst.daf.persistence as daf_persistence
-from lsst.geom import convexHull as convexHull
 import lsst.meas.algorithms as measAlg
 import lsst.pex.policy as pexPolicy
 from lsst.pipe.tasks import coaddBase
@@ -46,7 +45,6 @@ from lsst.skymap import DiscreteSkyMap
 
 from .lsst_defaults import lsst_observatory, lsst_weather
 from .dcr_utils import calculate_rotation_angle
-from .dcr_utils import diff_refraction
 from .dcr_utils import fft_shift_convolve
 from .dcr_utils import wrap_warpExposure
 from .dcr_utils import calculate_hour_angle
@@ -65,7 +63,7 @@ y0 = 500
 dy = 200
 
 
-class GenerateTemplate(object):
+class GenerateTemplate:
     """Lightweight object with only the minimum needed to generate DCR-matched template exposures.
 
     This class will generate template exposures suitable for
@@ -541,7 +539,7 @@ class GenerateTemplate(object):
 
         # Load default values. This is a hack, and should go away once DM-9616 is completed.
         default_keys = {'filter': self.filter_name, 'tract': 0, 'patch': '0,0',
-                        'raft': '2,2', 'sensor': '1,1', 'ccdnum': 10}
+                        'raft': '2,2', 'sensor': '1,1', 'ccdnum': 10, 'numSubfilters': 3}
 
         key_dict = {}
         for key in idKeyTypeDict:
@@ -637,28 +635,27 @@ class GenerateTemplate(object):
             DCR offsets for the start and end of the next sub-band.
 
         """
-        zenith_angle = Angle(np.pi/2) - elevation
-        wavelength_midpoint = bandpass.calc_eff_wavelen()
+        wavelength_mid = bandpass.calc_eff_wavelen()
         delta = namedtuple("delta", ["start", "end"])
         dcr = namedtuple("dcr", ["dx", "dy"])
         if use_midpoint:
             for wl in GenerateTemplate._wavelength_iterator(bandpass, use_midpoint=True):
                 # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
-                refract_mid = diff_refraction(wavelength=wl, wavelength_ref=wavelength_midpoint,
-                                              zenith_angle=zenith_angle,
-                                              observatory=observatory, weather=weather)
+                refract_mid = differentialRefraction(wavelength=wl, wavelengthRef=wavelength_mid,
+                                                     elevation=elevation,
+                                                     observatory=observatory, weather=weather)
                 refract_mid_pixels = refract_mid.asArcseconds()/pixel_scale.asArcseconds()
                 yield dcr(dx=refract_mid_pixels*np.sin(rotation_angle.asRadians()),
                           dy=refract_mid_pixels*np.cos(rotation_angle.asRadians()))
         else:
             for wl_start, wl_end in GenerateTemplate._wavelength_iterator(bandpass, use_midpoint=False):
                 # Note that refract_amp can be negative, since it's relative to the midpoint of the full band
-                refract_start = diff_refraction(wavelength=wl_start, wavelength_ref=wavelength_midpoint,
-                                                zenith_angle=zenith_angle,
-                                                observatory=observatory, weather=weather)
-                refract_end = diff_refraction(wavelength=wl_end, wavelength_ref=wavelength_midpoint,
-                                              zenith_angle=zenith_angle,
-                                              observatory=observatory, weather=weather)
+                refract_start = differentialRefraction(wavelength=wl_start, wavelengthRef=wavelength_mid,
+                                                       elevation=elevation,
+                                                       observatory=observatory, weather=weather)
+                refract_end = differentialRefraction(wavelength=wl_end, wavelengthRef=wavelength_mid,
+                                                     elevation=elevation,
+                                                     observatory=observatory, weather=weather)
                 refract_start_pixels = refract_start.asArcseconds()/pixel_scale.asArcseconds()
                 refract_end_pixels = refract_end.asArcseconds()/pixel_scale.asArcseconds()
                 dx = delta(start=refract_start_pixels*np.sin(rotation_angle.asRadians()),
@@ -688,16 +685,12 @@ class GenerateTemplate(object):
         skyMapConfig = DiscreteSkyMap.ConfigClass()
         skyMapConfig.update(pixelScale=self.pixel_scale.asArcseconds())
         skyMapConfig.update(patchInnerDimensions=[self.x_size, self.y_size])
+        cenCoord = self.wcs.pixelToSky(afwGeom.Point2D(self.x_size/2., self.y_size/2.))
+        radius = np.sqrt((self.x_size/2.)**2. + (self.y_size/2.)**2.)*self.pixel_scale.asRadians()
 
-        boxI = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.Extent2I(self.x_size, self.y_size))
-        boxD = afwGeom.Box2D(boxI)
-        points = [tuple(self.wcs.pixelToSky(corner).getVector()) for corner in boxD.getCorners()]
-        polygon = convexHull(points)
-        circle = polygon.getBoundingCircle()
-
-        skyMapConfig.raList.append(circle.center[0])
-        skyMapConfig.decList.append(circle.center[1])
-        skyMapConfig.radiusList.append(circle.radius)
+        skyMapConfig.raList.append(cenCoord.getLongitude().asRadians())
+        skyMapConfig.decList.append(cenCoord.getLatitude().asRadians())
+        skyMapConfig.radiusList.append(radius)
         self.skyMap = DiscreteSkyMap(skyMapConfig)
         if doWrite:
             butler.put(self.skyMap, datasetName)
@@ -826,8 +819,8 @@ class GenerateTemplate(object):
                                            date=DateTime(mjd),
                                            ut1=mjd,
                                            era=era,
-                                           boresightRaDec=IcrsCoord(ra, dec),
-                                           boresightAzAlt=Coord(azimuth, elevation),
+                                           boresightRaDec=afwGeom.SpherePoint(ra, dec),
+                                           boresightAzAlt=afwGeom.SpherePoint(azimuth, elevation),
                                            boresightAirmass=airmass,
                                            boresightRotAngle=boresightRotAngle,
                                            observatory=self.observatory,
@@ -938,7 +931,7 @@ class GenerateTemplate(object):
         self.n_step = len(self.model)
         self.x_size = x_size
         self.y_size = y_size
-        self.pixel_scale = self.wcs.pixelScale()
+        self.pixel_scale = self.wcs.getPixelScale()
         self.exposure_time = dcrCoadd.getInfo().getVisitInfo().getExposureTime()
         self.observatory = dcrCoadd.getInfo().getVisitInfo().getObservatory()
         bandpass_init = self.load_bandpass(filter_name=filter_name)
