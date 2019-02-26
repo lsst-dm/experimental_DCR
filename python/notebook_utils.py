@@ -31,13 +31,9 @@ class FilterProperty:
         return self.lambdaEff
 
 
-def look(img, range=None, x_range=None, y_range=None, large=False, outfile=None, window=1):
+def look(img, range=None, x_range=None, y_range=None, outfile=None, window=1):
     """Simple function to wrap matplotlib and display an image with a colorbar."""
-    plot_1 = plt.plot(window)
-    if large:
-        plot_1.figure(figsize=(32, 12))
-    else:
-        plot_1.figure(figsize=(16, 6))
+    afwDisplay.Display(window)
     if range is None:
         range = [np.min(img), np.max(img)]
     img_use = img.copy()
@@ -57,11 +53,11 @@ def look(img, range=None, x_range=None, y_range=None, large=False, outfile=None,
             y1 -= y0
             y0 = 0
         img_use = img_use[y0: y1, :]
-    fig_show = plot_1.imshow(img_use, interpolation='none', origin='lower', cmap=cm.rainbow, clim=range)
-    plot_1.colorbar(fig_show, orientation='vertical', shrink=1)
+    fig_show = plt.imshow(img_use, interpolation='none', origin='lower', cmap=cm.rainbow, clim=range)
+    plt.colorbar(fig_show, orientation='vertical', shrink=1)
     if outfile is not None:
-        plot_1.savefig(outfile)
-    plot_1.show()
+        plt.savefig(outfile)
+    plt.show()
 
 
 class SimMatcher:
@@ -79,11 +75,11 @@ class SimMatcher:
         self.quasar_coord.flag[:] = False
         star_ri = {}
         self.star_i = src_match(sim.coord, sim.catalog, tolerance, sim.wcs,
-                                reverse_match=star_ri, verbose=verbose)
+                                reverse_match=star_ri, verbose=verbose, use_flags=False)
         self.star_ri = star_ri
         quasar_ri = {}
         self.quasar_i = src_match(sim.quasar_coord, sim.quasar_catalog, tolerance, sim.wcs,
-                                  reverse_match=quasar_ri, verbose=verbose)
+                                  reverse_match=quasar_ri, verbose=verbose, use_flags=False)
         self.quasar_ri = quasar_ri
         self.quasar_Z = extract_redshift(sim, ind_map=self.quasar_i)
         self.star_T = extract_temperature(sim, ind_map=self.star_i)
@@ -274,7 +270,7 @@ def plot_spectrum(sim, filterInfo, meas_cats, src_ind, cat_matches=None,
     meas_ra = meas_cats[0][i0].getCoord().getLongitude().asDegrees()
     meas_dec = meas_cats[0][i0].getCoord().getLatitude().asDegrees()
     if use_throughput:
-        meas_flux *= throughput_correction
+        meas_flux /= throughput_correction
     if verbose:
         if cat_matches is not None:
             if star_T is not None:
@@ -352,7 +348,7 @@ def plot_quasar_spectrum(sim, filterInfo, meas_cats, src_ind, cat_matches=None,
     meas_dec = meas_cats[0][i0].getCoord().getLatitude().asDegrees()
 
     if use_throughput:
-        meas_flux *= throughput_correction
+        meas_flux /= throughput_correction
     if verbose:
         if cat_matches is not None:
             if quasar_Z is not None:
@@ -379,7 +375,8 @@ def plot_quasar_spectrum(sim, filterInfo, meas_cats, src_ind, cat_matches=None,
     plt.ylabel('Flux (counts)')
 
 
-def plot_color(sim, filterInfo, meas_cats, matches, use_throughput=True, window=1):
+def plot_color(sim, filterInfo, meas_cats, matches, use_throughput=True, window=1,
+               flux_min=None, flux_max=None):
     meas_color = []
     sim_color = []
     numDcrSubfilters = len(meas_cats)
@@ -398,7 +395,13 @@ def plot_color(sim, filterInfo, meas_cats, matches, use_throughput=True, window=
         sim_fit = [sim_fit_params[0]*wl + sim_fit_params[1] for wl in meas_wl]
         meas_flux = np.array([cat.getPsfInstFlux()[i0] for cat in meas_cats])
         if use_throughput:
-            meas_flux *= throughput_correction
+            meas_flux /= throughput_correction
+        if flux_min is not None:
+            if np.median(meas_flux) < flux_min:
+                continue
+        if flux_max is not None:
+            if np.median(meas_flux) > flux_max:
+                continue
         meas_mag0 = -2.512 * np.log10(meas_flux[0])
         meas_mag1 = -2.512 * np.log10(meas_flux[numDcrSubfilters-1])
         sim_mag0 = -2.512 * np.log10(sim_fit[0])
@@ -415,7 +418,8 @@ def plot_color(sim, filterInfo, meas_cats, matches, use_throughput=True, window=
     plt.xlabel('True g(b)-g(r) color')
 
 
-def plot_quasar_color(sim, filterInfo, meas_cats, matches, use_throughput=True, window=1):
+def plot_quasar_color(sim, filterInfo, meas_cats, matches, use_throughput=True, window=1,
+                      flux_min=None, flux_max=None):
     meas_color = []
     sim_color = []
     numDcrSubfilters = len(meas_cats)
@@ -434,7 +438,13 @@ def plot_quasar_color(sim, filterInfo, meas_cats, matches, use_throughput=True, 
         sim_fit = [sim_fit_params[0]*wl + sim_fit_params[1] for wl in meas_wl]
         meas_flux = np.array([cat.getPsfInstFlux()[i0] for cat in meas_cats])
         if use_throughput:
-            meas_flux *= throughput_correction
+            meas_flux /= throughput_correction
+        if flux_min is not None:
+            if np.median(meas_flux) < flux_min:
+                continue
+        if flux_max is not None:
+            if np.median(meas_flux) > flux_max:
+                continue
         meas_mag0 = -2.512 * np.log10(meas_flux[0])
         meas_mag1 = -2.512 * np.log10(meas_flux[numDcrSubfilters-1])
         sim_mag0 = -2.512 * np.log10(sim_fit[0])

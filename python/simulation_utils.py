@@ -1,12 +1,14 @@
 
 import imp
 import os
+import sqlite3
 
 import numpy as np
 import pickle
-import galsim
+from shutil import copy as copyfile
 
 from lsst.afw.geom import Angle
+import galsim
 from lsst.sims.catUtils.matchSED.matchUtils import matchStar
 
 imp.load_source('calc_refractive_index', '/Users/sullivan/LSST/code/StarFast/calc_refractive_index.py')
@@ -159,3 +161,146 @@ def simulation_wrapper(sim=None, seed=7, band_name='g', dimension=1024, pixel_sc
                 expId += 1
                 exposure.writeFits(output_directory + "images/" + filename)
     return sim
+
+
+class OpSim_wrapper:
+
+    """Connect to the OpSim database and use the observing conditions
+    to generate sets of simulated data
+    """
+
+    def __init__(self, opsim_db=None, year=1, filt='g', sim_directory=None):
+        if opsim_db is None:
+            opsim_db = '/Users/sullivan/LSST/OpSim/baseline2018a.db'
+        if sim_directory is None:
+            self.sim_directory = "/Users/sullivan/LSST/simulations/OpSim/baseline2018a/"
+        else:
+            self.sim_directory = sim_directory
+        sql_connection = sqlite3.connect(opsim_db)
+        self.opsim = sql_connection.cursor()
+        self.filter = filt
+        self.year = year
+        night0 = 365*(year - 1)
+        night1 = 365*year
+        query = "select fieldId from SummaryAllProps where night > %i and night < %i and filter = '%s';"\
+                % (night0, night1, filt)
+        result = self.opsim.execute(query)
+        field_list0 = result.fetchall()
+        self.field_list = [res[0] for res in field_list0]
+        self.field_Ids = list(set(self.field_list))
+
+    def set_field(self, n_obs=None, index=0):
+        """Pick a field from the observations database that meets all criteria.
+
+        Parameters
+        ----------
+        n_obs : `int`, optional
+            Select only fields with ``n_obs`` observations in the current year.
+            No constraint on the number of observations if not set.
+        index : `int`, optional
+            Element of the list of fields matching the set of conditions to use.
+            Wrapped at the number of matching fields.
+        """
+        if n_obs is None:
+            index_use = index % len(self.field_Ids)
+            self.field_Id = self.field_Ids[index_use]
+        else:
+            n_obs_list = [np.sum(np.array(self.field_list) == field) for field in self.field_Ids]
+            obs_use = np.where(np.array(n_obs_list) == n_obs)[0]
+            index_use = index % len(obs_use)
+            self.field_Id = self.field_Ids[obs_use[index_use]]
+
+    def set_conditions_for_field(self):
+        """Query the database and store the observing conditions for the chosen field.
+        """
+        night0 = 365*(self.year - 1)
+        night1 = 365*self.year
+        query = "select altitude,azimuth,airmass,seeingFwhmGeom from SummaryAllProps "\
+                + "where night > %i and night < %i and filter = '%s' and fieldId = %i;"\
+                % (night0, night1, self.filter, self.field_Id)
+        obs_conditions_cmd = self.opsim.execute(query)
+        obs_conditions_list = obs_conditions_cmd.fetchall()
+        self.altitude = [obs[0] for obs in obs_conditions_list]
+        self.azimuth = [obs[1] for obs in obs_conditions_list]
+        self.airmass = [obs[2] for obs in obs_conditions_list]
+        self.seeing = [obs[3] for obs in obs_conditions_list]
+        min_seeing, max_seeing = np.min(self.seeing), np.max(self.seeing)
+        n_obs = len(self.seeing)
+        print("Selecting %i obs from field %i, with seeing range %3.3f to %3.3f"
+              % (n_obs, self.field_Id, min_seeing, max_seeing))
+
+    def update_year(self, year):
+        self.year = year
+        self.set_conditions_for_field()
+
+    def intialize_simulation(self, n_star=10000, n_quasar=1000,
+                             attenuation=20., wavelength_step=10.):
+        """Set up the simulation using the stored observing conditions.
+
+        Parameters
+        ----------
+        n_star : `int`, optional
+            Number of stars to model in the simulated catalog.
+        n_quasar : `int`, optional
+            Number of quasars to model in the simulated catalog.
+        attenuation : `float`, optional
+            Attenuation factor that was used in the simulations
+        wavelength_step : `float`, optional
+            Wavelength resolution of the spectra and calculation of filter and DCR effects. In nm.
+        """
+        sim = simulation_wrapper(seed=self.field_Id, n_star=n_star, n_quasar=n_quasar,
+                                 output_directory=self.sim_directory,
+                                 attenuation=attenuation, wavelength_step=wavelength_step,
+                                 write_catalog=False, write_fits=False, do_simulate=True)
+        return sim
+
+    def run_simulation(self, sim, use_seeing=False, write_catalog=False,
+                       instrument_noise=0., photon_noise=1./15, sky_noise=0.):
+        """Generate realizations of the chosen field using the stored set of observing conditions.
+
+        Parameters
+        ----------
+        sim : `StarFast.StarSim`
+            The previously-generated simulation.
+        use_seeing : `bool`, optional
+            Use database seeing value to scale the PSF width of each observation?
+        write_catalog : `bool`, optional
+            Write a reference catalog using the simulated sources?
+        instrument_noise : `float`, optional
+            Adds noise akin to instrumental noise (post-PSF).
+            Set to 1.0 for default value, can be scaled up or down
+        photon_noise : `float`, optional
+            Adds poisson noise akin to photon shot noise.
+            Set to 1.0 for default value, can be scaled up or down
+        sky_noise : `float`, optional
+            Adds noise prior to convolving with the PSF.
+        """
+        band_dict = {'u': 0, 'g': 1, 'r': 2, 'i': 3, 'z': 4, 'y': 5}
+        psf_name = "var" if use_seeing else "const"
+        field_desc = "field_%i_y%i_%sPSF" % (self.field_Id, self.year, psf_name)
+        output_directory = self.sim_directory + field_desc
+        os.mkdir(output_directory)
+        image_directory = output_directory + "/images/"
+        os.mkdir(image_directory)
+        ingest_directory = output_directory + "/input_data/"
+        os.mkdir(ingest_directory)
+        copyfile(self.sim_directory + "_mapper", image_directory)
+        if write_catalog:
+            sim = simulation_wrapper(sim, output_directory=self.self.sim_directory,
+                                     write_catalog=True, write_fits=False, do_simulate=False)
+        expId = 100*band_dict[self.filter]
+        psf_fwhm = sim.psf.calculateFWHM()
+        gsp = galsim.GSParams(folding_threshold=1.0 /sim.coord.xsize(), maximum_fft_size=12288)
+        for az, alt, seeing in zip(self.azimuth, self.altitude, self.seeing):
+            if use_seeing:
+                psf_fwhm_use = psf_fwhm*seeing/np.median(self.seeing)
+            else:
+                psf_fwhm_use = psf_fwhm
+            psf = galsim.Kolmogorov(fwhm=psf_fwhm_use, flux=1, gsparams=gsp)
+            exposure = sim.convolve(elevation=alt, azimuth=az,
+                                    instrument_noise=instrument_noise, sky_noise=sky_noise,
+                                    photon_noise=photon_noise, exposureId=expId, obsid=expId,
+                                    psf=psf)
+            filename = "lsst_e_%3.3i_f%i_R22_S11_E000.fits" % (expId, band_dict[self.filter])
+            exposure.writeFits(image_directory + filename)
+            expId += 1
