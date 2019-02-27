@@ -188,8 +188,13 @@ class OpSim_wrapper:
         field_list0 = result.fetchall()
         self.field_list = [res[0] for res in field_list0]
         self.field_Ids = list(set(self.field_list))
+        self.field_Id = None
+        self.altitude = None
+        self.azimuth = None
+        self.airmass = None
+        self.seeing = None
 
-    def set_field(self, n_obs=None, index=0):
+    def set_field(self, n_obs=None, index=0, max_n_obs=40, min_n_obs=4, year=None):
         """Pick a field from the observations database that meets all criteria.
 
         Parameters
@@ -200,19 +205,30 @@ class OpSim_wrapper:
         index : `int`, optional
             Element of the list of fields matching the set of conditions to use.
             Wrapped at the number of matching fields.
+        max_n_obs : `int`, optional
+            Maximum number of observations for a field. Only used if ``n_obs`` is not set.
+        min_n_obs : `int`, optional
+            Minimum number of observations for a field. Only used if ``n_obs`` is not set.
+        year : `int`, optional
+            Optionally supply the year of the survey. Overrides the current ``self.year``
         """
+        if year is not None:
+            self.year = year
+        n_obs_list = [np.sum(np.array(self.field_list) == field) for field in self.field_Ids]
         if n_obs is None:
-            index_use = index % len(self.field_Ids)
-            self.field_Id = self.field_Ids[index_use]
+            obs_use = np.where((np.array(n_obs_list) <= max_n_obs) &
+                               (np.array(n_obs_list) >= min_n_obs))[0]
         else:
-            n_obs_list = [np.sum(np.array(self.field_list) == field) for field in self.field_Ids]
             obs_use = np.where(np.array(n_obs_list) == n_obs)[0]
-            index_use = index % len(obs_use)
-            self.field_Id = self.field_Ids[obs_use[index_use]]
+        index_use = index % len(obs_use)
+        self.field_Id = self.field_Ids[obs_use[index_use]]
+        self.set_conditions_for_field()
 
     def set_conditions_for_field(self):
         """Query the database and store the observing conditions for the chosen field.
         """
+        if self.field_Id is None:
+            raise RuntimeError("The target field must be chosen with `set_field()` first.")
         night0 = 365*(self.year - 1)
         night1 = 365*self.year
         query = "select altitude,azimuth,airmass,seeingFwhmGeom from SummaryAllProps "\
@@ -225,16 +241,26 @@ class OpSim_wrapper:
         self.airmass = [obs[2] for obs in obs_conditions_list]
         self.seeing = [obs[3] for obs in obs_conditions_list]
         min_seeing, max_seeing = np.min(self.seeing), np.max(self.seeing)
+        min_airmass, max_airmass = np.min(self.airmass), np.max(self.airmass)
         n_obs = len(self.seeing)
-        print("Selecting %i obs from field %i, with seeing range %3.3f to %3.3f"
-              % (n_obs, self.field_Id, min_seeing, max_seeing))
+        print("Selecting %i obs from field %i, "
+              "with seeing range %3.3f to %3.3f "
+              "and airmass range %3.3f to %3.3f"
+              % (n_obs, self.field_Id, min_seeing, max_seeing, min_airmass, max_airmass))
 
     def update_year(self, year):
+        """Change the year and load new observing conditions for the same target field.
+
+        Parameters
+        ----------
+        year : `int`
+            The new year to load scheduled observations for.
+        """
         self.year = year
         self.set_conditions_for_field()
 
-    def intialize_simulation(self, n_star=10000, n_quasar=1000,
-                             attenuation=20., wavelength_step=10.):
+    def initialize_simulation(self, n_star=10000, n_quasar=1000,
+                              attenuation=20., wavelength_step=10.):
         """Set up the simulation using the stored observing conditions.
 
         Parameters
@@ -248,6 +274,8 @@ class OpSim_wrapper:
         wavelength_step : `float`, optional
             Wavelength resolution of the spectra and calculation of filter and DCR effects. In nm.
         """
+        if self.field_Id is None:
+            raise RuntimeError("The target field must be chosen with `set_field()` first.")
         sim = simulation_wrapper(seed=self.field_Id, n_star=n_star, n_quasar=n_quasar,
                                  output_directory=self.sim_directory,
                                  attenuation=attenuation, wavelength_step=wavelength_step,
@@ -255,7 +283,8 @@ class OpSim_wrapper:
         return sim
 
     def run_simulation(self, sim, use_seeing=False, write_catalog=False,
-                       instrument_noise=0., photon_noise=1./15, sky_noise=0.):
+                       instrument_noise=0., photon_noise=1./15, sky_noise=0.,
+                       initialize_directory=True):
         """Generate realizations of the chosen field using the stored set of observing conditions.
 
         Parameters
@@ -275,20 +304,24 @@ class OpSim_wrapper:
         sky_noise : `float`, optional
             Adds noise prior to convolving with the PSF.
         """
+        if self.seeing is None:
+            raise RuntimeError("The observing conditions must be loaded with  "
+                               "`set_conditions_for_field()` first.")
         band_dict = {'u': 0, 'g': 1, 'r': 2, 'i': 3, 'z': 4, 'y': 5}
         psf_name = "var" if use_seeing else "const"
-        field_desc = "field_%i_y%i_%sPSF" % (self.field_Id, self.year, psf_name)
-        output_directory = self.sim_directory + field_desc
-        os.mkdir(output_directory)
-        image_directory = output_directory + "/images/"
-        os.mkdir(image_directory)
-        ingest_directory = output_directory + "/input_data/"
-        os.mkdir(ingest_directory)
-        copyfile(self.sim_directory + "_mapper", image_directory)
+        output_directory = self.sim_directory + "field_%i_%sPSF/" % (self.field_Id, psf_name)
+        image_directory = output_directory + "images/"
+        ingest_directory = output_directory + "input_data/"
+        if initialize_directory:
+            os.mkdir(output_directory)
+            os.mkdir(image_directory)
+            os.mkdir(ingest_directory)
+            copyfile(self.sim_directory + "_mapper", image_directory)
+            copyfile(self.sim_directory + "processEimage_config.py", output_directory)
         if write_catalog:
-            sim = simulation_wrapper(sim, output_directory=self.self.sim_directory,
+            sim = simulation_wrapper(sim, output_directory=output_directory,
                                      write_catalog=True, write_fits=False, do_simulate=False)
-        expId = 100*band_dict[self.filter]
+        expId = 100*band_dict[self.filter] + 1000*self.year
         psf_fwhm = sim.psf.calculateFWHM()
         gsp = galsim.GSParams(folding_threshold=1.0 /sim.coord.xsize(), maximum_fft_size=12288)
         for az, alt, seeing in zip(self.azimuth, self.altitude, self.seeing):
