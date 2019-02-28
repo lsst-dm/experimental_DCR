@@ -7,7 +7,7 @@ import numpy as np
 import pickle
 from shutil import copy as copyfile
 
-from lsst.afw.geom import Angle
+from lsst.afw.geom import Angle, arcseconds
 import galsim
 from lsst.sims.catUtils.matchSED.matchUtils import matchStar
 
@@ -28,6 +28,7 @@ def simulation_wrapper(sim=None, seed=7, band_name='g', dimension=1024, pixel_sc
                        n_quasar=1000, quasar_seed=None,
                        wavelength_step=3., use_bandpass=True,
                        ra_offset=Angle(0.), dec_offset=Angle(0.), sky_rotation=0., exposureId=0,
+                       simulation_size=1.,
                        instrument_noise=0., photon_noise=1./15, sky_noise=0.,
                        elevation_min=30., elevation_max=90., elevation_step=5.,
                        attenuation=1., do_simulate=True,
@@ -76,6 +77,9 @@ def simulation_wrapper(sim=None, seed=7, band_name='g', dimension=1024, pixel_sc
         Sky rotation angle, in Degrees. I realize this is different than RA and Dec
     exposureId : `int`, optional
         Unique exposure identification number. Also used as the "OBSID"
+    simulation_size : `float`, optional
+        Size of the underlying simulated sky relative to the size of the output images.
+        Increase to allow a greater number of images to be mosaiced.
     instrument_noise : `float`, optional
         Adds noise akin to instrumental noise (post-PSF).
         Set to 1.0 for default value, can be scaled up or down
@@ -109,8 +113,8 @@ def simulation_wrapper(sim=None, seed=7, band_name='g', dimension=1024, pixel_sc
         Gridded simulation of the "true" sky, before convolving
         with the instrument's beam or modeling atmospheric refraction.
     """
-    if output_directory is None:
-        output_directory = "/Users/sullivan/LSST/simulations/test%1i_quasars3nm/" % seed
+    # if output_directory is None:
+    #     output_directory = "/Users/sullivan/LSST/simulations/test%1i_quasars3nm/" % seed
     band_dict = {'u': 0, 'g': 1, 'r': 2, 'i': 3, 'z': 4, 'y': 5}  # LSST filter numbers used by the butler
     if sim is None:
         ra = lsst_lon + ra_offset
@@ -134,22 +138,31 @@ def simulation_wrapper(sim=None, seed=7, band_name='g', dimension=1024, pixel_sc
                       sed_list=sed_list, ra=ra, dec=dec, sky_rotation=sky_rotation,
                       use_mirror=use_bandpass, use_lens=use_bandpass, use_atmos=use_bandpass,
                       use_filter=use_bandpass, use_detector=use_bandpass, attenuation=attenuation)
+        x_size_use = sim.coord.xsize(base=True)  # / 2.0
+        y_size_use = sim.coord.ysize(base=True)  # / 2.0
+        if sim.edge_dist is not None:
+            x_size_use += sim.edge_dist
+            y_size_use += sim.edge_dist
+        sky_radius = np.sqrt(x_size_use**2.0 + y_size_use**2.0)*sim.wcs.getPixelScale().asDegrees()
+        if simulation_size > 1:
+            sky_radius *= simulation_size
 
         if n_star > 0:
             # Simulate a catalog of stars, with fluxes and SEDs
-            sim.load_catalog(n_star=n_star, hottest_star=hottest_star, coolest_star=coolest_star, seed=seed)
+            sim.load_catalog(n_star=n_star, hottest_star=hottest_star, coolest_star=coolest_star,
+                             seed=seed, sky_radius=sky_radius)
             # Generate the raw simulation
             if do_simulate:
                 sim.simulate()
         if n_quasar > 0:
             # Now additionally simulate a catalog of quasars
-            sim.load_quasar_catalog(n_quasar=n_quasar, seed=quasar_seed)
+            sim.load_quasar_catalog(n_quasar=n_quasar, seed=quasar_seed, sky_radius=sky_radius)
             # Generate a new raw simulation and add to the previous one of stars
             if do_simulate:
                 sim.simulate(useQuasars=True)
     if write_catalog:
         sim.make_reference_catalog(output_directory=output_directory + "input_data/",
-                                   filter_list=['u', 'g', 'r', 'i', 'z'], magnitude_limit=16.0)
+                                   filter_list=[band_name,], magnitude_limit=16.0)
     if write_fits:
         expId = exposureId + 100*band_dict[band_name]
         for elevation in np.arange(elevation_min, elevation_max, elevation_step):
@@ -169,7 +182,7 @@ class OpSim_wrapper:
     to generate sets of simulated data
     """
 
-    def __init__(self, opsim_db=None, year=1, filt='g', sim_directory=None):
+    def __init__(self, opsim_db=None, year=1, filt='g', sim_directory=None, airmass_threshold=None):
         if opsim_db is None:
             opsim_db = '/Users/sullivan/LSST/OpSim/baseline2018a.db'
         if sim_directory is None:
@@ -187,7 +200,16 @@ class OpSim_wrapper:
         result = self.opsim.execute(query)
         field_list0 = result.fetchall()
         self.field_list = [res[0] for res in field_list0]
-        self.field_Ids = list(set(self.field_list))
+        if airmass_threshold is not None:
+            # Optionally only include fields with at least one observation
+            # at an airmass above the given threshold
+            query = "select fieldId from SummaryAllProps where night > %i and night < %i "\
+                    "and filter = '%s' and airmass > %f;" % (night0, night1, filt, airmass_threshold)
+            result = self.opsim.execute(query)
+            field_list0 = result.fetchall()
+            self.field_Ids = list(set([res[0] for res in field_list0]))
+        else:
+            self.field_Ids = list(set(self.field_list))
         self.field_Id = None
         self.altitude = None
         self.azimuth = None
@@ -224,7 +246,7 @@ class OpSim_wrapper:
         self.field_Id = self.field_Ids[obs_use[index_use]]
         self.set_conditions_for_field()
 
-    def set_conditions_for_field(self):
+    def set_conditions_for_field(self, verbose=True):
         """Query the database and store the observing conditions for the chosen field.
         """
         if self.field_Id is None:
@@ -243,12 +265,43 @@ class OpSim_wrapper:
         min_seeing, max_seeing = np.min(self.seeing), np.max(self.seeing)
         min_airmass, max_airmass = np.min(self.airmass), np.max(self.airmass)
         n_obs = len(self.seeing)
-        print("Selecting %i obs from field %i, "
-              "with seeing range %3.3f to %3.3f "
-              "and airmass range %3.3f to %3.3f"
-              % (n_obs, self.field_Id, min_seeing, max_seeing, min_airmass, max_airmass))
+        if verbose:
+            print("Selecting %i obs from field %i, "
+                  "with seeing range %3.3f to %3.3f "
+                  "and airmass range %3.3f to %3.3f"
+                  % (n_obs, self.field_Id, min_seeing, max_seeing, min_airmass, max_airmass))
 
-    def update_year(self, year):
+    def set_randomized_conditions_for_field(self, n_obs, verbose=True):
+        """Query the database and store the observing conditions for the chosen field.
+        """
+        if self.field_Id is None:
+            raise RuntimeError("The target field must be chosen with `set_field()` first.")
+        night0 = 365*(self.year - 1)
+        night1 = 365*self.year
+        query = "select altitude,azimuth,airmass,seeingFwhmGeom from SummaryAllProps "\
+                + "where night > %i and night < %i and filter = '%s';"\
+                % (night0, night1, self.filter)
+        obs_conditions_cmd = self.opsim.execute(query)
+        obs_conditions_list = obs_conditions_cmd.fetchall()
+        altitude = [obs[0] for obs in obs_conditions_list]
+        azimuth = [obs[1] for obs in obs_conditions_list]
+        airmass = [obs[2] for obs in obs_conditions_list]
+        seeing = [obs[3] for obs in obs_conditions_list]
+        rng = np.random.RandomState(self.field_Id + self.year)
+        indices = np.floor(rng.rand(n_obs)*len(seeing)).astype(int)
+        self.altitude = [altitude[i] for i in indices]
+        self.azimuth = [azimuth[i] for i in indices]
+        self.airmass = [airmass[i] for i in indices]
+        self.seeing = [seeing[i] for i in indices]
+        min_seeing, max_seeing = np.min(self.seeing), np.max(self.seeing)
+        min_airmass, max_airmass = np.min(self.airmass), np.max(self.airmass)
+        if verbose:
+            print("Selecting %i randomized obs from field %i, "
+                  "with seeing range %3.3f to %3.3f "
+                  "and airmass range %3.3f to %3.3f"
+                  % (n_obs, self.field_Id, min_seeing, max_seeing, min_airmass, max_airmass))
+
+    def update_year(self, year, randomize_conditions=False):
         """Change the year and load new observing conditions for the same target field.
 
         Parameters
@@ -257,10 +310,13 @@ class OpSim_wrapper:
             The new year to load scheduled observations for.
         """
         self.year = year
-        self.set_conditions_for_field()
+        self.set_conditions_for_field(verbose=False)
+        if randomize_conditions:
+            self.set_randomized_conditions_for_field(len(self.seeing))
 
     def initialize_simulation(self, n_star=10000, n_quasar=1000,
-                              attenuation=20., wavelength_step=10.):
+                              attenuation=20., wavelength_step=10., seed=None,
+                              dimension=1024, pixel_scale=0.25, dither=(0., 0.), simulation_size=1.):
         """Set up the simulation using the stored observing conditions.
 
         Parameters
@@ -273,18 +329,44 @@ class OpSim_wrapper:
             Attenuation factor that was used in the simulations
         wavelength_step : `float`, optional
             Wavelength resolution of the spectra and calculation of filter and DCR effects. In nm.
+        seed : None, optional
+            Description
+        dimension : int, optional
+            Description
+        pixel_scale : float, optional
+            Description
+        dither : tuple, optional
+            Description
+
+        Returns
+        -------
+        TYPE
+            Description
+
+        Raises
+        ------
+        RuntimeError
+            Description
         """
         if self.field_Id is None:
             raise RuntimeError("The target field must be chosen with `set_field()` first.")
-        sim = simulation_wrapper(seed=self.field_Id, n_star=n_star, n_quasar=n_quasar,
+        if seed is None:
+            self.seed = self.field_Id
+        else:
+            self.seed = seed
+        ra_offset = dither[0]*dimension*pixel_scale*arcseconds/np.cos(lsst_lat.asRadians())
+        dec_offset = dither[1]*dimension*pixel_scale*arcseconds
+        sim = simulation_wrapper(seed=self.seed, n_star=n_star, n_quasar=n_quasar,
                                  output_directory=self.sim_directory,
                                  attenuation=attenuation, wavelength_step=wavelength_step,
+                                 dimension=dimension, pixel_scale=pixel_scale,
+                                 ra_offset=ra_offset, dec_offset=dec_offset, simulation_size=simulation_size,
                                  write_catalog=False, write_fits=False, do_simulate=True)
         return sim
 
     def run_simulation(self, sim, use_seeing=False, write_catalog=False,
                        instrument_noise=0., photon_noise=1./15, sky_noise=0.,
-                       initialize_directory=True):
+                       initialize_directory=True, mosaic=False, randomize_conditions=False):
         """Generate realizations of the chosen field using the stored set of observing conditions.
 
         Parameters
@@ -309,7 +391,16 @@ class OpSim_wrapper:
                                "`set_conditions_for_field()` first.")
         band_dict = {'u': 0, 'g': 1, 'r': 2, 'i': 3, 'z': 4, 'y': 5}
         psf_name = "var" if use_seeing else "const"
-        output_directory = self.sim_directory + "field_%i_%sPSF/" % (self.field_Id, psf_name)
+        if mosaic:
+            output_directory = self.sim_directory + "mosaic_%i_%sPSF" % (self.seed, psf_name)
+            expId = 100*self.field_Id + 1000000*self.year
+        else:
+            output_directory = self.sim_directory + "field_%i_%sPSF" % (self.field_Id, psf_name)
+            expId = 100*band_dict[self.filter] + 1000*self.year
+        if randomize_conditions:
+            output_directory += "_rand/"
+        else:
+            output_directory += "/"
         image_directory = output_directory + "images/"
         ingest_directory = output_directory + "input_data/"
         if initialize_directory:
@@ -321,7 +412,6 @@ class OpSim_wrapper:
         if write_catalog:
             sim = simulation_wrapper(sim, output_directory=output_directory,
                                      write_catalog=True, write_fits=False, do_simulate=False)
-        expId = 100*band_dict[self.filter] + 1000*self.year
         psf_fwhm = sim.psf.calculateFWHM()
         gsp = galsim.GSParams(folding_threshold=1.0 /sim.coord.xsize(), maximum_fft_size=12288)
         for az, alt, seeing in zip(self.azimuth, self.altitude, self.seeing):
@@ -334,6 +424,6 @@ class OpSim_wrapper:
                                     instrument_noise=instrument_noise, sky_noise=sky_noise,
                                     photon_noise=photon_noise, exposureId=expId, obsid=expId,
                                     psf=psf)
-            filename = "lsst_e_%3.3i_f%i_R22_S11_E000.fits" % (expId, band_dict[self.filter])
+            filename = "lsst_e_%i_f%i_R22_S11_E000.fits" % (expId, band_dict[self.filter])
             exposure.writeFits(image_directory + filename)
             expId += 1
