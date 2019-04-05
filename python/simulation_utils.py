@@ -160,9 +160,10 @@ def simulation_wrapper(sim=None, seed=7, band_name='g', dimension=1024, pixel_sc
             # Generate a new raw simulation and add to the previous one of stars
             if do_simulate:
                 sim.simulate(useQuasars=True)
+            sim.seed = seed
     if write_catalog:
         sim.make_reference_catalog(output_directory=output_directory + "input_data/",
-                                   filter_list=[band_name,], magnitude_limit=16.0)
+                                   filter_list=[band_name, ], magnitude_limit=16.0)
     if write_fits:
         expId = exposureId + 100*band_dict[band_name]
         for elevation in np.arange(elevation_min, elevation_max, elevation_step):
@@ -182,7 +183,8 @@ class OpSim_wrapper:
     to generate sets of simulated data
     """
 
-    def __init__(self, opsim_db=None, year=1, filt='g', sim_directory=None, airmass_threshold=None):
+    def __init__(self, opsim_db=None, year=1, filt='g', sim_directory=None, airmass_threshold=None,
+                 conditions_db=None, field_radius=1.5):
         if opsim_db is None:
             opsim_db = '/Users/sullivan/LSST/OpSim/baseline2018a.db'
         if sim_directory is None:
@@ -190,26 +192,50 @@ class OpSim_wrapper:
         else:
             self.sim_directory = sim_directory
         sql_connection = sqlite3.connect(opsim_db)
-        self.opsim = sql_connection.cursor()
+        opsim = sql_connection.cursor()
+        if conditions_db is not None:
+            sql_connection = sqlite3.connect(conditions_db)
+            self.opsim = sql_connection.cursor()
+            self.conditions_flag = True
+            self.field_radius = field_radius
+        else:
+            self.conditions_flag = False
+            self.field_radius = None
         self.filter = filt
         self.year = year
         night0 = 365*(year - 1)
         night1 = 365*year
-        query = "select fieldId from SummaryAllProps where night > %i and night < %i and filter = '%s';"\
+        query = "select fieldId, fieldRA, fieldDec from SummaryAllProps where "\
+                "night > %i and night < %i and filter = '%s';"\
                 % (night0, night1, filt)
-        result = self.opsim.execute(query)
+        result = opsim.execute(query)
         field_list0 = result.fetchall()
-        self.field_list = [res[0] for res in field_list0]
+        self.field_list = np.array([res[0] for res in field_list0])
+        self.field_Ids = list(set(self.field_list))
         if airmass_threshold is not None:
             # Optionally only include fields with at least one observation
             # at an airmass above the given threshold
-            query = "select fieldId from SummaryAllProps where night > %i and night < %i "\
-                    "and filter = '%s' and airmass > %f;" % (night0, night1, filt, airmass_threshold)
-            result = self.opsim.execute(query)
+            # NOTE: The database is queried twice. The first time gathers all
+            # observations of each field, while this second time only gathers
+            # those observations above the airmass_threshold.
+            # It is done this way so that all observations of a field are
+            # returned, as long as at least one is above the threshold.
+            query = "select fieldId, fieldRA, fieldDec from SummaryAllProps where "\
+                    "night > %i and night < %i and filter = '%s' and airmass > %f;"\
+                    % (night0, night1, filt, airmass_threshold)
+            result = opsim.execute(query)
             field_list0 = result.fetchall()
-            self.field_Ids = list(set([res[0] for res in field_list0]))
-        else:
-            self.field_Ids = list(set(self.field_list))
+            field_list = np.array([res[0] for res in field_list0])
+            self.field_Ids = list(set(field_list))
+        self.ra_list = np.array([res[1] for res in field_list0])
+        self.dec_list = np.array([res[2] for res in field_list0])
+        self.field_ra = {}
+        self.field_dec = {}
+        for field in self.field_Ids:
+            ra = self.ra_list[field_list == field]
+            dec = self.dec_list[field_list == field]
+            self.field_ra[field] = ra[0]
+            self.field_dec[field] = dec[0]
         self.field_Id = None
         self.altitude = None
         self.azimuth = None
@@ -246,20 +272,41 @@ class OpSim_wrapper:
         self.field_Id = self.field_Ids[obs_use[index_use]]
         self.set_conditions_for_field()
 
-    def set_conditions_for_field(self, verbose=True):
+    def build_conditions_query(self):
+        night0 = 365*(self.year - 1)
+        night1 = 365*self.year
+        if self.conditions_flag:
+            ra = self.field_ra[self.field_Id]
+            dec = self.field_dec[self.field_Id]
+            ra_delta = self.field_radius/np.cos(dec*np.pi/180.)
+            dec_delta = self.field_radius
+            if (ra + ra_delta) > 360:
+                ra_string = "fieldRA > %f or fieldRA < %f" % (ra - ra_delta, ra + ra_delta - 360.)
+            elif (ra - ra_delta) < 0:
+                ra_string = "fieldRA > %f or fieldRA < %f" % (360. + ra - ra_delta, ra + ra_delta)
+            else:
+                ra_string = "fieldRA > %f and fieldRA < %f" % (ra - ra_delta, ra + ra_delta)
+            dec_string = "fieldDec > %f and fieldDec < %f" % (dec - dec_delta, dec + dec_delta)
+            field_string = "%s and %s" % (ra_string, dec_string)
+        else:
+            field_string = "fieldId = %i" % self.field_Id
+        query = "select altitude,azimuth,airmass,seeingFwhmGeom from SummaryAllProps "\
+                + "where night > %i and night < %i and filter = '%s' and %s;"\
+                % (night0, night1, self.filter, field_string)
+        return query
+
+    def set_conditions_for_field(self, verbose=True, use_coordinates=False):
         """Query the database and store the observing conditions for the chosen field.
         """
         if self.field_Id is None:
             raise RuntimeError("The target field must be chosen with `set_field()` first.")
-        night0 = 365*(self.year - 1)
-        night1 = 365*self.year
-        query = "select altitude,azimuth,airmass,seeingFwhmGeom from SummaryAllProps "\
-                + "where night > %i and night < %i and filter = '%s' and fieldId = %i;"\
-                % (night0, night1, self.filter, self.field_Id)
+        query = self.build_conditions_query()
         obs_conditions_cmd = self.opsim.execute(query)
         obs_conditions_list = obs_conditions_cmd.fetchall()
         self.altitude = [obs[0] for obs in obs_conditions_list]
-        self.azimuth = [obs[1] for obs in obs_conditions_list]
+        azimuth = [obs[1] for obs in obs_conditions_list]
+        azimuth = [np.floor(az/180)*180 for az in azimuth]
+        self.azimuth = azimuth
         self.airmass = [obs[2] for obs in obs_conditions_list]
         self.seeing = [obs[3] for obs in obs_conditions_list]
         min_seeing, max_seeing = np.min(self.seeing), np.max(self.seeing)
@@ -271,7 +318,7 @@ class OpSim_wrapper:
                   "and airmass range %3.3f to %3.3f"
                   % (n_obs, self.field_Id, min_seeing, max_seeing, min_airmass, max_airmass))
 
-    def set_randomized_conditions_for_field(self, n_obs, verbose=True):
+    def set_randomized_conditions_for_field(self, n_obs, verbose=True, force_seeing_range=None):
         """Query the database and store the observing conditions for the chosen field.
         """
         if self.field_Id is None:
@@ -285,6 +332,7 @@ class OpSim_wrapper:
         obs_conditions_list = obs_conditions_cmd.fetchall()
         altitude = [obs[0] for obs in obs_conditions_list]
         azimuth = [obs[1] for obs in obs_conditions_list]
+        azimuth = [np.floor(az/180)*180 for az in azimuth]
         airmass = [obs[2] for obs in obs_conditions_list]
         seeing = [obs[3] for obs in obs_conditions_list]
         rng = np.random.RandomState(self.field_Id + self.year)
@@ -294,6 +342,10 @@ class OpSim_wrapper:
         self.airmass = [airmass[i] for i in indices]
         self.seeing = [seeing[i] for i in indices]
         min_seeing, max_seeing = np.min(self.seeing), np.max(self.seeing)
+        if force_seeing_range is not None:
+            scale = (force_seeing_range - 1)/((max_seeing - min_seeing)/min_seeing)
+            self.seeing = [(seeing0 - min_seeing)*scale + min_seeing for seeing0 in self.seeing]
+            min_seeing, max_seeing = np.min(self.seeing), np.max(self.seeing)
         min_airmass, max_airmass = np.min(self.airmass), np.max(self.airmass)
         if verbose:
             print("Selecting %i randomized obs from field %i, "
@@ -301,7 +353,7 @@ class OpSim_wrapper:
                   "and airmass range %3.3f to %3.3f"
                   % (n_obs, self.field_Id, min_seeing, max_seeing, min_airmass, max_airmass))
 
-    def update_year(self, year, randomize_conditions=False):
+    def update_year(self, year, randomize_conditions=False, set_n_obs=0, force_seeing_range=None):
         """Change the year and load new observing conditions for the same target field.
 
         Parameters
@@ -312,7 +364,11 @@ class OpSim_wrapper:
         self.year = year
         self.set_conditions_for_field(verbose=False)
         if randomize_conditions:
-            self.set_randomized_conditions_for_field(len(self.seeing))
+            if set_n_obs > 0:
+                n_obs = set_n_obs
+            else:
+                n_obs = len(self.seeing)
+            self.set_randomized_conditions_for_field(n_obs, force_seeing_range=force_seeing_range)
 
     def initialize_simulation(self, n_star=10000, n_quasar=1000,
                               attenuation=20., wavelength_step=10., seed=None,

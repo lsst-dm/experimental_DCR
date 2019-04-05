@@ -1,10 +1,12 @@
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
+from astropy.table import Table
 
 import lsst.afw.display as afwDisplay
 import lsst.afw.geom as afwGeom
-from lsst.ip.diffim.dcrModel import wavelengthGenerator
+import lsst.daf.persistence as daf_persistence
+from lsst.ip.diffim.dcrModel import wavelengthGenerator, calculateDcr
 
 
 class DummyFilter:
@@ -238,7 +240,8 @@ def extract_redshift(sim, ind_map=None):
 
 def plot_spectrum(sim, filterInfo, meas_cats, src_ind, cat_matches=None,
                   rescale=False, use_throughput=False, star_T=None,
-                  oplot=False, color='r', markersize=15, verbose=True, window=1):
+                  oplot=False, color='r', markersize=15, verbose=True, window=1,
+                  fudge=1.):
     numDcrSubfilters = len(meas_cats)
     numDcrSubfiltersSim = sim.n_step
     meas_wl = [np.mean(wl) for wl in wavelengthGenerator(filterInfo, numDcrSubfilters)]
@@ -265,6 +268,9 @@ def plot_spectrum(sim, filterInfo, meas_cats, src_ind, cat_matches=None,
         rescale = False
 
     meas_flux = np.array([cat.getPsfInstFlux()[i0] for cat in meas_cats])
+    if fudge != 1:
+        mean_flux = np.mean(meas_flux)
+        meas_flux = np.array([(flux - mean_flux)*fudge + mean_flux for flux in meas_flux])
     meas_x = meas_cats[0][i0].getX()
     meas_y = meas_cats[0][i0].getY()
     meas_ra = meas_cats[0][i0].getCoord().getLongitude().asDegrees()
@@ -315,7 +321,8 @@ def plot_spectrum(sim, filterInfo, meas_cats, src_ind, cat_matches=None,
 
 def plot_quasar_spectrum(sim, filterInfo, meas_cats, src_ind, cat_matches=None,
                          rescale=False, use_throughput=False, quasar_Z=None,
-                         oplot=False, color='r', markersize=15, verbose=True, window=1):
+                         oplot=False, color='r', markersize=15, verbose=True, window=1,
+                         fudge=1.):
     numDcrSubfilters = len(meas_cats)
     numDcrSubfiltersSim = sim.n_step
     meas_wl = [np.mean(wl) for wl in wavelengthGenerator(filterInfo, numDcrSubfilters)]
@@ -342,6 +349,9 @@ def plot_quasar_spectrum(sim, filterInfo, meas_cats, src_ind, cat_matches=None,
         rescale = False
 
     meas_flux = np.array([cat.getPsfInstFlux()[i0] for cat in meas_cats])
+    if fudge != 1:
+        mean_flux = np.mean(meas_flux)
+        meas_flux = np.array([(flux - mean_flux)*fudge + mean_flux for flux in meas_flux])
     meas_x = meas_cats[0][i0].getX()
     meas_y = meas_cats[0][i0].getY()
     meas_ra = meas_cats[0][i0].getCoord().getLongitude().asDegrees()
@@ -376,7 +386,7 @@ def plot_quasar_spectrum(sim, filterInfo, meas_cats, src_ind, cat_matches=None,
 
 
 def plot_color(sim, filterInfo, meas_cats, matches, use_throughput=True, window=1,
-               flux_min=None, flux_max=None):
+               flux_min=None, flux_max=None, fudge=1.):
     meas_color = []
     sim_color = []
     numDcrSubfilters = len(meas_cats)
@@ -394,6 +404,9 @@ def plot_color(sim, filterInfo, meas_cats, matches, use_throughput=True, window=
         sim_fit_params = np.polyfit(meas_wl, sim_flux*ratio_meas_sim, 1)
         sim_fit = [sim_fit_params[0]*wl + sim_fit_params[1] for wl in meas_wl]
         meas_flux = np.array([cat.getPsfInstFlux()[i0] for cat in meas_cats])
+        if fudge != 1:
+            mean_flux = np.mean(meas_flux)
+            meas_flux = np.array([(flux - mean_flux)*fudge + mean_flux for flux in meas_flux])
         if use_throughput:
             meas_flux /= throughput_correction
         if flux_min is not None:
@@ -419,7 +432,7 @@ def plot_color(sim, filterInfo, meas_cats, matches, use_throughput=True, window=
 
 
 def plot_quasar_color(sim, filterInfo, meas_cats, matches, use_throughput=True, window=1,
-                      flux_min=None, flux_max=None):
+                      flux_min=None, flux_max=None, fudge=1.):
     meas_color = []
     sim_color = []
     numDcrSubfilters = len(meas_cats)
@@ -437,6 +450,9 @@ def plot_quasar_color(sim, filterInfo, meas_cats, matches, use_throughput=True, 
         sim_fit_params = np.polyfit(meas_wl, sim_flux*ratio_meas_sim, 1)
         sim_fit = [sim_fit_params[0]*wl + sim_fit_params[1] for wl in meas_wl]
         meas_flux = np.array([cat.getPsfInstFlux()[i0] for cat in meas_cats])
+        if fudge != 1:
+            mean_flux = np.mean(meas_flux)
+            meas_flux = np.array([(flux - mean_flux)*fudge + mean_flux for flux in meas_flux])
         if use_throughput:
             meas_flux /= throughput_correction
         if flux_min is not None:
@@ -460,3 +476,162 @@ def plot_quasar_color(sim, filterInfo, meas_cats, matches, use_throughput=True, 
     plt.ylabel('Measured g(b)-g(r) color')
     plt.xlabel('True g(b)-g(r) color')
 
+
+def load_diffim(simulation_dir, deep_rerun, dcr_rerun,
+                visits_template, visits_alerts,
+                filter_name='g', coaddName='deep'):
+    if coaddName == 'dcr':
+        butler = daf_persistence.Butler(simulation_dir + dcr_rerun)
+    else:
+        butler = daf_persistence.Butler(simulation_dir + deep_rerun)
+    airmasses = []
+    par_angs = []
+    fields = []
+    years = []
+    visit_list = []
+    dcr_list = []
+    filterInfo = None
+    wcs = None
+    for visits in visits_template:
+        for visit in range(visits[0], visits[1] + 1):
+            dataId = {'visit': visit, 'filter': filter_name}
+            try:
+                visitInfo = butler.get("calexp_visitInfo", dataId=dataId)
+                if filterInfo is None:
+                    filterInfo = butler.get("calexp_filter", dataId=dataId)
+                if wcs is None:
+                    wcs = butler.get("calexp_wcs", dataId=dataId)
+            except:
+                print("Skipping %i, no data." % visit)
+#             psf = butler.get("calexp_psf", dataId=dataId)
+#             psf_fwhm = psf.getFWHM()
+            visit_list.append(visit)
+            year = 2 if visit > 2000000 else 1
+            years.append(year)
+            field = "%.4i" % (visit//100 - year*10000)
+            fields.append(field)
+            airmass = visitInfo.getBoresightAirmass()
+            airmasses.append(airmass)
+            par_ang = visitInfo.getBoresightParAngle()
+            par_angs.append(par_ang.asDegrees())
+            dcr_list.append(calculateDcr(visitInfo, wcs, filterInfo, 5)[0])
+#             psf_list.append(psf_fwhm)
+    template_properties = Table([fields, years, visit_list, airmasses, par_angs, dcr_list],
+                                names=('fieldId', 'year', 'visit', 'airmass', 'parAng', 'dcr'))
+    airmasses = []
+    par_angs = []
+    n_dipoles = []
+    dia_fluxes = []
+    fields = []
+    years = []
+    visit_list = []
+    dcr_list = []
+    for visits in visits_alerts:
+        for visit in range(visits[0], visits[1] + 1):
+            dataId = {'visit': visit, 'filter': filter_name}
+            try:
+                dia_src = butler.get(coaddName + "Diff_diaSrc", dataId=dataId)
+                visitInfo = butler.get("calexp_visitInfo", dataId=dataId)
+            except:
+                print("Skipping %i, no data." % visit)
+                continue
+            visit_list.append(visit)
+            year = 2 if visit > 2000000 else 1
+            years.append(year)
+            field = "%.4i" % (visit//100 - year*10000)
+            fields.append(field)
+            n_dipole = np.sum(dia_src["ip_diffim_DipoleFit_flag_classification"])
+            n_dipoles.append(n_dipole)
+            dia_flux = np.nansum(np.abs(dia_src["slot_PsfFlux_instFlux"]))
+            dia_fluxes.append(dia_flux)
+            airmass = visitInfo.getBoresightAirmass()
+            airmasses.append(airmass)
+            par_ang = visitInfo.getBoresightParAngle()
+            par_angs.append(par_ang.asDegrees())
+            dcr_list.append(calculateDcr(visitInfo, wcs, filterInfo, 5)[0])
+    alerts_properties = Table([fields, years, visit_list, airmasses,
+                              par_angs, dcr_list, n_dipoles, dia_fluxes],
+                              names=('fieldId', 'year', 'visit', 'airmass',
+                                     'parAng', 'dcr', 'nDipole', 'diaFlux'))
+    return(template_properties, alerts_properties)
+
+
+def plot_diffim_quiver(deep_constPSF, dcr_constPSF, deep_varPSF, dcr_varPSF,
+                       const_template=None, var_template=None,
+                       quantity="nDipole", window=1, **kwargs):
+    field_list = list(set(deep_constPSF["fieldId"]))
+    afwDisplay.Display(window)
+    color_gen = get_xkcd_color()
+    names = []
+    for field in field_list:
+        if const_template is None:
+            const_metric = dcr_metric(dcr_constPSF, field, binsize=0.05)
+        else:
+            const_metric = dcr_metric(const_template, field, binsize=0.05)
+        if var_template is None:
+            var_metric = dcr_metric(dcr_varPSF, field, binsize=0.05)
+        else:
+            var_metric = dcr_metric(var_template, field, binsize=0.05)
+        names.append("Field %s with metrics const:%4.2f var:%4.2f" % (field, const_metric, var_metric))
+        q1a = deep_constPSF[quantity][deep_constPSF["fieldId"] == field]
+        q2a = dcr_constPSF[quantity][dcr_constPSF["fieldId"] == field]
+        q1b = deep_varPSF[quantity][deep_varPSF["fieldId"] == field]
+        q2b = dcr_varPSF[quantity][dcr_varPSF["fieldId"] == field]
+        x = q1a
+        y = q1b
+        dx = q2a - q1a
+        dy = q2b - q1b
+        c = 'xkcd:' + next(color_gen)
+        plt.quiver(x, y, dx, dy, color=c, angles='xy', scale_units='xy', scale=1., **kwargs)
+    plt.xlabel('False detections using constant PSF (deep -> dcr)')
+    plt.ylabel('False detections using variable PSF with good seeing cut')
+    plt.legend(names)
+
+
+def get_xkcd_color(index=None):
+    colors = ["purple", "green", "blue", "pink", "brown", "red", "light blue",
+              "teal", "orange", "light green", "magenta", "yellow", "sky blue",
+              "grey", "lime green", "light purple", "violet", "dark green",
+              "turquoise", "lavender", "dark blue", "tan", "cyan", "aqua",
+              "forest green", "mauve", "dark purple", "bright green", "maroon",
+              "olive", "salmon", "beige", "royal blue", "navy blue", "lilac",
+              "black"]
+    if index is not None:
+        colors = [colors[index], ]
+    for c in colors:
+        yield c
+
+
+def get_dcr(field_table, fieldId):
+    fields = set(field_table["fieldId"])
+    if fieldId not in fields:
+        print('ValueError("fieldId not found in table")')
+    rows = field_table["fieldId"] == fieldId
+    dcr = field_table["dcr"].data[rows]
+    return dcr
+
+
+def dcr_metric(field_table, fieldId, binsize=0.1):
+    dcr = get_dcr(field_table, fieldId)
+    x_arr = dcr[:, 0]/binsize
+    y_arr = dcr[:, 1]/binsize
+    x_arr -= np.min(x_arr)
+    y_arr -= np.min(y_arr)
+    xsize = int(np.ceil(np.max(x_arr)) + 1)
+    ysize = int(np.ceil(np.max(y_arr)) + 1)
+    metric_arr = np.zeros((ysize, xsize), dtype=float)
+    n_arr = np.zeros((ysize, xsize), dtype=float)
+    for x, y in zip(x_arr, y_arr):
+        x0 = int(np.floor(x))
+        y0 = int(np.floor(y))
+        dx = x - x0
+        dy = y - y0
+        metric_arr[y0, x0] += (1 - dx)*(1 - dy)
+        metric_arr[y0 + 1, x0] += (1 - dx)*(dy)
+        metric_arr[y0, x0 + 1] += (dx)*(1 - dy)
+        metric_arr[y0 + 1, x0 + 1] += (dx)*(dy)
+        n_arr[y0: y0 + 2, x0: x0 + 2] += 1
+    pix_use = n_arr > 0
+    metric_arr[pix_use] /= np.sqrt(n_arr[pix_use])
+    metric = np.sum(metric_arr)
+    return metric
