@@ -160,6 +160,7 @@ def simulation_wrapper(sim=None, seed=7, band_name='g', dimension=1024, pixel_sc
             # Generate a new raw simulation and add to the previous one of stars
             if do_simulate:
                 sim.simulate(useQuasars=True)
+            sim.seed = seed
     if write_catalog:
         sim.make_reference_catalog(output_directory=output_directory + "input_data/",
                                    filter_list=[band_name, ], magnitude_limit=16.0)
@@ -303,7 +304,9 @@ class OpSim_wrapper:
         obs_conditions_cmd = self.opsim.execute(query)
         obs_conditions_list = obs_conditions_cmd.fetchall()
         self.altitude = [obs[0] for obs in obs_conditions_list]
-        self.azimuth = [obs[1] for obs in obs_conditions_list]
+        azimuth = [obs[1] for obs in obs_conditions_list]
+        azimuth = [np.floor(az/180)*180 for az in azimuth]
+        self.azimuth = azimuth
         self.airmass = [obs[2] for obs in obs_conditions_list]
         self.seeing = [obs[3] for obs in obs_conditions_list]
         min_seeing, max_seeing = np.min(self.seeing), np.max(self.seeing)
@@ -315,7 +318,7 @@ class OpSim_wrapper:
                   "and airmass range %3.3f to %3.3f"
                   % (n_obs, self.field_Id, min_seeing, max_seeing, min_airmass, max_airmass))
 
-    def set_randomized_conditions_for_field(self, n_obs, verbose=True):
+    def set_randomized_conditions_for_field(self, n_obs, verbose=True, force_seeing_range=None):
         """Query the database and store the observing conditions for the chosen field.
         """
         if self.field_Id is None:
@@ -329,6 +332,7 @@ class OpSim_wrapper:
         obs_conditions_list = obs_conditions_cmd.fetchall()
         altitude = [obs[0] for obs in obs_conditions_list]
         azimuth = [obs[1] for obs in obs_conditions_list]
+        azimuth = [np.floor(az/180)*180 for az in azimuth]
         airmass = [obs[2] for obs in obs_conditions_list]
         seeing = [obs[3] for obs in obs_conditions_list]
         rng = np.random.RandomState(self.field_Id + self.year)
@@ -338,6 +342,10 @@ class OpSim_wrapper:
         self.airmass = [airmass[i] for i in indices]
         self.seeing = [seeing[i] for i in indices]
         min_seeing, max_seeing = np.min(self.seeing), np.max(self.seeing)
+        if force_seeing_range is not None:
+            scale = (force_seeing_range - 1)/((max_seeing - min_seeing)/min_seeing)
+            self.seeing = [(seeing0 - min_seeing)*scale + min_seeing for seeing0 in self.seeing]
+            min_seeing, max_seeing = np.min(self.seeing), np.max(self.seeing)
         min_airmass, max_airmass = np.min(self.airmass), np.max(self.airmass)
         if verbose:
             print("Selecting %i randomized obs from field %i, "
@@ -345,7 +353,7 @@ class OpSim_wrapper:
                   "and airmass range %3.3f to %3.3f"
                   % (n_obs, self.field_Id, min_seeing, max_seeing, min_airmass, max_airmass))
 
-    def update_year(self, year, randomize_conditions=False):
+    def update_year(self, year, randomize_conditions=False, set_n_obs=0, force_seeing_range=None):
         """Change the year and load new observing conditions for the same target field.
 
         Parameters
@@ -356,7 +364,11 @@ class OpSim_wrapper:
         self.year = year
         self.set_conditions_for_field(verbose=False)
         if randomize_conditions:
-            self.set_randomized_conditions_for_field(len(self.seeing))
+            if set_n_obs > 0:
+                n_obs = set_n_obs
+            else:
+                n_obs = len(self.seeing)
+            self.set_randomized_conditions_for_field(n_obs, force_seeing_range=force_seeing_range)
 
     def initialize_simulation(self, n_star=10000, n_quasar=1000,
                               attenuation=20., wavelength_step=10., seed=None,
