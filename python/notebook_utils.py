@@ -479,7 +479,8 @@ def plot_quasar_color(sim, filterInfo, meas_cats, matches, use_throughput=True, 
 
 def load_diffim(simulation_dir, deep_rerun, dcr_rerun,
                 visits_template, visits_alerts,
-                filter_name='g', coaddName='deep'):
+                filter_name='g', coaddName='deep',
+                mask=None, significance_image=None):
     if coaddName == 'dcr':
         butler = daf_persistence.Butler(simulation_dir + dcr_rerun)
     else:
@@ -503,8 +504,6 @@ def load_diffim(simulation_dir, deep_rerun, dcr_rerun,
                     wcs = butler.get("calexp_wcs", dataId=dataId)
             except:
                 print("Skipping %i, no data." % visit)
-#             psf = butler.get("calexp_psf", dataId=dataId)
-#             psf_fwhm = psf.getFWHM()
             visit_list.append(visit)
             year = 2 if visit > 2000000 else 1
             years.append(year)
@@ -515,77 +514,141 @@ def load_diffim(simulation_dir, deep_rerun, dcr_rerun,
             par_ang = visitInfo.getBoresightParAngle()
             par_angs.append(par_ang.asDegrees())
             dcr_list.append(calculateDcr(visitInfo, wcs, filterInfo, 5)[0])
-#             psf_list.append(psf_fwhm)
     template_properties = Table([fields, years, visit_list, airmasses, par_angs, dcr_list],
                                 names=('fieldId', 'year', 'visit', 'airmass', 'parAng', 'dcr'))
     airmasses = []
     par_angs = []
     n_dipoles = []
-    dia_fluxes = []
+    n_sources = []
+    residuals = []
+    residuals_det = []
     fields = []
     years = []
     visit_list = []
     dcr_list = []
+    psf_list = []
+    n_false_list = []
     for visits in visits_alerts:
         for visit in range(visits[0], visits[1] + 1):
             dataId = {'visit': visit, 'filter': filter_name}
             try:
                 dia_src = butler.get(coaddName + "Diff_diaSrc", dataId=dataId)
-                visitInfo = butler.get("calexp_visitInfo", dataId=dataId)
+                calexp = butler.get("calexp", dataId=dataId)
+                if mask is None:
+                    print("Loading new significance image")
+                    significance_image = butler.get("calexp", dataId=dataId)
+                    mask = significance_image.mask
+                    significance_image = significance_image.image.array
+                    significance_image[~np.isfinite(significance_image)] = 0.
+                    significance_image = np.abs(significance_image)
+                    significance_image[significance_image > 100] = 100.
+                diffim = butler.get(coaddName + "Diff_differenceExp", dataId=dataId).image.array
             except:
                 print("Skipping %i, no data." % visit)
                 continue
+            visitInfo = calexp.getInfo().getVisitInfo()
+            psf = calexp.getPsf()
+            psf_sigma = psf.computeShape().getDeterminantRadius()
+            n_false = estimate_noise_false_positives(mask, psf_sigma, noise_sigma=5.)
+            n_false_list.append(n_false)
+            convergeMask = mask.getPlaneBitMask("DETECTED")
             visit_list.append(visit)
-            year = 2 if visit > 2000000 else 1
+            psf_list.append(psf_sigma)
+            year = 2 if visit >= 2000000 else 1
             years.append(year)
             field = "%.4i" % (visit//100 - year*10000)
             fields.append(field)
             n_dipole = np.sum(dia_src["ip_diffim_DipoleFit_flag_classification"])
             n_dipoles.append(n_dipole)
-            dia_flux = np.nansum(np.abs(dia_src["slot_PsfFlux_instFlux"]))
-            dia_fluxes.append(dia_flux)
+            n_src = len(dia_src)
+            n_sources.append(n_src)
+            finitePixels = np.isfinite(diffim)
+            # These are simulations, so it's safe to assume good pixels in detected regions
+            # will have only the DETECTED bit set
+            convergeMaskPixels = (mask.array & convergeMask) > 0
+            usePixels = finitePixels & convergeMaskPixels
+            diffim_wt = diffim*significance_image
+
+            residual = np.sum(np.abs(diffim_wt[finitePixels]))/np.sum(significance_image[finitePixels])
+            residuals.append(residual)
+            residual_det = np.median(np.abs(diffim_wt[usePixels]))/np.median(significance_image[usePixels])
+            residuals_det.append(residual_det)
+
             airmass = visitInfo.getBoresightAirmass()
             airmasses.append(airmass)
             par_ang = visitInfo.getBoresightParAngle()
             par_angs.append(par_ang.asDegrees())
             dcr_list.append(calculateDcr(visitInfo, wcs, filterInfo, 5)[0])
     alerts_properties = Table([fields, years, visit_list, airmasses,
-                              par_angs, dcr_list, n_dipoles, dia_fluxes],
+                              par_angs, dcr_list, n_dipoles, n_sources,
+                              residuals, residuals_det,
+                              psf_list, n_false_list],
                               names=('fieldId', 'year', 'visit', 'airmass',
-                                     'parAng', 'dcr', 'nDipole', 'diaFlux'))
+                                     'parAng', 'dcr', 'nDipole', 'nSrc',
+                                     'avgResidual', 'avgSrcResidual',
+                                     'psfSigma', 'nFalseNoise'))
     return(template_properties, alerts_properties)
 
 
-def plot_diffim_quiver(deep_constPSF, dcr_constPSF, deep_varPSF, dcr_varPSF,
-                       const_template=None, var_template=None,
-                       quantity="nDipole", window=1, **kwargs):
-    field_list = list(set(deep_constPSF["fieldId"]))
+def estimate_noise_false_positives(mask, psf_sigma, noise_sigma=5.):
+    goodPix = mask.array > 0  # Include any pixel with data, even if otherwise rejected
+    density = 1./(2**2.5 * np.pi**1.5)*noise_sigma*np.exp(-noise_sigma**2./2)
+    n = density/psf_sigma**2.*np.sum(goodPix)
+    return n
+
+
+def plot_diffim_quiver(deep_table, dcr_table, template=None,
+                       quantity="nDipole", window=1, psf_name='constant',
+                       legend_location=4, metric_max=12., seeing_dict=None, **kwargs):
+    field_list = list(set(deep_table["fieldId"]))
     afwDisplay.Display(window)
-    color_gen = get_xkcd_color()
     names = []
+    plt.figure(window)
     for field in field_list:
-        if const_template is None:
-            const_metric = dcr_metric(dcr_constPSF, field, binsize=0.05)
+        names.append("Field %s" % field)
+        q1 = deep_table[quantity][deep_table["fieldId"] == field]
+        q2 = dcr_table[quantity][dcr_table["fieldId"] == field]
+        airmass = np.array(deep_table["airmass"][deep_table["fieldId"] == field])
+        if seeing_dict is not None:
+            visits = deep_table["visit"][deep_table["fieldId"] == field]
+            seeing = [seeing_dict[visit] for visit in visits]
         else:
-            const_metric = dcr_metric(const_template, field, binsize=0.05)
-        if var_template is None:
-            var_metric = dcr_metric(dcr_varPSF, field, binsize=0.05)
-        else:
-            var_metric = dcr_metric(var_template, field, binsize=0.05)
-        names.append("Field %s with metrics const:%4.2f var:%4.2f" % (field, const_metric, var_metric))
-        q1a = deep_constPSF[quantity][deep_constPSF["fieldId"] == field]
-        q2a = dcr_constPSF[quantity][dcr_constPSF["fieldId"] == field]
-        q1b = deep_varPSF[quantity][deep_varPSF["fieldId"] == field]
-        q2b = dcr_varPSF[quantity][dcr_varPSF["fieldId"] == field]
-        x = q1a
-        y = q1b
-        dx = q2a - q1a
-        dy = q2b - q1b
-        c = 'xkcd:' + next(color_gen)
-        plt.quiver(x, y, dx, dy, color=c, angles='xy', scale_units='xy', scale=1., **kwargs)
-    plt.xlabel('False detections using constant PSF (deep -> dcr)')
-    plt.ylabel('False detections using variable PSF with good seeing cut')
-    plt.legend(names)
+            seeing = np.zeros(len(airmass)) + .7
+        y = q1
+        x = airmass
+        dy = q2 - q1
+        dx = np.zeros(len(y))
+        plt.quiver(x, y, dx, dy, seeing, angles='xy', scale_units='xy', scale=1.,
+                   cmap=plt.get_cmap('viridis'), **kwargs)
+    plt.grid(True)
+    plt.ylim(bottom=0)
+    plt.ylabel('False detections using %s PSF (deep -> dcr)' % psf_name)
+    plt.xlabel('Airmass')
+    cbar = plt.colorbar()
+    cbar.ax.set_ylabel('Seeing (arcsec)')
+    plt.clim(0.4, 1.2)
+
+
+def plot_diffim_combined(deep_tables, dcr_tables, seeing_range, quantity="nDipole", window=1, **kwargs):
+    afwDisplay.Display(window)
+    plt.figure(window)
+    color_gen = get_xkcd_color()
+    for seeing_id in seeing_range.keys():
+        deep_table = deep_tables[seeing_id]
+        dcr_table = dcr_tables[seeing_id]
+        field_list = list(set(deep_table["fieldId"]))
+
+        x_arr = []
+        y_arr = []
+        for field in field_list:
+            # names.append("Field %s" % field)
+            q1 = deep_table[quantity][deep_table["fieldId"] == field]
+            q2 = dcr_table[quantity][dcr_table["fieldId"] == field]
+            airmass = np.array(deep_table["airmass"][deep_table["fieldId"] == field])
+            x_arr.append(airmass)
+            y_arr.append(q1 - q2)
+        color_cmd = 'xkcd:' + next(color_gen)
+        plt.plot(x_arr, y_arr, color_cmd)
 
 
 def get_xkcd_color(index=None):
