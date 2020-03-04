@@ -21,10 +21,6 @@
 # see <http://www.lsstcorp.org/LegalNotices/>.
 #
 
-from __future__ import print_function, division, absolute_import
-from builtins import next
-from builtins import range
-from builtins import object
 from collections import namedtuple
 
 import numpy as np
@@ -32,12 +28,12 @@ from scipy.ndimage.interpolation import shift as scipy_shift
 from scipy.ndimage.morphology import binary_dilation
 
 from lsst.afw.coord.refraction import differentialRefraction
-import lsst.afw.geom as afwGeom
-from lsst.afw.geom import Angle
+from lsst.geom import Angle
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 from lsst.daf.base import DateTime
 import lsst.daf.persistence as daf_persistence
+import lsst.geom as geom
 import lsst.meas.algorithms as measAlg
 import lsst.pex.policy as pexPolicy
 from lsst.pipe.tasks import coaddBase
@@ -685,7 +681,7 @@ class GenerateTemplate:
         skyMapConfig = DiscreteSkyMap.ConfigClass()
         skyMapConfig.update(pixelScale=self.pixel_scale.asArcseconds())
         skyMapConfig.update(patchInnerDimensions=[self.x_size, self.y_size])
-        cenCoord = self.wcs.pixelToSky(afwGeom.Point2D(self.x_size/2., self.y_size/2.))
+        cenCoord = self.wcs.pixelToSky(geom.Point2D(self.x_size/2., self.y_size/2.))
         radius = np.sqrt((self.x_size/2.)**2. + (self.y_size/2.)**2.)*self.pixel_scale.asRadians()
 
         skyMapConfig.raList.append(cenCoord.getLongitude().asRadians())
@@ -819,8 +815,8 @@ class GenerateTemplate:
                                            date=DateTime(mjd),
                                            ut1=mjd,
                                            era=era,
-                                           boresightRaDec=afwGeom.SpherePoint(ra, dec),
-                                           boresightAzAlt=afwGeom.SpherePoint(azimuth, elevation),
+                                           boresightRaDec=geom.SpherePoint(ra, dec),
+                                           boresightAzAlt=geom.SpherePoint(azimuth, elevation),
                                            boresightAirmass=airmass,
                                            boresightRotAngle=boresightRotAngle,
                                            observatory=self.observatory,
@@ -967,7 +963,7 @@ def _resize_image(image, variance, mask, bbox_old, bbox_new=None, bitmask=255, e
         y_full = bbox_old.getDimensions().getY()
         x_size = np.sum([((mask[:, i] & bitmask) == 0).any() for i in range(x_full)])
         y_size = np.sum([((mask[j, :] & bitmask) == 0).any() for j in range(y_full)])
-        bbox_new = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(x_size, y_size))
+        bbox_new = geom.Box2I(geom.Point2I(0, 0), geom.ExtentI(x_size, y_size))
     shape = (bbox_new.getDimensions().getY(), bbox_new.getDimensions().getX())
     image_return = np.zeros(shape, dtype=image.dtype)
     variance_return = np.zeros(shape, dtype=variance.dtype)
