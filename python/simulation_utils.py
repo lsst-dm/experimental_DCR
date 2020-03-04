@@ -7,7 +7,7 @@ import numpy as np
 import pickle
 from shutil import copy as copyfile
 
-from lsst.afw.geom import Angle, arcseconds
+from lsst.geom import Angle, arcseconds
 import galsim
 from lsst.sims.catUtils.matchSED.matchUtils import matchStar
 

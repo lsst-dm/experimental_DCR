@@ -20,16 +20,14 @@
 # see <http://www.lsstcorp.org/LegalNotices/>.
 #
 
-from __future__ import print_function, division, absolute_import
-from builtins import range
-from builtins import object
 import numpy as np
 
-import lsst.afw.geom as afwGeom
-from lsst.afw.geom import Angle, makeCdMatrix, makeSkyWcs
+from lsst.afw.geom import makeCdMatrix, makeSkyWcs
+from lsst.geom import Angle
 import lsst.afw.image as afwImage
 import lsst.afw.math as afwMath
 import lsst.meas.algorithms as measAlg
+import lsst.geom as geom
 from .generateTemplate import GenerateTemplate
 from .buildDcrCoadd import BuildDcrCoadd
 from .dcr_utils import parallactic_angle
@@ -107,7 +105,7 @@ class BasicGenerateTemplate(GenerateTemplate):
     """
 
     def __init__(self, size=None, n_step=3, filter_name='g', exposure_time=30.,
-                 pixel_scale=Angle(afwGeom.arcsecToRad(0.25)), wavelength_step=None):
+                 pixel_scale=Angle(geom.arcsecToRad(0.25)), wavelength_step=None):
         """Initialize the lightweight version of GenerateTemplate for testing.
 
         Parameters
@@ -148,7 +146,7 @@ class BasicGenerateTemplate(GenerateTemplate):
         self.exposure_time = exposure_time
         self.filter_name = filter_name
         self.observatory = lsst_observatory
-        self.bbox = afwGeom.Box2I(afwGeom.Point2I(0, 0), afwGeom.ExtentI(size, size))
+        self.bbox = geom.Box2I(geom.Point2I(0, 0), geom.ExtentI(size, size))
         self.wcs = self._create_wcs(bbox=self.bbox, pixel_scale=pixel_scale, ra=Angle(0.),
                                     dec=Angle(0.), sky_rotation=Angle(0.))
 
@@ -182,8 +180,8 @@ class BasicGenerateTemplate(GenerateTemplate):
         -------
         Returns a lsst.afw.image.wcs object.
         """
-        crval = afwGeom.SpherePoint(ra, dec)
-        crpix = afwGeom.Box2D(bbox).getCenter()
+        crval = geom.SpherePoint(ra, dec)
+        crpix = geom.Box2D(bbox).getCenter()
         cd_matrix = makeCdMatrix(scale=pixel_scale, orientation=sky_rotation, flipX=True)
         wcs = makeSkyWcs(crpix=crpix, crval=crval, cdMatrix=cd_matrix)
         return(wcs)
@@ -299,7 +297,7 @@ class DcrCoaddTestBase(object):
         """Define parameters used by every test."""
         filter_name = 'g'
         n_step = 3
-        pixel_scale = Angle(afwGeom.arcsecToRad(0.25))
+        pixel_scale = Angle(geom.arcsecToRad(0.25))
         size = 20
         self.latitude = lsst_observatory.getLatitude()
         # NOTE that this array is randomly generated

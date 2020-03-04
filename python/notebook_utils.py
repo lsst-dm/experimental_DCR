@@ -36,6 +36,7 @@ class FilterProperty:
 def look(img, range=None, x_range=None, y_range=None, outfile=None, window=1):
     """Simple function to wrap matplotlib and display an image with a colorbar."""
     afwDisplay.Display(window)
+    plt.figure(window)
     if range is None:
         range = [np.min(img), np.max(img)]
     img_use = img.copy()
@@ -590,6 +591,61 @@ def load_diffim(simulation_dir, deep_rerun, dcr_rerun,
     return(template_properties, alerts_properties)
 
 
+def load_coaddSources(simulation_dir, deep_rerun, dcr_rerun,
+                      visits_template, filter_name='g', coaddName='deep',
+                      tract=0, patch='0,0'):
+    if coaddName == 'dcr':
+        butler = daf_persistence.Butler(simulation_dir + dcr_rerun)
+    else:
+        butler = daf_persistence.Butler(simulation_dir + deep_rerun)
+    airmasses = []
+    par_angs = []
+    fields = []
+    years = []
+    visit_list = []
+    dcr_list = []
+    filterInfo = None
+    wcs = None
+    for visits in visits_template:
+        for visit in range(visits[0], visits[1] + 1):
+            dataId = {'visit': visit, 'filter': filter_name}
+            try:
+                visitInfo = butler.get("calexp_visitInfo", dataId=dataId)
+                if filterInfo is None:
+                    filterInfo = butler.get("calexp_filter", dataId=dataId)
+                if wcs is None:
+                    wcs = butler.get("calexp_wcs", dataId=dataId)
+            except:
+                print("Skipping %i, no data." % visit)
+            visit_list.append(visit)
+            year = 2 if visit > 2000000 else 1
+            years.append(year)
+            field = "%.4i" % (visit//100 - year*10000)
+            fields.append(field)
+            airmass = visitInfo.getBoresightAirmass()
+            airmasses.append(airmass)
+            par_ang = visitInfo.getBoresightParAngle()
+            par_angs.append(par_ang.asDegrees())
+            dcr_list.append(calculateDcr(visitInfo, wcs, filterInfo, 5)[0])
+    apertures = ["3_0", "4_5", "6_0", "9_0", "12_0", "17_0", "25_0"]
+    ap_flux_list = []
+    dataId = {'filter': filter_name, 'tract': tract, 'patch': patch}
+    meas_cat = butler.get("deepCoadd_meas", dataId=dataId)
+    for i, ap in enumerate(apertures):
+        ap_flux_list.append(meas_cat["base_CircularApertureFlux_%s_instFlux" % ap])
+    template_properties = Table([fields, years, visit_list, airmasses, par_angs, dcr_list],
+                                names=('fieldId', 'year', 'visit', 'airmass', 'parAng', 'dcr'))
+    template_sources = np.array(ap_flux_list)
+    srcId = meas_cat["id"]
+    x = meas_cat.getX()
+    y = meas_cat.getY()
+    flag = meas_cat[meas_cat.getShapeFlagKey()] | meas_cat[meas_cat.getCentroidFlagKey()]
+    psf_flux = meas_cat.getPsfInstFlux()
+    source_properties = Table([srcId, x, y, flag, psf_flux],
+                              names=('id', 'x', 'y', 'flag', 'psf_flux'))
+    return template_properties, template_sources, source_properties
+
+
 def estimate_noise_false_positives(mask, psf_sigma, noise_sigma=5.):
     goodPix = mask.array > 0  # Include any pixel with data, even if otherwise rejected
     density = 1./(2**2.5 * np.pi**1.5)*noise_sigma*np.exp(-noise_sigma**2./2)
@@ -629,26 +685,31 @@ def plot_diffim_quiver(deep_table, dcr_table, template=None,
     plt.clim(0.4, 1.2)
 
 
-def plot_diffim_combined(deep_tables, dcr_tables, seeing_range, quantity="nDipole", window=1, **kwargs):
+def plot_diffim_combined(deep_tables, dcr_tables, seeing_range,
+                         quantity="nDipole", window=1, seeing_list=None,
+                         **kwargs):
     afwDisplay.Display(window)
     plt.figure(window)
-    color_gen = get_xkcd_color()
-    for seeing_id in seeing_range.keys():
+    colors = 'bgrcmyk'
+    names = []
+    if seeing_list is None:
+        seeing_list = [seeing_id for seeing_id in seeing_range.keys()]
+    for ind, seeing_id in enumerate(seeing_list):
+        names.append("%2.0f%%" % seeing_range[seeing_id])
         deep_table = deep_tables[seeing_id]
         dcr_table = dcr_tables[seeing_id]
-        field_list = list(set(deep_table["fieldId"]))
 
-        x_arr = []
-        y_arr = []
-        for field in field_list:
-            # names.append("Field %s" % field)
-            q1 = deep_table[quantity][deep_table["fieldId"] == field]
-            q2 = dcr_table[quantity][dcr_table["fieldId"] == field]
-            airmass = np.array(deep_table["airmass"][deep_table["fieldId"] == field])
-            x_arr.append(airmass)
-            y_arr.append(q1 - q2)
-        color_cmd = 'xkcd:' + next(color_gen)
-        plt.plot(x_arr, y_arr, color_cmd)
+        q1 = deep_table[quantity].quantity
+        q2 = dcr_table[quantity].quantity
+        airmass = deep_table["airmass"].quantity
+        x = airmass
+        y = (q1 - q2)/q1
+        plt.plot(x, y, colors[ind] + '+')
+        plt.grid(True)
+    plt.ylabel('Fractional reduction in false detections')
+    plt.ylim(bottom=-0.05, top=1.05)
+    plt.xlabel('Airmass')
+    plt.legend(names)
 
 
 def get_xkcd_color(index=None):
