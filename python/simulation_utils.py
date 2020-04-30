@@ -163,7 +163,7 @@ def simulation_wrapper(sim=None, seed=7, band_name='g', dimension=1024, pixel_sc
             sim.seed = seed
     if write_catalog:
         sim.make_reference_catalog(output_directory=output_directory + "input_data/",
-                                   filter_list=[band_name, ], magnitude_limit=16.0)
+                                   filter_list=[band_name, ], magnitude_limit=10.0)
     if write_fits:
         expId = exposureId + 100*band_dict[band_name]
         for elevation in np.arange(elevation_min, elevation_max, elevation_step):
@@ -372,7 +372,8 @@ class OpSim_wrapper:
 
     def initialize_simulation(self, n_star=10000, n_quasar=1000,
                               attenuation=20., wavelength_step=10., seed=None,
-                              dimension=1024, pixel_scale=0.25, dither=(0., 0.), simulation_size=1.):
+                              dimension=1024, pixel_scale=0.25, dither=(0., 0.), simulation_size=1.,
+                              hottest_star='B', coolest_star='M',):
         """Set up the simulation using the stored observing conditions.
 
         Parameters
@@ -417,7 +418,8 @@ class OpSim_wrapper:
                                  attenuation=attenuation, wavelength_step=wavelength_step,
                                  dimension=dimension, pixel_scale=pixel_scale,
                                  ra_offset=ra_offset, dec_offset=dec_offset, simulation_size=simulation_size,
-                                 write_catalog=False, write_fits=False, do_simulate=True)
+                                 write_catalog=False, write_fits=False, do_simulate=True,
+                                 hottest_star=hottest_star, coolest_star=coolest_star)
         return sim
 
     def run_simulation(self, sim, use_seeing=False, write_catalog=False,
@@ -464,6 +466,8 @@ class OpSim_wrapper:
             os.mkdir(image_directory)
             os.mkdir(ingest_directory)
             copyfile(self.sim_directory + "_mapper", image_directory)
+            copyfile(self.sim_directory + "diffimCW_config.py", output_directory)
+            copyfile(self.sim_directory + "diffimDCR_config.py", output_directory)
             copyfile(self.sim_directory + "processEimage_config.py", output_directory)
         if write_catalog:
             sim = simulation_wrapper(sim, output_directory=output_directory,
@@ -472,7 +476,7 @@ class OpSim_wrapper:
         gsp = galsim.GSParams(folding_threshold=1.0 /sim.coord.xsize(), maximum_fft_size=12288)
         for az, alt, seeing in zip(self.azimuth, self.altitude, self.seeing):
             if use_seeing:
-                psf_fwhm_use = psf_fwhm*seeing/np.median(self.seeing)
+                psf_fwhm_use = seeing/sim.wcs.getPixelScale().asArcseconds()/4.
             else:
                 psf_fwhm_use = psf_fwhm
             psf = galsim.Kolmogorov(fwhm=psf_fwhm_use, flux=1, gsparams=gsp)
